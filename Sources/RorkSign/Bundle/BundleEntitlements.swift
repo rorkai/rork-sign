@@ -37,13 +37,10 @@ enum BundleEntitlements {
         entitlements["com.apple.developer.team-identifier"] = profile.teamIdentifier
         let keychainGroups = normalizedKeychainGroups(
             original: original,
-            teamIdentifier: profile.teamIdentifier
+            teamIdentifier: profile.teamIdentifier,
+            applicationIdentifier: applicationIdentifier
         )
-        if keychainGroups.isEmpty {
-            entitlements.removeValue(forKey: "keychain-access-groups")
-        } else {
-            entitlements["keychain-access-groups"] = keychainGroups
-        }
+        entitlements["keychain-access-groups"] = keychainGroups
 
         if let associatedBundleIdentifier,
            !associatedBundleIdentifier.isEmpty,
@@ -69,6 +66,7 @@ enum BundleEntitlements {
             "application-identifier",
             "com.apple.developer.team-identifier",
             "get-task-allow",
+            "keychain-access-groups",
         ]
         if alwaysKept.contains(key) {
             return true
@@ -82,7 +80,8 @@ enum BundleEntitlements {
     /// Rewrites requested keychain access groups to the signing team's App ID prefix.
     private static func normalizedKeychainGroups(
         original: [String: Any],
-        teamIdentifier: String
+        teamIdentifier: String,
+        applicationIdentifier: String
     ) -> [String] {
         var groups: [String] = []
         for value in original["keychain-access-groups"] as? [String] ?? [] {
@@ -102,7 +101,7 @@ enum BundleEntitlements {
             }
         }
 
-        return groups
+        return groups.isEmpty ? [applicationIdentifier] : groups
     }
 }
 

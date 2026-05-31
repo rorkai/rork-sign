@@ -115,7 +115,10 @@ final class IPAArchiveSigningTests: XCTestCase {
             entitlements["application-identifier"] as? String,
             "TEAMID1234.app.rork.standalone.archive"
         )
-        XCTAssertNil(entitlements["keychain-access-groups"])
+        XCTAssertEqual(
+            entitlements["keychain-access-groups"] as? [String],
+            ["TEAMID1234.app.rork.standalone.archive"]
+        )
     }
 
     func testIdentityIPASigningAcceptsAuthorizedProvisioningProfile() throws {
