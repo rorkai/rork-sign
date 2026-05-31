@@ -857,6 +857,14 @@ public struct SigningIdentity {
     /// material as the caller supplied.
     public let additionalCertificatesDER: [Data]
 
+    /// Apple team identifier associated with the provisioning profile.
+    ///
+    /// Plain certificate/key identities do not imply a team id, so this value is
+    /// empty unless the identity was built from a provisioning profile. Bundle
+    /// signing uses it to keep non-executable code signatures tied to the same
+    /// team even when those images intentionally receive empty entitlements.
+    public let teamIdentifier: String
+
     /// Parsed certificate fields used by CMS SignerInfo.
     let certificateInfo: CertificateInfo
 
@@ -1003,12 +1011,14 @@ public struct SigningIdentity {
     fileprivate init(
         certificateDER: Data,
         additionalCertificatesDER: [Data],
-        privateKey: SigningPrivateKey
+        privateKey: SigningPrivateKey,
+        teamIdentifier: String = ""
     ) throws {
         let certificateInfo = try CertificateInfo.parse(certificateDER)
         try Self.validateMatch(certificateInfo: certificateInfo, privateKey: privateKey)
         self.certificateDER = certificateDER
         self.additionalCertificatesDER = additionalCertificatesDER
+        self.teamIdentifier = teamIdentifier
         self.certificateInfo = certificateInfo
         self.privateKey = privateKey
     }
@@ -1022,6 +1032,7 @@ public struct SigningIdentity {
 
             self.certificateDER = certificateDER
             self.additionalCertificatesDER = credential.additionalCertificatesDER
+            self.teamIdentifier = provisioningProfile.teamIdentifier
             self.certificateInfo = certificateInfo
             self.privateKey = credential.privateKey
             return
@@ -1361,7 +1372,7 @@ public struct BundleSigningOptions: Equatable {
 public enum RorkSigner {
     /// Package version for CLI diagnostics and consumers that expose signer info.
     public static var version: String {
-        "0.2.4"
+        "0.2.5"
     }
 
     /// Reads high-level Mach-O metadata needed by signing and diagnostics.
@@ -1753,8 +1764,8 @@ public enum RorkSigner {
     /// Removes matching dynamic-library load commands from a thin or universal Mach-O.
     ///
     /// A removal entry containing a slash is matched exactly. A bare filename
-    /// also matches `@executable_path/<filename>`, mirroring common ZSign CLI
-    /// usage. The resulting binary must be signed afterwards.
+    /// also matches `@executable_path/<filename>`, which is the common bundle
+    /// injection shape. The resulting binary must be signed afterwards.
     public static func removeDylibLoadCommands(
         from data: Data,
         matching paths: [String]
@@ -1802,11 +1813,14 @@ public enum RorkSigner {
     /// if the produced CMS sizes differ from the hints. `subjectCommonName`
     /// must match the certificate used by the caller's detached CMS signer when
     /// the final signature should carry an identity-backed designated
-    /// requirement. `signMachOWithCMSBlobs` embeds the final CMS blobs.
+    /// requirement. `teamIdentifier` optionally writes an explicit CodeDirectory
+    /// team id; when empty, it is inferred from entitlements. `signMachOWithCMSBlobs`
+    /// embeds the final CMS blobs.
     public static func prepareMachOCMSCodeDirectories(
         _ data: Data,
         bundleIdentifier: String,
         subjectCommonName: String = "",
+        teamIdentifier: String = "",
         entitlementsXML: String = "",
         infoPlist: Data = Data(),
         resourceDirectory: Data = Data(),
@@ -1820,6 +1834,7 @@ public enum RorkSigner {
             data,
             bundleIdentifier: bundleIdentifier,
             subjectCommonName: subjectCommonName,
+            teamIdentifier: teamIdentifier,
             entitlementsXML: entitlementsXML,
             entitlementsDER: entitlementsDER,
             infoPlist: infoPlist,
@@ -1833,13 +1848,14 @@ public enum RorkSigner {
     ///
     /// Thin Mach-O files require exactly one CMS blob. Universal Mach-O files
     /// require one blob per architecture in fat-header order. Use the same
-    /// `subjectCommonName` value passed during preparation so the final
-    /// CodeDirectory matches the CMS-signed bytes.
+    /// `subjectCommonName` and `teamIdentifier` values passed during preparation
+    /// so the final CodeDirectory matches the CMS-signed bytes.
     public static func signMachOWithCMSBlobs(
         _ data: Data,
         bundleIdentifier: String,
         cmsSignatures: [Data],
         subjectCommonName: String = "",
+        teamIdentifier: String = "",
         entitlementsXML: String = "",
         infoPlist: Data = Data(),
         resourceDirectory: Data = Data(),
@@ -1852,6 +1868,7 @@ public enum RorkSigner {
             data,
             bundleIdentifier: bundleIdentifier,
             subjectCommonName: subjectCommonName,
+            teamIdentifier: teamIdentifier,
             entitlementsXML: entitlementsXML,
             entitlementsDER: entitlementsDER,
             infoPlist: infoPlist,
@@ -1867,6 +1884,7 @@ public enum RorkSigner {
         bundleIdentifier: String,
         cmsSignature: Data,
         subjectCommonName: String = "",
+        teamIdentifier: String = "",
         entitlementsXML: String = "",
         infoPlist: Data = Data(),
         resourceDirectory: Data = Data(),
@@ -1877,6 +1895,7 @@ public enum RorkSigner {
             bundleIdentifier: bundleIdentifier,
             cmsSignatures: [cmsSignature],
             subjectCommonName: subjectCommonName,
+            teamIdentifier: teamIdentifier,
             entitlementsXML: entitlementsXML,
             infoPlist: infoPlist,
             resourceDirectory: resourceDirectory,
@@ -1968,6 +1987,7 @@ public enum RorkSigner {
                 data,
                 bundleIdentifier: bundleIdentifier,
                 subjectCommonName: identity.certificateInfo.subjectCommonName,
+                teamIdentifier: identity.teamIdentifier,
                 entitlementsXML: entitlementsXML,
                 infoPlist: infoPlist,
                 resourceDirectory: resourceDirectory,
@@ -1988,6 +2008,7 @@ public enum RorkSigner {
                     bundleIdentifier: bundleIdentifier,
                     cmsSignatures: cmsSignatures,
                     subjectCommonName: identity.certificateInfo.subjectCommonName,
+                    teamIdentifier: identity.teamIdentifier,
                     entitlementsXML: entitlementsXML,
                     infoPlist: infoPlist,
                     resourceDirectory: resourceDirectory,
@@ -2024,6 +2045,7 @@ public enum RorkSigner {
                 data,
                 bundleIdentifier: bundleIdentifier,
                 subjectCommonName: identity.certificateInfo.subjectCommonName,
+                teamIdentifier: identity.teamIdentifier,
                 entitlementsXML: entitlementsXML,
                 infoPlist: infoPlist,
                 resourceDirectory: resourceDirectory,
@@ -2048,6 +2070,7 @@ public enum RorkSigner {
                     data,
                     bundleIdentifier: bundleIdentifier,
                     subjectCommonName: identity.certificateInfo.subjectCommonName,
+                    teamIdentifier: identity.teamIdentifier,
                     entitlementsXML: entitlementsXML,
                     entitlementsDER: entitlementsDER,
                     infoPlist: infoPlist,

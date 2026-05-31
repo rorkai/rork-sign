@@ -58,11 +58,11 @@ enum BundleSigner {
 
     /// Signs `bundleURL` with a credential/profile pair while preserving IDs.
     ///
-    /// This is the ZSign-compatible folder-signing flow: the profile authorizes
-    /// the signing certificate and supplies entitlement material, but callers
-    /// may choose not to embed it. When the profile is not embedded, the bundle
-    /// identifier check is skipped so development hosts can sign guest bundles
-    /// that keep their original identifiers.
+    /// This folder-signing flow lets the profile authorize the signing
+    /// certificate and supply entitlement material while callers choose whether
+    /// to embed it. When the profile is not embedded, the bundle identifier
+    /// check is skipped so hosts can sign guest bundles that keep their
+    /// original identifiers.
     static func signWithCredential(
         bundleURL: URL,
         identity: SigningIdentity,
@@ -242,9 +242,9 @@ enum BundleSigner {
 
     /// Removes an existing embedded provisioning profile before sealing.
     ///
-    /// ZSign-compatible `--rm_provision` means the profile may still drive
-    /// entitlement selection and identity validation, but the bundle should not
-    /// contain or seal `embedded.mobileprovision` in the final output.
+    /// In remove-provision mode, the profile may still drive entitlement
+    /// selection and identity validation, but the bundle should not contain or
+    /// seal `embedded.mobileprovision` in the final output.
     private static func removeEmbeddedProvisioningProfile(from bundleURL: URL) throws {
         let profileURL = bundleURL.appendingPathComponent("embedded.mobileprovision")
         guard FileManager.default.fileExists(atPath: profileURL.path) else {
@@ -356,9 +356,9 @@ private enum BundleDylibEditor {
 
     /// Chooses where the copied dylib should live inside the root app.
     ///
-    /// The default ZSign-compatible behavior copies to the app root. When a
-    /// caller supplies an `@executable_path/...` install name, the filesystem
-    /// copy follows that same bundle-relative path so dyld can resolve the load
+    /// The default compatibility behavior copies to the app root. When a caller
+    /// supplies an `@executable_path/...` install name, the filesystem copy
+    /// follows that same bundle-relative path so dyld can resolve the load
     /// command and CodeResources seals the actual loaded file.
     private static func destinationURL(
         forSourceFileName fileName: String,
@@ -378,10 +378,10 @@ private enum BundleDylibEditor {
     /// Removes root-bundle dylib files for load commands that resolve through
     /// `@executable_path`.
     ///
-    /// ZSign removes copied dylib files at the same time it strips matching
+    /// Copied dylib files are removed at the same time as matching
     /// root-executable load commands. Keeping that mutation before resource
-    /// sealing prevents stale hook dylibs from being signed and sealed after the
-    /// executable no longer loads them.
+    /// sealing prevents stale hook dylibs from being signed and sealed after
+    /// the executable no longer loads them.
     private static func removeRootDylibFiles(
         matching installNames: [String],
         from bundleURL: URL,
@@ -600,10 +600,14 @@ private struct SigningBundle {
         return identifier
     }
 
-    /// Derives a stable identifier for a standalone code file inside a bundle.
+    /// Derives the CodeDirectory identifier for a standalone code file.
+    ///
+    /// Loose code inside a bundle, such as dylibs and helper binaries, is often
+    /// loaded directly by dyld rather than launched as the parent app. Using the
+    /// file basename keeps that signature identity local to the image instead
+    /// of binding it to the parent bundle identifier.
     func standaloneCodeIdentifier(for codeURL: URL) throws -> String {
-        let relativePath = try BundlePath.relativePath(for: codeURL, under: url)
-        return try requireIdentifier() + "." + IdentifierSanitizer.sanitize(relativePath)
+        IdentifierSanitizer.sanitize(codeURL.lastPathComponent)
     }
 
     /// Reads the exact `Info.plist` bytes that CodeResources omits and the main

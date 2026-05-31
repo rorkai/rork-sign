@@ -26,8 +26,9 @@ enum CMSGenerator {
         )
         let signatureInput = DER.set(signedAttributes)
         let signature = try identity.privateKey.signature(for: SHA256.hash(data: signatureInput))
+        let certificates = cmsCertificates(for: identity)
         let signedData = try signedData(
-            certificatesDER: [identity.certificateDER] + identity.additionalCertificatesDER,
+            certificatesDER: certificates,
             certificateInfo: identity.certificateInfo,
             signedAttributes: signedAttributes,
             signature: signature,
@@ -38,6 +39,21 @@ enum CMSGenerator {
             DER.objectIdentifier(OID.signedData)
                 + DER.explicit(0, signedData)
         )
+    }
+
+    /// Returns the CMS certificate set in leaf-to-root order.
+    ///
+    /// Caller-supplied chain material wins. If a common Apple development
+    /// credential only carries the leaf certificate, add the matching public
+    /// WWDR issuer chain so iOS code-signing validation can build the same
+    /// certificate path that Apple tooling emits.
+    private static func cmsCertificates(for identity: SigningIdentity) -> [Data] {
+        let suppliedCertificates = [identity.certificateDER] + identity.additionalCertificatesDER
+        let appleChain = AppleCertificateChain.additionalCertificates(
+            for: identity.certificateInfo,
+            existing: suppliedCertificates
+        )
+        return suppliedCertificates + appleChain
     }
 
     /// CMS signed attributes signed by RSA.

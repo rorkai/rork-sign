@@ -38,10 +38,11 @@ public struct StandaloneBundleSigningOptions: Equatable {
     /// Explicit entitlement plist XML for the rewritten root executable.
     ///
     /// When this is non-empty it wins over profile-derived root entitlements,
-    /// mirroring ZSign's `-e/--entitlements` behavior for callers that need to
-    /// supply a complete entitlement plist. Nested app and extension
-    /// entitlements are still derived from their selected provisioning profiles
-    /// so identifier rebasing and associated-application keys remain coherent.
+    /// matching the compatibility CLI's `-e/--entitlements` behavior for
+    /// callers that need to supply a complete entitlement plist. Nested app and
+    /// extension entitlements are still derived from their selected
+    /// provisioning profiles so identifier rebasing and associated-application
+    /// keys remain coherent.
     public var rootEntitlementsXML: String
 
     /// Replacement display name for the root app.
@@ -53,8 +54,8 @@ public struct StandaloneBundleSigningOptions: Equatable {
 
     /// Replacement version for the root app.
     ///
-    /// This mirrors ZSign-style bundle editing by writing the same value to
-    /// both `CFBundleVersion` and `CFBundleShortVersionString`.
+    /// The signer writes the same value to both `CFBundleVersion` and
+    /// `CFBundleShortVersionString`.
     public var bundleVersion: String?
 
     /// Replacement `MinimumOSVersion` for the root app.
@@ -78,11 +79,11 @@ public struct StandaloneBundleSigningOptions: Equatable {
     /// Whether selected provisioning profiles are embedded before resource sealing.
     ///
     /// This defaults to `true` because standalone app outputs normally need an
-    /// embedded provisioning profile. ZSign-compatible workflows can disable it
-    /// to mirror `--rm_provision`, in which case profile-derived entitlements
-    /// are still used for signing but no `embedded.mobileprovision` file is
-    /// sealed into the bundle. Existing embedded profiles are removed before
-    /// the resource seal is generated.
+    /// embedded provisioning profile. Compatibility workflows can disable it to
+    /// mirror `--rm_provision`, in which case profile-derived entitlements are
+    /// still used for signing but no `embedded.mobileprovision` file is sealed
+    /// into the bundle. Existing embedded profiles are removed before the
+    /// resource seal is generated.
     public var embedProvisioningProfiles: Bool
 
     /// Dylib files copied into the root app and loaded by the root executable.
@@ -426,7 +427,7 @@ private enum StandaloneBundleIdentityRewriter {
 
 /// Removes optional bundle content before nested bundles are discovered.
 private enum StandaloneBundleContentPruner {
-    /// Applies ZSign-style root app cleanup options.
+    /// Applies root app cleanup options before signing.
     static func apply(options: StandaloneBundleSigningOptions, rootBundleURL: URL) throws {
         let fileManager = FileManager.default
         if options.removeExtensions {

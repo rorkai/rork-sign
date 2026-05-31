@@ -214,6 +214,7 @@ enum MachOSigner {
         _ data: Data,
         bundleIdentifier: String,
         subjectCommonName: String,
+        teamIdentifier: String,
         entitlementsXML: String,
         entitlementsDER: Data,
         infoPlist: Data,
@@ -236,6 +237,7 @@ enum MachOSigner {
                 options: MachOSigningOptions(
                     bundleIdentifier: bundleIdentifier,
                     subjectCommonName: subjectCommonName,
+                    teamIdentifier: teamIdentifier,
                     entitlementsXML: entitlementsXML,
                     entitlementsDER: entitlementsDER,
                     infoPlist: infoPlist,
@@ -264,6 +266,7 @@ enum MachOSigner {
                     options: MachOSigningOptions(
                         bundleIdentifier: bundleIdentifier,
                         subjectCommonName: subjectCommonName,
+                        teamIdentifier: teamIdentifier,
                         entitlementsXML: entitlementsXML,
                         entitlementsDER: entitlementsDER,
                         infoPlist: infoPlist,
@@ -289,6 +292,7 @@ enum MachOSigner {
         _ data: Data,
         bundleIdentifier: String,
         subjectCommonName: String,
+        teamIdentifier: String,
         entitlementsXML: String,
         entitlementsDER: Data,
         infoPlist: Data,
@@ -320,6 +324,7 @@ enum MachOSigner {
                 options: MachOSigningOptions(
                     bundleIdentifier: bundleIdentifier,
                     subjectCommonName: subjectCommonName,
+                    teamIdentifier: teamIdentifier,
                     entitlementsXML: entitlementsXML,
                     entitlementsDER: entitlementsDER,
                     infoPlist: infoPlist,
@@ -341,6 +346,7 @@ enum MachOSigner {
                 magic: bigMagic,
                 bundleIdentifier: bundleIdentifier,
                 subjectCommonName: subjectCommonName,
+                teamIdentifier: teamIdentifier,
                 entitlementsXML: entitlementsXML,
                 entitlementsDER: entitlementsDER,
                 infoPlist: infoPlist,
@@ -418,6 +424,7 @@ private struct MachOSigningOptions {
     init(
         bundleIdentifier: String,
         subjectCommonName: String,
+        teamIdentifier: String = "",
         entitlementsXML: String,
         entitlementsDER: Data,
         infoPlist: Data,
@@ -429,7 +436,10 @@ private struct MachOSigningOptions {
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.subjectCommonName = subjectCommonName
-        self.teamIdentifier = CodeSignatureBuilder.inferTeamIdentifier(from: entitlementsXML)
+        let trimmedTeamIdentifier = teamIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.teamIdentifier = trimmedTeamIdentifier.isEmpty
+            ? CodeSignatureBuilder.inferTeamIdentifier(from: entitlementsXML)
+            : trimmedTeamIdentifier
         self.entitlementsXML = entitlementsXML
         self.entitlementsDER = entitlementsDER
         self.infoPlist = infoPlist
@@ -513,10 +523,10 @@ private struct ThinSigningLayout {
 
     /// Builds the CodeDirectory input after applying Mach-O-type signing policy.
     ///
-    /// ZSign intentionally treats non-`MH_EXECUTE` images as entitlement-free:
-    /// they still receive an XML entitlement slot containing an empty plist, but
-    /// they do not receive DER entitlements and do not inherit executable-only
-    /// flags from the provisioning profile. Some embedding runtimes patch app
+    /// Non-`MH_EXECUTE` images are signed as entitlement-free code: they still
+    /// receive an XML entitlement slot containing an empty plist, but they do
+    /// not receive DER entitlements and do not inherit executable-only flags
+    /// from the provisioning profile. Some embedding runtimes patch app
     /// executables into `MH_DYLIB` before signing, so this distinction is part
     /// of the compatibility contract rather than a cosmetic slot difference.
     func codeSignatureInput(
@@ -1248,6 +1258,7 @@ private func signUniversalMachOWithCMSBlobs(
     magic: UInt32,
     bundleIdentifier: String,
     subjectCommonName: String,
+    teamIdentifier: String,
     entitlementsXML: String,
     entitlementsDER: Data,
     infoPlist: Data,
@@ -1270,6 +1281,7 @@ private func signUniversalMachOWithCMSBlobs(
             options: MachOSigningOptions(
                 bundleIdentifier: bundleIdentifier,
                 subjectCommonName: subjectCommonName,
+                teamIdentifier: teamIdentifier,
                 entitlementsXML: entitlementsXML,
                 entitlementsDER: entitlementsDER,
                 infoPlist: infoPlist,

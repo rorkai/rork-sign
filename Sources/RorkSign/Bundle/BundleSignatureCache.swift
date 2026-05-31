@@ -58,6 +58,7 @@ final class BundleSignatureCache {
             bundleIdentifier: bundleIdentifier,
             signingMode: signingMode.cacheSigningMode,
             subjectCommonName: signingMode.cacheSubjectCommonName,
+            teamIdentifier: signingMode.cacheTeamIdentifier,
             certificateHashes: signingMode.cacheCertificateHashes,
             entitlementsXMLHash: sha256Hex(Data(entitlementsXML.utf8)),
             infoPlistHash: sha256Hex(infoPlist),
@@ -125,6 +126,7 @@ extension BundleSignatureCache {
         let bundleIdentifier: String
         let signingMode: String
         let subjectCommonName: String
+        let teamIdentifier: String
         let certificateHashes: [String]
         let entitlementsXMLHash: String
         let infoPlistHash: String
@@ -154,6 +156,15 @@ extension BundleCodeSigningMode {
             return ""
         case .identity(let identity):
             return identity.subjectCommonName
+        }
+    }
+
+    var cacheTeamIdentifier: String {
+        switch self {
+        case .adHoc:
+            return ""
+        case .identity(let identity):
+            return identity.teamIdentifier
         }
     }
 

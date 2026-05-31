@@ -49,6 +49,26 @@ final class ObjCFacadeTests: XCTestCase {
         XCTAssertEqual(teamIdentifier, "TEAMID1234")
     }
 
+    /// Verifies profile-backed identities expose their team identifier through Objective-C.
+    func testSigningIdentityExposesProfileTeamIdentifier() throws {
+        let fixture = try OpenSSLFixture()
+        defer {
+            fixture.remove()
+        }
+        let profile = try objcFacadeProvisioningProfile(
+            bundleIdentifier: "app.rork.objc.identity-team",
+            certificateDER: fixture.identity.certificateDER
+        )
+
+        let identity = try SigningIdentityObjC(
+            provisioningProfileData: profile,
+            credentialData: Data(fixture.privateKeyPEM.utf8),
+            password: nil
+        )
+
+        XCTAssertEqual(identity.teamIdentifier, "TEAMID1234")
+    }
+
     /// Verifies credential signing maps Objective-C options into Swift options.
     func testSignBundleWithCredentialMapsOptionsAndSignsCode() throws {
         let fixture = try OpenSSLFixture()

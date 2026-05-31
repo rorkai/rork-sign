@@ -184,6 +184,11 @@ public final class SigningIdentityObjC: NSObject {
         coreValue.additionalCertificatesDER
     }
 
+    /// Apple team identifier associated with a provisioning-profile-backed identity.
+    @objc public var teamIdentifier: String {
+        coreValue.teamIdentifier
+    }
+
     /// Leaf certificate subject common name.
     @objc public var subjectCommonName: String {
         coreValue.subjectCommonName
@@ -1176,6 +1181,32 @@ public final class Signer: NSObject {
         ).map(MachOCMSCodeDirectoryObjC.init)
     }
 
+    /// Prepares CodeDirectory bytes with an explicit team identifier.
+    @objc(prepareMachOCMSCodeDirectoriesForData:bundleIdentifier:subjectCommonName:teamIdentifier:entitlementsXML:infoPlistData:resourceDirectoryData:cmsSignatureLengthHints:codeDirectoryHashingMode:error:)
+    public func prepareMachOCMSCodeDirectories(
+        for data: Data,
+        bundleIdentifier: String,
+        subjectCommonName: String,
+        teamIdentifier: String,
+        entitlementsXML: String?,
+        infoPlistData: Data?,
+        resourceDirectoryData: Data?,
+        cmsSignatureLengthHints: [NSNumber],
+        codeDirectoryHashingMode: CodeDirectoryHashingModeObjC
+    ) throws -> [MachOCMSCodeDirectoryObjC] {
+        try RorkSigner.prepareMachOCMSCodeDirectories(
+            data,
+            bundleIdentifier: bundleIdentifier,
+            subjectCommonName: subjectCommonName,
+            teamIdentifier: teamIdentifier,
+            entitlementsXML: entitlementsXML ?? "",
+            infoPlist: infoPlistData ?? Data(),
+            resourceDirectory: resourceDirectoryData ?? Data(),
+            cmsSignatureLengthHints: cmsSignatureLengthHints.map(\.intValue),
+            codeDirectoryHashingMode: codeDirectoryHashingMode.coreValue
+        ).map(MachOCMSCodeDirectoryObjC.init)
+    }
+
     /// Embeds caller-supplied CMS blobs into a Mach-O signature.
     @objc(signMachOWithCMSBlobsData:bundleIdentifier:cmsSignatures:subjectCommonName:entitlementsXML:infoPlistData:resourceDirectoryData:codeDirectoryHashingMode:error:)
     public func signMachOWithCMSBlobs(
@@ -1200,6 +1231,32 @@ public final class Signer: NSObject {
         )
     }
 
+    /// Embeds caller-supplied CMS blobs using an explicit team identifier.
+    @objc(signMachOWithCMSBlobsData:bundleIdentifier:cmsSignatures:subjectCommonName:teamIdentifier:entitlementsXML:infoPlistData:resourceDirectoryData:codeDirectoryHashingMode:error:)
+    public func signMachOWithCMSBlobs(
+        _ data: Data,
+        bundleIdentifier: String,
+        cmsSignatures: [Data],
+        subjectCommonName: String,
+        teamIdentifier: String,
+        entitlementsXML: String?,
+        infoPlistData: Data?,
+        resourceDirectoryData: Data?,
+        codeDirectoryHashingMode: CodeDirectoryHashingModeObjC
+    ) throws -> Data {
+        try RorkSigner.signMachOWithCMSBlobs(
+            data,
+            bundleIdentifier: bundleIdentifier,
+            cmsSignatures: cmsSignatures,
+            subjectCommonName: subjectCommonName,
+            teamIdentifier: teamIdentifier,
+            entitlementsXML: entitlementsXML ?? "",
+            infoPlist: infoPlistData ?? Data(),
+            resourceDirectory: resourceDirectoryData ?? Data(),
+            codeDirectoryHashingMode: codeDirectoryHashingMode.coreValue
+        )
+    }
+
     /// Embeds one caller-supplied CMS blob into a single-architecture Mach-O signature.
     @objc(signMachOWithCMSBlobData:bundleIdentifier:cmsSignature:subjectCommonName:entitlementsXML:infoPlistData:resourceDirectoryData:codeDirectoryHashingMode:error:)
     public func signMachOWithCMSBlob(
@@ -1217,6 +1274,32 @@ public final class Signer: NSObject {
             bundleIdentifier: bundleIdentifier,
             cmsSignature: cmsSignature,
             subjectCommonName: subjectCommonName,
+            entitlementsXML: entitlementsXML ?? "",
+            infoPlist: infoPlistData ?? Data(),
+            resourceDirectory: resourceDirectoryData ?? Data(),
+            codeDirectoryHashingMode: codeDirectoryHashingMode.coreValue
+        )
+    }
+
+    /// Embeds one caller-supplied CMS blob using an explicit team identifier.
+    @objc(signMachOWithCMSBlobData:bundleIdentifier:cmsSignature:subjectCommonName:teamIdentifier:entitlementsXML:infoPlistData:resourceDirectoryData:codeDirectoryHashingMode:error:)
+    public func signMachOWithCMSBlob(
+        _ data: Data,
+        bundleIdentifier: String,
+        cmsSignature: Data,
+        subjectCommonName: String,
+        teamIdentifier: String,
+        entitlementsXML: String?,
+        infoPlistData: Data?,
+        resourceDirectoryData: Data?,
+        codeDirectoryHashingMode: CodeDirectoryHashingModeObjC
+    ) throws -> Data {
+        try RorkSigner.signMachOWithCMSBlob(
+            data,
+            bundleIdentifier: bundleIdentifier,
+            cmsSignature: cmsSignature,
+            subjectCommonName: subjectCommonName,
+            teamIdentifier: teamIdentifier,
             entitlementsXML: entitlementsXML ?? "",
             infoPlist: infoPlistData ?? Data(),
             resourceDirectory: resourceDirectoryData ?? Data(),

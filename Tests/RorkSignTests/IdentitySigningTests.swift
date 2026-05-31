@@ -1,6 +1,6 @@
 import Crypto
 import Foundation
-import RorkSign
+@testable import RorkSign
 import XCTest
 
 final class IdentitySigningTests: XCTestCase {
@@ -11,6 +11,7 @@ final class IdentitySigningTests: XCTestCase {
         }
 
         XCTAssertEqual(fixture.identity.subjectCommonName, "RorkSignTest")
+        XCTAssertEqual(fixture.identity.teamIdentifier, "")
         XCTAssertGreaterThan(fixture.identity.certificateExpirationDate, Date())
         XCTAssertLessThan(
             fixture.identity.certificateExpirationDate,
@@ -36,6 +37,42 @@ final class IdentitySigningTests: XCTestCase {
         XCTAssertEqual(report.crlDistributionPointURLs, [])
         XCTAssertGreaterThan(report.expirationDate, Date())
         XCTAssertFalse(report.isExpired())
+    }
+
+    func testAppleCertificateChainAddsMatchingWWDRIssuerAndRoot() throws {
+        let intermediateDER = AppleCertificateChain.developerRelationsIntermediatesDER[1]
+        let intermediate = try CertificateInfo.parse(intermediateDER)
+        let leafLikeCertificate = CertificateInfo(
+            tbsCertificateDER: Data(),
+            issuerDER: intermediate.subjectDER,
+            subjectDER: Data(),
+            serialNumberDER: Data(),
+            serialNumberHex: "",
+            subjectCommonName: "Apple Development: Test",
+            subjectOrganizationName: "Example",
+            issuerCommonName: intermediate.subjectCommonName,
+            ocspResponderURLs: [],
+            crlDistributionPointURLs: [],
+            extendedKeyUsageOIDs: [],
+            isCertificateAuthority: false,
+            pathLengthConstraint: nil,
+            hasKeyUsageExtension: false,
+            keyUsage: [],
+            notBefore: Date(),
+            notAfter: Date(),
+            subjectPublicKeyInfoDER: Data(),
+            keyAlgorithm: "RSA 2048-bit",
+            signatureAlgorithmOID: "",
+            signature: Data()
+        )
+
+        let chain = AppleCertificateChain.additionalCertificates(
+            for: leafLikeCertificate,
+            existing: []
+        )
+
+        XCTAssertEqual(chain.count, 2)
+        XCTAssertEqual(chain.first, intermediateDER)
     }
 
     func testCertificateCheckReportsOCSPResponderURLs() throws {
@@ -894,6 +931,7 @@ final class IdentitySigningTests: XCTestCase {
         )
 
         XCTAssertEqual(identity.certificateDER, fixture.identity.certificateDER)
+        XCTAssertEqual(identity.teamIdentifier, "TEAMID1234")
 
         let content = Data("Provisioning profile selected certificate".utf8)
         let cms = try RorkSigner.makeDetachedCMSSignature(
@@ -921,6 +959,7 @@ final class IdentitySigningTests: XCTestCase {
         )
 
         XCTAssertEqual(identity.certificateDER, fixture.identity.certificateDER)
+        XCTAssertEqual(identity.teamIdentifier, "TEAMID1234")
     }
 
     func testBuildsIdentityFromProvisioningProfileDataAndPKCS12Credential() throws {
@@ -946,6 +985,7 @@ final class IdentitySigningTests: XCTestCase {
         )
 
         XCTAssertEqual(identity.certificateDER, fixture.identity.certificateDER)
+        XCTAssertEqual(identity.teamIdentifier, "TEAMID1234")
         XCTAssertTrue(identity.additionalCertificatesDER.contains(additionalCertificate.der))
     }
 
@@ -1616,6 +1656,50 @@ final class IdentitySigningTests: XCTestCase {
         XCTAssertTrue(entitlementsPayload.contains("TEAMID1234.app.rork.identity.guest"), entitlementsPayload)
         XCTAssertFalse(entitlementsPayload.contains("TEAMID1234.app.rork.identity.host"), entitlementsPayload)
         XCTAssertEqual(try RorkSigner.checkMachOCodeSignatures(hostExecutable).first?.codeDirectories.map(\.hashAlgorithm), [.sha256])
+    }
+
+    func testBundleCredentialSigningUsesProfileTeamForStandaloneCode() throws {
+        let fixture = try OpenSSLFixture()
+        defer {
+            fixture.remove()
+        }
+        let bundleURL = try makeIdentityBundleFixture(bundleIdentifier: "app.rork.identity.guest")
+        let standaloneCodeURL = bundleURL.appendingPathComponent("Frameworks/Loose.dylib")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
+        }
+        try Fixtures.machO64DylibWithCodeSignature().write(to: standaloneCodeURL)
+        let profile = try identityProvisioningProfile(
+            bundleIdentifier: "app.rork.identity.host",
+            certificateDER: fixture.identity.certificateDER
+        )
+
+        _ = try RorkSigner.signBundleWithCredential(
+            at: bundleURL,
+            provisioningProfileData: profile,
+            credentialData: Data(fixture.privateKeyPEM.utf8),
+            options: BundleSigningOptions(codeDirectoryHashingMode: .compatible)
+        )
+
+        let standaloneCode = try Data(contentsOf: standaloneCodeURL)
+        let blobs = try signatureBlobs(in: standaloneCode)
+        let codeDirectory = try XCTUnwrap(blobs[0])
+        let entitlements = try XCTUnwrap(blobs[5])
+        let entitlementsLength = Int(entitlements.readUInt32BE(at: 4))
+        let entitlementsPayload = String(
+            decoding: entitlements.subdata(in: 8..<entitlementsLength),
+            as: UTF8.self
+        )
+
+        XCTAssertTrue(entitlementsPayload.contains("<dict/>"), entitlementsPayload)
+        XCTAssertEqual(
+            nullTerminatedString(in: codeDirectory, offset: Int(codeDirectory.readUInt32BE(at: 20))),
+            "Loose.dylib"
+        )
+        XCTAssertEqual(
+            nullTerminatedString(in: codeDirectory, offset: Int(codeDirectory.readUInt32BE(at: 48))),
+            "TEAMID1234"
+        )
     }
 
     func testIdentityBundleSigningRejectsUnauthorizedProvisioningProfile() throws {
