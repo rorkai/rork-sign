@@ -1,0 +1,9 @@
+.build/
+.swiftpm/
+.zsign_cache/
+.vscode/
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+*.xcuserstate

@@ -1,0 +1,3 @@
+import RorkSign
+
+RorkSignCommand.main()
