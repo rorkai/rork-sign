@@ -93,10 +93,9 @@ enum CMSCertificateInspector {
             }
         }
 
-        let signerIdentifier = try signerInfos.map(parseFirstSignerIdentifier(in:))
         return ParsedSignedData(
             certificates: certificates,
-            signerIdentifier: signerIdentifier ?? nil
+            signerIdentifier: try signerInfos.flatMap(parseFirstSignerIdentifier(in:))
         )
     }
 

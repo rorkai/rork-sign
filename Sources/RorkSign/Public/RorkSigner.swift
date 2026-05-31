@@ -33,6 +33,9 @@ public enum RorkSignError: Error, Equatable {
     /// generation for identity-backed signatures.
     case cmsSigning(String)
 
+    /// OCSP request transport or response validation failed.
+    case ocsp(String)
+
     /// The requested signing mode is recognized but not implemented yet.
     case unsupported(String)
 }

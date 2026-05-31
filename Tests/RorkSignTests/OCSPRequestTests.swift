@@ -108,7 +108,7 @@ final class OCSPRequestTests: XCTestCase {
         XCTAssertThrowsError(
             try RorkSigner.makeOCSPURLRequest(request)
         ) { error in
-            XCTAssertEqual(error as? RorkSignError, .cmsSigning("OCSP request has no responder URL."))
+            XCTAssertEqual(error as? RorkSignError, .ocsp("OCSP request has no responder URL."))
         }
     }
 
@@ -178,7 +178,7 @@ final class OCSPRequestTests: XCTestCase {
             _ = try await RorkSigner.fetchOCSPResponse(request, session: session)
             XCTFail("Expected OCSP HTTP status failure.")
         } catch {
-            XCTAssertEqual(error as? RorkSignError, .cmsSigning("OCSP responder returned HTTP status 500."))
+            XCTAssertEqual(error as? RorkSignError, .ocsp("OCSP responder returned HTTP status 500."))
         }
     }
 }

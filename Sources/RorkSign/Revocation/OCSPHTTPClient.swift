@@ -92,10 +92,10 @@ public extension RorkSigner {
         options: OCSPHTTPOptions = OCSPHTTPOptions()
     ) throws -> URLRequest {
         guard options.timeout > 0 else {
-            throw RorkSignError.cmsSigning("OCSP HTTP timeout must be positive.")
+            throw RorkSignError.ocsp("OCSP HTTP timeout must be positive.")
         }
         guard let responderURL = request.responderURL else {
-            throw RorkSignError.cmsSigning("OCSP request has no responder URL.")
+            throw RorkSignError.ocsp("OCSP request has no responder URL.")
         }
 
         var urlRequest = URLRequest(
@@ -132,15 +132,15 @@ public extension RorkSigner {
         let urlRequest = try makeOCSPURLRequest(request, options: options)
         let (data, response) = try await session.data(for: urlRequest)
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw RorkSignError.cmsSigning("OCSP responder did not return an HTTP response.")
+            throw RorkSignError.ocsp("OCSP responder did not return an HTTP response.")
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
-            throw RorkSignError.cmsSigning(
+            throw RorkSignError.ocsp(
                 "OCSP responder returned HTTP status \(httpResponse.statusCode)."
             )
         }
         guard !data.isEmpty else {
-            throw RorkSignError.cmsSigning("OCSP responder returned an empty body.")
+            throw RorkSignError.ocsp("OCSP responder returned an empty body.")
         }
         return OCSPHTTPFetchReport(
             request: request,
@@ -211,7 +211,7 @@ public extension RorkSigner {
     ) async throws -> OCSPStatusCheckReport {
         let certificates = try SigningIdentity.certificateChainDER(from: certificateChainData)
         guard certificates.count >= 2 else {
-            throw RorkSignError.cmsSigning("OCSP status check requires leaf and issuer certificates.")
+            throw RorkSignError.ocsp("OCSP status check requires leaf and issuer certificates.")
         }
         return try await checkOCSPStatus(
             certificateData: certificates[0],
@@ -238,7 +238,7 @@ public extension RorkSigner {
         session: URLSession = .shared
     ) async throws -> OCSPStatusCheckReport {
         guard let issuerCertificateDER = identity.additionalCertificatesDER.first else {
-            throw RorkSignError.cmsSigning("OCSP status check requires an issuer certificate.")
+            throw RorkSignError.ocsp("OCSP status check requires an issuer certificate.")
         }
         return try await checkOCSPStatus(
             certificateData: identity.certificateDER,

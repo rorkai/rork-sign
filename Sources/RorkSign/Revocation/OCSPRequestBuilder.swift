@@ -58,7 +58,10 @@ enum OCSPRequestBuilder {
             path = nil
         }
 
-        return path.map { URL(string: "http://ocsp.apple.com\($0)")! }
+        guard let path else {
+            return nil
+        }
+        return URL(string: "http://ocsp.apple.com\(path)")
     }
 
     /// Extracts the raw SubjectPublicKey BIT STRING bytes used by OCSP CertID.
