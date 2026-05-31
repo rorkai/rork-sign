@@ -86,6 +86,47 @@ final class ObjCFacadeTests: XCTestCase {
         XCTAssertEqual(signatures.first?.codeDirectories.map(\.hashAlgorithm), [.sha256])
     }
 
+    /// Verifies preserve-identifier credential signing does not re-enable strict profile ID checks.
+    func testSignBundleWithCredentialPreservesDifferentBundleIdentifierWhenProfileIsNotEmbedded() throws {
+        let fixture = try OpenSSLFixture()
+        defer {
+            fixture.remove()
+        }
+        let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "app.rork.objc.guest")
+        let profile = try objcFacadeProvisioningProfile(
+            bundleIdentifier: "app.rork.objc.host",
+            certificateDER: fixture.identity.certificateDER
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
+        }
+
+        let options = BundleSigningOptionsObjC()
+        options.embedProvisioningProfile = false
+        options.codeDirectoryHashingMode = .sha256Only
+
+        let report = try Signer().signBundleWithCredential(
+            at: bundleURL,
+            provisioningProfileData: profile,
+            credentialData: Data(fixture.privateKeyPEM.utf8),
+            password: nil,
+            options: options
+        )
+
+        XCTAssertEqual(report.embeddedProvisioningProfileURLs, [])
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: bundleURL.appendingPathComponent("embedded.mobileprovision").path
+            )
+        )
+
+        let executable = try Data(contentsOf: bundleURL.appendingPathComponent("Host"))
+        let payload = try objcFacadeEntitlementsPayload(inSignedMachO: executable)
+        XCTAssertTrue(payload.contains("TEAMID1234.app.rork.objc.guest"), payload)
+        XCTAssertFalse(payload.contains("TEAMID1234.app.rork.objc.host"), payload)
+        XCTAssertEqual(try RorkSigner.checkMachOCodeSignatures(executable).first?.codeDirectories.map(\.hashAlgorithm), [.sha256])
+    }
+
     /// Verifies dictionary-backed option validation rejects non-data values.
     func testStandaloneOptionsRejectInvalidProfileMapValues() throws {
         let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "app.rork.objc.invalid")
@@ -134,6 +175,14 @@ private func objcFacadeInfoPlist(
         options: 0
     )
     try data.write(to: url)
+}
+
+/// Reads the XML entitlement slot from a signed test Mach-O.
+private func objcFacadeEntitlementsPayload(inSignedMachO signed: Data) throws -> String {
+    let blobs = try signatureBlobs(in: signed)
+    let entitlements = try XCTUnwrap(blobs[5])
+    let length = Int(entitlements.readUInt32BE(at: 4))
+    return String(decoding: entitlements.subdata(in: 8..<length), as: UTF8.self)
 }
 
 /// Builds a raw plist provisioning profile authorized for the fixture identity.

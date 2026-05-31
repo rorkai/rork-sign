@@ -1371,14 +1371,11 @@ public final class Signer: NSObject {
         options: BundleSigningOptionsObjC?
     ) throws -> BundleSigningReportObjC {
         let options = options ?? BundleSigningOptionsObjC.preserveIdentifierCredentialDefaults()
-        let identity = try RorkSign.SigningIdentity(
+        let report = try RorkSigner.signBundleWithCredential(
+            at: bundleURL,
             provisioningProfileData: provisioningProfileData,
             credentialData: credentialData,
-            password: password ?? ""
-        )
-        let report = try RorkSigner.signBundleWithIdentity(
-            at: bundleURL,
-            identity: identity,
+            password: password ?? "",
             options: try options.coreValue(rootProvisioningProfile: provisioningProfileData)
         )
         return BundleSigningReportObjC(report)

@@ -1361,7 +1361,7 @@ public struct BundleSigningOptions: Equatable {
 public enum RorkSigner {
     /// Package version for CLI diagnostics and consumers that expose signer info.
     public static var version: String {
-        "0.2.1"
+        "0.2.2"
     }
 
     /// Reads high-level Mach-O metadata needed by signing and diagnostics.
@@ -2247,6 +2247,34 @@ public enum RorkSigner {
                 dylibInjections: dylibInjections,
                 dylibLoadCommandsToRemove: dylibLoadCommandsToRemove
             )
+        )
+    }
+
+    /// Signs a bundle with a provisioning profile, private-key credential, and explicit options.
+    ///
+    /// This overload preserves the same profile semantics as
+    /// ``signBundleWithCredential(at:provisioningProfileData:credentialData:password:embedProvisioningProfile:codeDirectoryHashingMode:dylibInjections:dylibLoadCommandsToRemove:)``
+    /// while letting callers supply the full bundle-signing option surface.
+    /// In particular, non-embedded profile signing skips bundle-identifier
+    /// authorization so hosts can sign guest bundles that intentionally preserve
+    /// their original identifiers.
+    @discardableResult
+    public static func signBundleWithCredential(
+        at bundleURL: URL,
+        provisioningProfileData: Data,
+        credentialData: Data,
+        password: String = "",
+        options: BundleSigningOptions
+    ) throws -> BundleSigningReport {
+        let identity = try SigningIdentity(
+            provisioningProfileData: provisioningProfileData,
+            credentialData: credentialData,
+            password: password
+        )
+        return try BundleSigner.signWithCredential(
+            bundleURL: bundleURL,
+            identity: identity,
+            options: options
         )
     }
 
