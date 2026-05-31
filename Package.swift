@@ -13,6 +13,10 @@ let package = Package(
             name: "RorkSign",
             targets: ["RorkSign"]
         ),
+        .library(
+            name: "RorkSignObjC",
+            targets: ["RorkSignObjC"]
+        ),
         .executable(
             name: "rorksign",
             targets: ["RorkSignCLI"]
@@ -33,6 +37,13 @@ let package = Package(
             ],
             path: "Sources/RorkSign"
         ),
+        .target(
+            name: "RorkSignObjC",
+            dependencies: [
+                "RorkSign",
+            ],
+            path: "Sources/RorkSignObjC"
+        ),
         .executableTarget(
             name: "RorkSignCLI",
             dependencies: [
@@ -46,6 +57,7 @@ let package = Package(
             name: "RorkSignTests",
             dependencies: [
                 "RorkSign",
+                "RorkSignObjC",
                 .product(name: "ZIPFoundation", package: "ZIPFoundation"),
             ],
             path: "Tests/RorkSignTests"
