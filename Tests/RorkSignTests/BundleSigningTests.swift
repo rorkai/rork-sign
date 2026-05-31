@@ -266,9 +266,10 @@ final class BundleSigningTests: XCTestCase {
         )
 
         let hostExecutable = try Data(contentsOf: bundleURL.appendingPathComponent("Host"))
-        let entitlements = try entitlementsPayload(inSignedMachO: hostExecutable)
-        XCTAssertTrue(entitlements.contains("TEAMID1234.app.rork.host"))
-        XCTAssertTrue(entitlements.contains("com.apple.developer.team-identifier"))
+        let entitlements = try entitlementsDictionary(inSignedMachO: hostExecutable)
+        XCTAssertEqual(entitlements["application-identifier"] as? String, "TEAMID1234.app.rork.host")
+        XCTAssertEqual(entitlements["com.apple.developer.team-identifier"] as? String, "TEAMID1234")
+        XCTAssertEqual(entitlements["keychain-access-groups"] as? [String], ["TEAMID1234.app.rork.host"])
     }
 
     func testSignBundleAdHocUsesRootProvisioningProfileFallback() throws {
@@ -656,6 +657,12 @@ private func entitlementsPayload(inSignedMachO signed: Data) throws -> String {
     let length = Int(entitlements.readUInt32BE(at: 4))
     let payload = entitlements.subdata(in: 8..<length)
     return String(decoding: payload, as: UTF8.self)
+}
+
+private func entitlementsDictionary(inSignedMachO signed: Data) throws -> [String: Any] {
+    let payload = try Data(entitlementsPayload(inSignedMachO: signed).utf8)
+    let plist = try PropertyListSerialization.propertyList(from: payload, options: [], format: nil)
+    return try XCTUnwrap(plist as? [String: Any])
 }
 
 private func hash2(for relativePath: String, in codeResources: [String: Any]) throws -> Data {
