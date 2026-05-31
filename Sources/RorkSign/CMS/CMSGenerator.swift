@@ -4,11 +4,11 @@ import Foundation
 /// Builds detached CMS SignedData blobs for Apple code signatures.
 ///
 /// The CMS payload signs the CodeDirectory via signed attributes. In addition
-/// to the generic CMS `contentType` and `messageDigest` attributes, Apple code
-/// signatures carry private cdhash attributes under `1.2.840.113635.100.9.*`.
-/// Those attributes are not needed by OpenSSL to verify the CMS, but they are
-/// part of the shape Apple tooling emits and consumers expect when inspecting
-/// signed Mach-O files.
+/// to the generic CMS `contentType`, `signingTime`, and `messageDigest`
+/// attributes, Apple code signatures carry private cdhash attributes under
+/// `1.2.840.113635.100.9.*`. Those attributes are not needed by OpenSSL to
+/// verify the CMS, but they are part of the shape Apple tooling emits and
+/// consumers expect when inspecting signed Mach-O files.
 enum CMSGenerator {
     /// Generates a detached CMS SignedData payload over `content`.
     static func signDetached(
@@ -71,6 +71,10 @@ enum CMSGenerator {
                 values: [DER.objectIdentifier(OID.data)]
             ),
             attribute(
+                OID.signingTime,
+                values: [DER.utcTime(Date())]
+            ),
+            attribute(
                 OID.messageDigest,
                 values: [DER.octetString(Data(SHA256.hash(data: content)))]
             ),
@@ -121,6 +125,7 @@ enum CMSGenerator {
         \t</array>
         </dict>
         </plist>
+
         """.utf8)
     }
 
@@ -142,7 +147,7 @@ enum CMSGenerator {
     ) throws -> Data {
         DER.sequence(
             DER.integer(1)
-                + DER.set([algorithmIdentifier(OID.sha256)])
+                + DER.set([digestAlgorithmIdentifier(OID.sha256)])
                 + DER.sequence(DER.objectIdentifier(OID.data))
                 + DER.implicitSet(0, certificatesDER)
                 + DER.set([
@@ -168,7 +173,7 @@ enum CMSGenerator {
         return DER.sequence(
             DER.integer(1)
                 + DER.sequence(certificateInfo.issuerDER + certificateInfo.serialNumberDER)
-                + algorithmIdentifier(OID.sha256)
+                + digestAlgorithmIdentifier(OID.sha256)
                 + DER.implicit(0, signedAttributeContent)
                 + algorithmIdentifier(
                     signatureAlgorithm.oid,
@@ -182,6 +187,16 @@ enum CMSGenerator {
         DER.sequence(DER.objectIdentifier(oid) + (includeNullParameters ? DER.null() : Data()))
     }
 
+    /// Digest AlgorithmIdentifier used by CMS.
+    ///
+    /// OpenSSL omits parameters for SHA-2 digest algorithms inside CMS
+    /// `digestAlgorithms` and `SignerInfo.digestAlgorithm`. Matching that DER
+    /// shape avoids producing signatures that verify cryptographically but look
+    /// different to stricter platform code-signature validators.
+    private static func digestAlgorithmIdentifier(_ oid: String) -> Data {
+        algorithmIdentifier(oid, includeNullParameters: false)
+    }
+
     private static func attribute(_ oid: String, values: [Data]) -> Data {
         DER.sequence(DER.objectIdentifier(oid) + DER.set(values))
     }
@@ -192,6 +207,7 @@ private enum OID {
     static let signedData = "1.2.840.113549.1.7.2"
     static let contentType = "1.2.840.113549.1.9.3"
     static let messageDigest = "1.2.840.113549.1.9.4"
+    static let signingTime = "1.2.840.113549.1.9.5"
     static let sha256 = "2.16.840.1.101.3.4.2.1"
     static let appleCDHashesPlist = "1.2.840.113635.100.9.1"
     static let appleCDHashSequence = "1.2.840.113635.100.9.2"
@@ -237,6 +253,24 @@ private enum DER {
 
     static func null() -> Data {
         Data([0x05, 0x00])
+    }
+
+    /// Encodes a CMS signing timestamp as DER UTCTime.
+    static func utcTime(_ date: Date) -> Data {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+        let year = (components.year ?? 0) % 100
+        let value = String(
+            format: "%02d%02d%02d%02d%02d%02dZ",
+            year,
+            components.month ?? 1,
+            components.day ?? 1,
+            components.hour ?? 0,
+            components.minute ?? 0,
+            components.second ?? 0
+        )
+        return tagged(0x17, Data(value.utf8))
     }
 
     static func explicit(_ tagNumber: UInt8, _ encodedValue: Data) -> Data {

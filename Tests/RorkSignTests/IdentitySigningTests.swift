@@ -1180,11 +1180,29 @@ final class IdentitySigningTests: XCTestCase {
 
         XCTAssertNotNil(cms.range(of: derObjectIdentifier("1.2.840.113635.100.9.1")))
         XCTAssertNotNil(cms.range(of: derObjectIdentifier("1.2.840.113635.100.9.2")))
+        XCTAssertNotNil(cms.range(of: derObjectIdentifier("1.2.840.113549.1.9.5")))
         XCTAssertNotNil(cms.range(of: Data("cdhashes".utf8)))
         XCTAssertNotNil(cms.range(of: Data(cdHashBase64.utf8)))
         XCTAssertGreaterThanOrEqual(cms.nonOverlappingOccurrences(of: codeDirectorySHA256), 2)
 
         try fixture.verifyDetachedCMS(cms, content: content)
+    }
+
+    func testGeneratedCMSUsesOpenSSLDigestAlgorithmShape() throws {
+        let fixture = try OpenSSLFixture()
+        defer {
+            fixture.remove()
+        }
+
+        let cms = try RorkSigner.makeDetachedCMSSignature(
+            for: Data("CodeDirectory bytes with OpenSSL digest shape".utf8),
+            identity: fixture.identity
+        )
+        let sha256AlgorithmWithNull = Data([0x30, 0x0d])
+            + derObjectIdentifier("2.16.840.1.101.3.4.2.1")
+            + Data([0x05, 0x00])
+
+        XCTAssertNil(cms.range(of: sha256AlgorithmWithNull))
     }
 
     func testGeneratedCMSIncludesPrimaryAndAlternateCDHashes() throws {
