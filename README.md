@@ -25,6 +25,7 @@ oracle for certificate and CMS interoperability.
 - [Examples](#examples)
 - [Certificate Checks](#certificate-checks)
 - [Swift API](#swift-api)
+- [C and Objective-C API](#c-and-objective-c-api)
 - [ZSign Compatibility](#zsign-compatibility)
 - [Fast Re-signing](#fast-re-signing)
 - [Limitations](#limitations)
@@ -37,6 +38,8 @@ oracle for certificate and CMS interoperability.
   IPA, bundle, and Mach-O workflows.
 - **Swift-first library** - the `RorkSign` module exposes signing, inspection,
   resource sealing, and credential APIs directly to Swift applications.
+- **C and Objective-C interop** - `RorkSignC` and `RorkSignObjC` expose the
+  same Swift engine to C, Objective-C, Objective-C++, and mixed Apple targets.
 - **Mach-O signing** - ad-hoc and identity-backed signatures for thin and
   universal 64-bit Mach-O files.
 - **CMS signatures** - pure Swift detached CMS SignedData generation and
@@ -369,6 +372,51 @@ let teamID = try RorkSigner.validatedTeamIdentifier(
     password: "password"
 )
 ```
+
+## C and Objective-C API
+
+The signing engine remains implemented in Swift. `RorkSignC` and
+`RorkSignObjC` are thin interop layers for consumers that cannot import Swift
+APIs directly.
+
+Add the products you need:
+
+```swift
+.product(name: "RorkSignC", package: "rork-sign")
+.product(name: "RorkSignObjC", package: "rork-sign")
+```
+
+`RorkSignC` exposes one stable dispatcher:
+
+```c
+bool RorkSignCExecute(RorkSignCOperation operation,
+                      const void *requestBytes,
+                      intptr_t requestLength,
+                      void **valueBytes,
+                      intptr_t *valueLength,
+                      char **errorBytes,
+                      intptr_t *errorLength);
+```
+
+Requests and successful responses are binary property-list dictionaries.
+Failure output is a UTF-8 error string. Callers release returned buffers with
+`RorkSignCFree`.
+
+`RorkSignObjC` wraps that ABI with Foundation types:
+
+```objc
+#import <RorkSignObjC/RorkSignObjC.h>
+
+NSError *error = nil;
+NSDictionary *report = [RorkSignSigner performOperation:RorkSignObjCOperationInspectMachO
+                                                request:@{@"data": machOData}
+                                                  error:&error];
+```
+
+Common credential signing entry points are also available as typed Objective-C
+methods, including profile/credential team validation, bundle signing, and
+standalone bundle signing. Advanced operations remain available through
+`performOperation:request:error:` with the `RorkSignObjCOperation` enum.
 
 ## ZSign Compatibility
 
