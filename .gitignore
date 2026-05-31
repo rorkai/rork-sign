@@ -3,6 +3,7 @@
 .zsign_cache/
 .vscode/
 DerivedData/
+.DS_Store
 *.xcodeproj
 *.xcworkspace
 xcuserdata/

@@ -45,6 +45,9 @@ final class CodeResourcesTests: XCTestCase {
         let infoRule = try XCTUnwrap(rules2["^Info\\.plist$"] as? [String: Any])
         XCTAssertEqual(infoRule["omit"] as? Bool, true)
         XCTAssertEqual(infoRule["weight"] as? Int, 20)
+        let mobileProvisionRule = try XCTUnwrap(rules2["^embedded\\.mobileprovision$"] as? [String: Any])
+        XCTAssertEqual(mobileProvisionRule["weight"] as? Int, 20)
+        XCTAssertNil(rules2["^embedded\\.provisionprofile$"])
     }
 
     func testSealBundleResourcesWritesCodeSignatureFile() throws {

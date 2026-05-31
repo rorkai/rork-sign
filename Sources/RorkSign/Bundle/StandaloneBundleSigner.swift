@@ -319,9 +319,10 @@ private enum StandaloneBundleIdentityRewriter {
                 replacementRootIdentifier: replacementRootIdentifier
             )
         } else {
-            rewrittenIdentifier = originalIdentifier.replacingOccurrences(
-                of: originalRootIdentifier,
-                with: replacementRootIdentifier
+            rewrittenIdentifier = BundleIdentifier.rebasedNestedIdentifier(
+                originalIdentifier,
+                originalRootIdentifier: originalRootIdentifier,
+                replacementRootIdentifier: replacementRootIdentifier
             )
         }
 
@@ -810,7 +811,11 @@ private struct MutableInfoPlist {
             return
         }
         setValue(
-            value.replacingOccurrences(of: oldRootIdentifier, with: replacementRootIdentifier),
+            BundleIdentifier.rebasedNestedIdentifier(
+                value,
+                originalRootIdentifier: oldRootIdentifier,
+                replacementRootIdentifier: replacementRootIdentifier
+            ),
             forKeyPath: keyPath
         )
     }
@@ -875,9 +880,10 @@ private enum BundleIdentifier {
         originalRootIdentifier: String,
         replacementRootIdentifier: String
     ) -> String {
-        let rewritten = originalIdentifier.replacingOccurrences(
-            of: originalRootIdentifier,
-            with: replacementRootIdentifier
+        let rewritten = rebasedNestedIdentifier(
+            originalIdentifier,
+            originalRootIdentifier: originalRootIdentifier,
+            replacementRootIdentifier: replacementRootIdentifier
         )
         let requiredPrefix = replacementRootIdentifier + "."
         guard !rewritten.hasPrefix(requiredPrefix) else {
@@ -892,6 +898,22 @@ private enum BundleIdentifier {
             suffix = originalIdentifier.split(separator: ".").last.map(String.init) ?? "extension"
         }
         return requiredPrefix + (suffix.isEmpty ? "extension" : suffix)
+    }
+
+    static func rebasedNestedIdentifier(
+        _ originalIdentifier: String,
+        originalRootIdentifier: String,
+        replacementRootIdentifier: String
+    ) -> String {
+        guard originalIdentifier != originalRootIdentifier else {
+            return replacementRootIdentifier
+        }
+
+        let originalPrefix = originalRootIdentifier + "."
+        guard originalIdentifier.hasPrefix(originalPrefix) else {
+            return originalIdentifier
+        }
+        return replacementRootIdentifier + "." + originalIdentifier.dropFirst(originalPrefix.count)
     }
 }
 

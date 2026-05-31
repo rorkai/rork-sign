@@ -307,6 +307,44 @@ final class StandaloneBundleSigningTests: XCTestCase {
         XCTAssertNil(watchEntitlements["com.apple.security.application-groups"])
     }
 
+    func testStandaloneOnlyRewritesNestedBundleIdentifierRootPrefix() throws {
+        let fixture = try makeStandaloneBundleFixture(includeWatchApp: true)
+        let watchURL = try XCTUnwrap(fixture.watchURL)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
+        }
+        try writeInfoPlist(
+            [
+                "CFBundleIdentifier": "com.vendor.com.original.host.watchkitapp",
+                "CFBundleExecutable": "WatchApp",
+                "CFBundleSupportedPlatforms": ["WatchOS"],
+                "WKApplication": true,
+            ],
+            to: watchURL.appendingPathComponent("Info.plist")
+        )
+
+        let wildcardProfile = try provisioningProfilePlist(
+            teamIdentifier: "TEAMID1234",
+            entitlements: [
+                "application-identifier": "TEAMID1234.*",
+                "com.apple.developer.team-identifier": "TEAMID1234",
+                "get-task-allow": true,
+            ]
+        )
+
+        try RorkSigner.signStandaloneBundleAdHoc(
+            at: fixture.bundleURL,
+            options: StandaloneBundleSigningOptions(
+                bundleIdentifier: "app.rork.standalone",
+                rootProvisioningProfile: wildcardProfile,
+                watchProvisioningProfile: wildcardProfile
+            )
+        )
+
+        let watchInfo = try infoPlist(at: watchURL)
+        XCTAssertEqual(watchInfo["CFBundleIdentifier"] as? String, "com.vendor.com.original.host.watchkitapp")
+    }
+
     func testStandaloneAppliesRootMetadataOptionsBeforeSigning() throws {
         let fixture = try makeStandaloneBundleFixture()
         addTeardownBlock {

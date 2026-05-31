@@ -61,6 +61,33 @@ final class MetadataTests: XCTestCase {
         XCTAssertEqual(report.timestamp, 1_700_000_001)
     }
 
+    func testBundleMetadataCanCopyIconIntoExistingOutputDirectory() throws {
+        let fixture = try makeMetadataAppFixture()
+        let outputDirectory = fixture.rootURL.appendingPathComponent("Metadata", isDirectory: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.rootURL)
+        }
+
+        let firstReport = try RorkSigner.extractBundleMetadata(
+            at: fixture.appURL,
+            outputDirectory: outputDirectory,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_001)
+        )
+        try Data("stale icon".utf8).write(to: outputDirectory.appendingPathComponent(firstReport.iconName))
+
+        let secondReport = try RorkSigner.extractBundleMetadata(
+            at: fixture.appURL,
+            outputDirectory: outputDirectory,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_002)
+        )
+
+        XCTAssertEqual(secondReport.iconName, firstReport.iconName)
+        XCTAssertEqual(
+            try Data(contentsOf: outputDirectory.appendingPathComponent(secondReport.iconName)),
+            try Data(contentsOf: fixture.largeIconURL)
+        )
+    }
+
     func testIPAMetadataUsesArchiveFilenameAndSize() throws {
         let fixture = try makeMetadataAppFixture()
         let archiveRoot = fixture.rootURL.appendingPathComponent("ArchiveRoot", isDirectory: true)

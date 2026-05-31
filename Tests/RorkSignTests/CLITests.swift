@@ -1648,9 +1648,8 @@ private func runRorkSign(
     process.standardOutput = output
     process.standardError = output
     try process.run()
-    process.waitUntilExit()
-
     let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
     return CLIResult(
         status: process.terminationStatus,
         output: String(decoding: data, as: UTF8.self)

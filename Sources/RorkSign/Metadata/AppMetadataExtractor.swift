@@ -128,9 +128,13 @@ enum AppMetadataExtractor {
         }
 
         let copiedName = sha1Hex(iconURL.path) + ".png"
+        let destinationURL = outputDirectory.appendingPathComponent(copiedName)
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            try FileManager.default.removeItem(at: destinationURL)
+        }
         try FileManager.default.copyItem(
             at: iconURL,
-            to: outputDirectory.appendingPathComponent(copiedName)
+            to: destinationURL
         )
         return copiedName
     }

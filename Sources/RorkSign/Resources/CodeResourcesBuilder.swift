@@ -659,7 +659,7 @@ private enum ResourceRules {
         "^Base\\.lproj/": [
             "weight": 1010,
         ],
-        "^embedded\\.provisionprofile$": [
+        "^embedded\\.mobileprovision$": [
             "weight": 20,
         ],
         "^Info\\.plist$": [

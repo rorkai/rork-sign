@@ -478,6 +478,19 @@ final class BundleSigningTests: XCTestCase {
         )
     }
 
+    func testSignBundleAdHocRejectsMalformedStandaloneCodeWithSwappedMachOMagic() throws {
+        let bundleURL = try makeNestedBundleFixture()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
+        }
+        try Data([0xfe, 0xed, 0xfa, 0xcf, 0x00, 0x00, 0x00, 0x00])
+            .write(to: bundleURL.appendingPathComponent("Helper"))
+
+        XCTAssertThrowsError(try RorkSigner.signBundleAdHoc(at: bundleURL)) { error in
+            XCTAssertEqual(error as? RorkSignError, .invalidMachO("Input is not a supported Mach-O file."))
+        }
+    }
+
     func testSignBundleAdHocRejectsUnsafeExecutablePathDylibDestination() throws {
         let bundleURL = try makeNestedBundleFixture(
             hostExecutable: Fixtures.machO64WithoutCodeSignatureButWithLoadCommandSpace()
