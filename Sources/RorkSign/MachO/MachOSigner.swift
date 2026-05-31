@@ -461,12 +461,6 @@ private enum Constants {
     static let lcLoadDylib: UInt32 = 0xc
     static let lcLoadWeakDylib: UInt32 = 0x80000018
     static let mhExecuteFileType: UInt32 = 2
-    static let emptyEntitlementsXML =
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
-        "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n" +
-        "<plist version=\"1.0\">\n" +
-        "<dict/>\n" +
-        "</plist>\n"
 
     static let machHeader32Size = 28
     static let machHeader64Size = 32
@@ -483,6 +477,14 @@ private enum Constants {
     static let csSlotEntitlements: UInt32 = 5
     static let csExecSegMainBinary: UInt64 = 0x1
     static let csExecSegAllowUnsigned: UInt64 = 0x10
+    static let emptyEntitlementsXML = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict/>
+    </plist>
+
+    """
 }
 
 private struct ThinHeader {
@@ -512,9 +514,11 @@ private struct ThinSigningLayout {
     /// from the old signature, because standalone signing can replace the
     /// entitlement set while keeping the Mach-O bytes otherwise unchanged.
     func executableSegmentFlags(entitlementsXML: String) -> UInt64 {
-        var flags: UInt64 = header.fileType == Constants.mhExecuteFileType
-            ? Constants.csExecSegMainBinary
-            : 0
+        guard header.fileType == Constants.mhExecuteFileType else {
+            return 0
+        }
+
+        var flags = Constants.csExecSegMainBinary
         if entitlementBooleanValue(entitlementsXML, key: "get-task-allow") {
             flags |= Constants.csExecSegAllowUnsigned
         }
@@ -523,12 +527,11 @@ private struct ThinSigningLayout {
 
     /// Builds the CodeDirectory input after applying Mach-O-type signing policy.
     ///
-    /// Non-`MH_EXECUTE` images are signed as entitlement-free code: they still
-    /// receive an XML entitlement slot containing an empty plist, but they do
-    /// not receive DER entitlements and do not inherit executable-only flags
-    /// from the provisioning profile. Some embedding runtimes patch app
-    /// executables into `MH_DYLIB` before signing, so this distinction is part
-    /// of the compatibility contract rather than a cosmetic slot difference.
+    /// Non-`MH_EXECUTE` images emit an empty XML entitlement slot, omit DER
+    /// entitlements, and clear executable-only flags. The original entitlement
+    /// XML still feeds `teamIdentifier` through `MachOSigningOptions`, matching
+    /// signing tools that keep the Team ID in CodeDirectory while treating
+    /// dylibs and helper images as non-app code.
     func codeSignatureInput(
         code: Data,
         options: MachOSigningOptions,

@@ -116,11 +116,22 @@ enum BundleSigner {
             )
         }
 
+        let executableOriginalEntitlementsXML = try bundle.executableURL.map {
+            try originalEntitlementsXML(at: $0)
+        } ?? ""
+        let bundleEntitlementsXML = try bundle.identifier == nil
+            ? ""
+            : options.entitlementsXML(
+                for: bundle,
+                isRoot: isRoot,
+                originalEntitlementsXML: executableOriginalEntitlementsXML
+            )
+
         for codeURL in try BundleCodeScanner.standaloneCodeFiles(in: bundle) {
             try signCode(
                 at: codeURL,
                 bundleIdentifier: bundle.standaloneCodeIdentifier(for: codeURL),
-                entitlementsXML: "",
+                entitlementsXML: bundleEntitlementsXML,
                 infoPlist: Data(),
                 resourceDirectory: Data(),
                 signingMode: signingMode,
@@ -153,15 +164,10 @@ enum BundleSigner {
 
         let codeResources = try Data(contentsOf: codeResourcesURL)
         let infoPlist = try bundle.infoPlistData()
-        let originalEntitlementsXML = try originalEntitlementsXML(at: executableURL)
         try signCode(
             at: executableURL,
             bundleIdentifier: try bundle.requireIdentifier(),
-            entitlementsXML: try options.entitlementsXML(
-                for: bundle,
-                isRoot: isRoot,
-                originalEntitlementsXML: originalEntitlementsXML
-            ),
+            entitlementsXML: bundleEntitlementsXML,
             infoPlist: infoPlist,
             resourceDirectory: codeResources,
             signingMode: signingMode,

@@ -1372,7 +1372,7 @@ public struct BundleSigningOptions: Equatable {
 public enum RorkSigner {
     /// Package version for CLI diagnostics and consumers that expose signer info.
     public static var version: String {
-        "0.2.7"
+        "0.2.8"
     }
 
     /// Reads high-level Mach-O metadata needed by signing and diagnostics.
@@ -2294,10 +2294,14 @@ public enum RorkSigner {
             credentialData: credentialData,
             password: password
         )
+        var resolvedOptions = options
+        if resolvedOptions.rootProvisioningProfile == nil {
+            resolvedOptions.rootProvisioningProfile = provisioningProfileData
+        }
         return try BundleSigner.signWithCredential(
             bundleURL: bundleURL,
             identity: identity,
-            options: options
+            options: resolvedOptions
         )
     }
 

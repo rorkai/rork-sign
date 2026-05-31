@@ -1270,7 +1270,7 @@ final class IdentitySigningTests: XCTestCase {
         XCTAssertEqual(swiftReport.signingCertificate.subjectCommonName, "RorkSignTest")
     }
 
-    func testIdentitySigningUsesEmptyEntitlementsForNonExecuteMachO() throws {
+    func testIdentitySigningUsesEmptyXMLEntitlementsForNonExecuteMachO() throws {
         let fixture = try OpenSSLFixture()
         defer {
             fixture.remove()
@@ -1676,7 +1676,7 @@ final class IdentitySigningTests: XCTestCase {
         XCTAssertEqual(try RorkSigner.checkMachOCodeSignatures(hostExecutable).first?.codeDirectories.map(\.hashAlgorithm), [.sha256])
     }
 
-    func testBundleCredentialSigningUsesProfileTeamForStandaloneCode() throws {
+    func testBundleCredentialSigningUsesEmptyEntitlementsForStandaloneDylib() throws {
         let fixture = try OpenSSLFixture()
         defer {
             fixture.remove()
@@ -1696,7 +1696,10 @@ final class IdentitySigningTests: XCTestCase {
             at: bundleURL,
             provisioningProfileData: profile,
             credentialData: Data(fixture.privateKeyPEM.utf8),
-            options: BundleSigningOptions(codeDirectoryHashingMode: .compatible)
+            options: BundleSigningOptions(
+                embedProvisioningProfiles: false,
+                codeDirectoryHashingMode: .compatible
+            )
         )
 
         let standaloneCode = try Data(contentsOf: standaloneCodeURL)
@@ -1710,10 +1713,13 @@ final class IdentitySigningTests: XCTestCase {
         )
 
         XCTAssertTrue(entitlementsPayload.contains("<dict/>"), entitlementsPayload)
+        XCTAssertFalse(entitlementsPayload.contains("TEAMID1234.app.rork.identity.guest"), entitlementsPayload)
+        XCTAssertNil(blobs[7])
         XCTAssertEqual(
             nullTerminatedString(in: codeDirectory, offset: Int(codeDirectory.readUInt32BE(at: 20))),
             "Loose.dylib"
         )
+        XCTAssertEqual(codeDirectory.readUInt64BE(at: 80), 0)
         XCTAssertEqual(
             nullTerminatedString(in: codeDirectory, offset: Int(codeDirectory.readUInt32BE(at: 48))),
             "TEAMID1234"

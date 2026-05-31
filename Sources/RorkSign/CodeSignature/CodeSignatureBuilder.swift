@@ -23,7 +23,7 @@ struct CodeSignatureInput {
     ///
     /// Most signatures infer this from the entitlement plist. Callers can set
     /// it explicitly when the embedded entitlement shape intentionally differs
-    /// from the provisioning-profile entitlement source, such as ZSign-style
+    /// from the provisioning-profile entitlement source, such as compatibility
     /// signatures for non-`MH_EXECUTE` images.
     let teamIdentifier: String
 
@@ -51,9 +51,10 @@ struct CodeSignatureInput {
 
     /// CodeDirectory `execSegFlags` field.
     ///
-    /// Main executables carry `CS_EXECSEG_MAIN_BINARY`. When the entitlement
-    /// plist contains `get-task-allow = true`, the signer also records
-    /// `CS_EXECSEG_ALLOW_UNSIGNED`, matching Apple's development-signing shape.
+    /// Main executables carry `CS_EXECSEG_MAIN_BINARY`. When a main executable's
+    /// entitlement plist contains `get-task-allow = true`, the signer also
+    /// records `CS_EXECSEG_ALLOW_UNSIGNED`, matching Apple's development-signing
+    /// shape. Non-main Mach-O images keep this field clear.
     let executableSegmentFlags: UInt64
 
     /// CMS SignedData payload. Empty for ad-hoc signatures.
