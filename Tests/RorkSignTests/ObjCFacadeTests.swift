@@ -4,10 +4,12 @@ import RorkSignObjC
 import XCTest
 
 final class ObjCFacadeTests: XCTestCase {
+    /// Verifies the Objective-C facade reports the same version as the Swift API.
     func testVersionMatchesSwiftSignerVersion() {
         XCTAssertEqual(Signer.signerVersion(), RorkSigner.version)
     }
 
+    /// Verifies ad-hoc bundle signing returns typed Objective-C report data.
     func testSignBundleAdHocReturnsTypedReport() throws {
         let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "app.rork.objc.adhoc")
         addTeardownBlock {
@@ -27,6 +29,7 @@ final class ObjCFacadeTests: XCTestCase {
         )
     }
 
+    /// Verifies profile/credential validation succeeds through the facade.
     func testValidatedTeamIdentifierAcceptsProfileCredentialPair() throws {
         let fixture = try OpenSSLFixture()
         defer {
@@ -46,6 +49,7 @@ final class ObjCFacadeTests: XCTestCase {
         XCTAssertEqual(teamIdentifier, "TEAMID1234")
     }
 
+    /// Verifies credential signing maps Objective-C options into Swift options.
     func testSignBundleWithCredentialMapsOptionsAndSignsCode() throws {
         let fixture = try OpenSSLFixture()
         defer {
@@ -82,6 +86,7 @@ final class ObjCFacadeTests: XCTestCase {
         XCTAssertEqual(signatures.first?.codeDirectories.map(\.hashAlgorithm), [.sha256])
     }
 
+    /// Verifies dictionary-backed option validation rejects non-data values.
     func testStandaloneOptionsRejectInvalidProfileMapValues() throws {
         let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "app.rork.objc.invalid")
         addTeardownBlock {
@@ -98,6 +103,7 @@ final class ObjCFacadeTests: XCTestCase {
     }
 }
 
+/// Creates a minimal app bundle fixture for Objective-C facade tests.
 private func makeObjCFacadeBundleFixture(bundleIdentifier: String) throws -> URL {
     let rootURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -112,6 +118,7 @@ private func makeObjCFacadeBundleFixture(bundleIdentifier: String) throws -> URL
     return bundleURL
 }
 
+/// Writes the `Info.plist` required for a signable test app bundle.
 private func objcFacadeInfoPlist(
     bundleIdentifier: String,
     executableName: String,
@@ -129,6 +136,7 @@ private func objcFacadeInfoPlist(
     try data.write(to: url)
 }
 
+/// Builds a raw plist provisioning profile authorized for the fixture identity.
 private func objcFacadeProvisioningProfile(
     bundleIdentifier: String,
     certificateDER: Data

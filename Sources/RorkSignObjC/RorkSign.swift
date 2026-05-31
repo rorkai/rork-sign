@@ -108,6 +108,7 @@ public final class DylibLoadCommandObjC: NSObject {
     /// Whether this is an `LC_LOAD_WEAK_DYLIB` command.
     @objc public let isWeak: Bool
 
+    /// Wraps a Swift dylib load-command report for Objective-C consumers.
     init(_ command: RorkSign.MachODylibLoadCommand) {
         path = command.path
         isWeak = command.weak
@@ -135,6 +136,7 @@ public final class ProvisioningProfileObjC: NSObject {
     /// DER-encoded developer certificates embedded in the profile.
     @objc public let developerCertificatesDER: [Data]
 
+    /// Wraps a decoded Swift provisioning profile without reparsing its plist.
     init(_ profile: RorkSign.ProvisioningProfile) {
         coreValue = profile
         teamIdentifier = profile.teamIdentifier
@@ -192,6 +194,7 @@ public final class SigningIdentityObjC: NSObject {
         coreValue.certificateExpirationDate
     }
 
+    /// Wraps an already-loaded Swift signing identity for Objective-C APIs.
     init(_ identity: RorkSign.SigningIdentity) {
         coreValue = identity
         super.init()
@@ -260,6 +263,7 @@ public final class OCSPRequestObjC: NSObject {
     /// Responder URL discovered from Authority Information Access, if known.
     @objc public let responderURL: URL?
 
+    /// Wraps a Swift OCSP request while preserving its DER representation.
     init(_ request: RorkSign.OCSPRequest) {
         coreValue = request
         derRepresentation = request.derRepresentation
@@ -322,6 +326,7 @@ public final class OCSPHTTPOptionsObjC: NSObject {
         super.init()
     }
 
+    /// Builds the Swift HTTP options after validating dictionary-backed headers.
     func coreValue() throws -> RorkSign.OCSPHTTPOptions {
         try RorkSign.OCSPHTTPOptions(
             timeout: timeout,
@@ -330,6 +335,7 @@ public final class OCSPHTTPOptionsObjC: NSObject {
         )
     }
 
+    /// Converts an Objective-C dictionary into the string map expected by Swift.
     private static func stringDictionary(_ dictionary: NSDictionary, label: String) throws -> [String: String] {
         var result: [String: String] = [:]
         for (key, value) in dictionary {
@@ -359,6 +365,7 @@ public final class MachOCMSCodeDirectoryObjC: NSObject {
     /// Alternate CodeDirectory blob, if one will be embedded.
     @objc public let alternateCodeDirectory: Data
 
+    /// Wraps a prepared Swift CodeDirectory signing input.
     init(_ value: RorkSign.MachOCMSCodeDirectory) {
         coreValue = value
         architectureIndex = value.architectureIndex
@@ -377,6 +384,7 @@ public final class MachOCodeSignatureSlotObjC: NSObject {
     /// Complete slot blob, including its magic/length header.
     @objc public let data: Data
 
+    /// Wraps one embedded code-signature slot extracted by the Swift engine.
     init(_ value: RorkSign.MachOCodeSignatureSlot) {
         slot = value.slot
         data = value.data
@@ -396,6 +404,7 @@ public final class MachOEmbeddedCodeSignatureObjC: NSObject {
     /// Indexed blobs referenced by the SuperBlob table.
     @objc public let slots: [MachOCodeSignatureSlotObjC]
 
+    /// Wraps one architecture's embedded code signature for Objective-C callers.
     init(_ value: RorkSign.MachOEmbeddedCodeSignature) {
         architectureIndex = value.architectureIndex
         superBlob = value.superBlob
@@ -472,6 +481,7 @@ public final class BundleSigningOptionsObjC: NSObject {
         super.init()
     }
 
+    /// Builds Swift bundle-signing options after validating dictionary fields.
     func coreValue(rootProvisioningProfile: Data? = nil) throws -> RorkSign.BundleSigningOptions {
         try RorkSign.BundleSigningOptions(
             defaultEntitlementsXML: defaultEntitlementsXML,
@@ -492,6 +502,7 @@ public final class BundleSigningOptionsObjC: NSObject {
         )
     }
 
+    /// Returns the preserve-identifier credential-signing defaults used by Swift.
     static func preserveIdentifierCredentialDefaults() -> BundleSigningOptionsObjC {
         let options = BundleSigningOptionsObjC()
         options.embedProvisioningProfiles = false
@@ -584,6 +595,7 @@ public final class StandaloneBundleSigningOptionsObjC: NSObject {
         super.init()
     }
 
+    /// Builds Swift standalone signing options after validating profile maps.
     func coreValue(rootProvisioningProfile: Data? = nil) throws -> RorkSign.StandaloneBundleSigningOptions {
         try RorkSign.StandaloneBundleSigningOptions(
             bundleIdentifier: bundleIdentifier,
@@ -626,6 +638,7 @@ public final class BundleSigningReportObjC: NSObject {
     /// Mach-O files restored from the signing cache.
     @objc public let cachedCodeURLs: [URL]
 
+    /// Wraps a Swift bundle-signing report with Objective-C property names.
     init(_ report: RorkSign.BundleSigningReport) {
         sealedBundleURLs = report.sealedBundles
         embeddedProvisioningProfileURLs = report.embeddedProvisioningProfiles
@@ -656,6 +669,7 @@ public final class IPAArchiveSigningReportObjC: NSObject {
     /// Mach-O paths restored from the signing cache.
     @objc public let cachedCodePaths: [String]
 
+    /// Wraps a Swift IPA archive signing report with Objective-C property names.
     init(_ report: RorkSign.IPAArchiveSigningReport) {
         outputArchiveURL = report.outputArchiveURL
         appBundlePath = report.appBundlePath
@@ -1534,6 +1548,7 @@ public final class Signer: NSObject {
     }
 }
 
+/// Errors raised by the Objective-C facade before control reaches the signer.
 private enum SignerBridgeError: LocalizedError {
     case invalidOption(String)
 
@@ -1545,7 +1560,9 @@ private enum SignerBridgeError: LocalizedError {
     }
 }
 
+/// Validates Objective-C dictionaries before converting them to typed Swift maps.
 private enum BridgeDictionaries {
+    /// Converts an `NSDictionary` to `[String: String]` with precise option errors.
     static func stringByStringKey(_ dictionary: NSDictionary, label: String) throws -> [String: String] {
         var result: [String: String] = [:]
         for (key, value) in dictionary {
@@ -1560,6 +1577,7 @@ private enum BridgeDictionaries {
         return result
     }
 
+    /// Converts an `NSDictionary` to `[String: Data]` with precise option errors.
     static func dataByStringKey(_ dictionary: NSDictionary, label: String) throws -> [String: Data] {
         var result: [String: Data] = [:]
         for (key, value) in dictionary {
@@ -1575,6 +1593,7 @@ private enum BridgeDictionaries {
     }
 }
 
+/// Runs an async Swift report operation and returns an Objective-C completion result.
 private func completeReport<T>(
     _ completionHandler: @escaping (NSDictionary?, NSError?) -> Void,
     operation: @escaping () async throws -> T
@@ -1588,7 +1607,9 @@ private func completeReport<T>(
     }
 }
 
+/// Converts Swift report structs into Foundation containers for Objective-C.
 private enum ReportBridge {
+    /// Converts a report value into an Objective-C dictionary root.
     static func dictionary(from value: Any) throws -> NSDictionary {
         guard let dictionary = bridge(value) as? NSDictionary else {
             throw SignerBridgeError.invalidOption("Report value cannot be represented as NSDictionary.")
@@ -1596,6 +1617,7 @@ private enum ReportBridge {
         return dictionary
     }
 
+    /// Recursively converts Swift values into plist-like Foundation values.
     private static func bridge(_ value: Any) -> Any {
         if let value = value as? NSNull {
             return value
