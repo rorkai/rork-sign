@@ -1096,6 +1096,14 @@ private func signThinMachO(_ data: Data, options: MachOSigningOptions) throws ->
         reservedSignatureSize = nil
     }
 
+    let compatibleMinimumSize = try compatibleCodeSignatureReservationSize(codeLimit: codeLimit)
+
+    func layoutSignatureSize(for signatureSize: Int) -> Int {
+        let existingSignatureSize = Int(layout.codeSignatureDataSize)
+        let requestedSignatureSize = reservedSignatureSize ?? 0
+        return max(signatureSize, requestedSignatureSize, existingSignatureSize, compatibleMinimumSize)
+    }
+
     func writeSignatureLayout(signatureSize: Int) throws {
         let newLength = codeLimit + UInt64(signatureSize)
         guard codeLimit <= UInt64(UInt32.max), signatureSize <= Int(UInt32.max) else {
@@ -1114,7 +1122,7 @@ private func signThinMachO(_ data: Data, options: MachOSigningOptions) throws ->
 
     try writeSignatureLayout(signatureSize: 0)
     var signature = try buildSignature()
-    let firstLayoutSize = reservedSignatureSize ?? signature.count
+    let firstLayoutSize = layoutSignatureSize(for: signature.count)
     guard firstLayoutSize >= signature.count else {
         throw RorkSignError.cmsSigning("Reserved code-signature size is smaller than the generated signature.")
     }
@@ -1124,7 +1132,7 @@ private func signThinMachO(_ data: Data, options: MachOSigningOptions) throws ->
     try writeSignatureLayout(signatureSize: firstLayoutSize)
     signature = try buildSignature()
 
-    let finalLayoutSize = reservedSignatureSize ?? signature.count
+    let finalLayoutSize = layoutSignatureSize(for: signature.count)
     guard finalLayoutSize >= signature.count else {
         throw RorkSignError.cmsSigning("Reserved code-signature size is smaller than the generated signature.")
     }
@@ -1192,6 +1200,12 @@ private func prepareThinMachOCMSCodeDirectories(
         )
     }
 
+    let compatibleMinimumSize = try compatibleCodeSignatureReservationSize(codeLimit: codeLimit)
+
+    func layoutSignatureSize(for signatureSize: Int) -> Int {
+        max(signatureSize, Int(layout.codeSignatureDataSize), compatibleMinimumSize)
+    }
+
     func writeSignatureLayout(signatureSize: Int) throws {
         let newLength = codeLimit + UInt64(signatureSize)
         guard codeLimit <= UInt64(UInt32.max), signatureSize <= Int(UInt32.max) else {
@@ -1210,7 +1224,7 @@ private func prepareThinMachOCMSCodeDirectories(
 
     try writeSignatureLayout(signatureSize: 0)
     let placeholderSignature = try buildPlaceholderSignature()
-    try writeSignatureLayout(signatureSize: placeholderSignature.count)
+    try writeSignatureLayout(signatureSize: layoutSignatureSize(for: placeholderSignature.count))
 
     return try CodeSignatureBuilder.buildCodeDirectories(
         layout.codeSignatureInput(
@@ -1411,6 +1425,27 @@ private func alignUp(_ value: UInt64, alignment: UInt64) -> UInt64 {
     }
     let remainder = value % alignment
     return remainder == 0 ? value : value + alignment - remainder
+}
+
+/// Returns a conservative `LC_CODE_SIGNATURE` reservation for resigned code.
+///
+/// The embedded SuperBlob is usually smaller than this region. Keeping spare
+/// zero padding preserves the layout shape used by established iOS signing
+/// tools and leaves room for hash-table growth when code size changes.
+private func compatibleCodeSignatureReservationSize(codeLimit: UInt64) throws -> Int {
+    let bytesPerPageHashPair: UInt64 = 20 + 32
+    let paddingBudget: UInt64 = 32 * 1024
+    let pageCountWithSentinel = (codeLimit / 4096) + 1
+    guard pageCountWithSentinel <= UInt64.max / bytesPerPageHashPair else {
+        throw RorkSignError.invalidMachO("Code-signature reservation overflowed.")
+    }
+
+    let hashBudget = pageCountWithSentinel * bytesPerPageHashPair
+    let alignedHashBudget = alignUp(hashBudget, alignment: 4096)
+    guard alignedHashBudget <= UInt64(Int.max) - paddingBudget else {
+        throw RorkSignError.invalidMachO("Code-signature reservation is too large.")
+    }
+    return Int(alignedHashBudget + paddingBudget)
 }
 
 private func fixedNameEquals(_ data: Data, offset: Int, name: String) -> Bool {

@@ -134,9 +134,13 @@ final class MachOSigningTests: XCTestCase {
 
         XCTAssertTrue(info.hasCodeSignature)
         XCTAssertEqual(info.codeSignatureOffset, 0x100)
+        XCTAssertEqual(
+            info.codeSignatureSize,
+            compatibleCodeSignatureReservationSize(codeLimit: UInt64(info.codeSignatureOffset))
+        )
         XCTAssertEqual(signed.count, Int(info.codeSignatureOffset + info.codeSignatureSize))
         XCTAssertEqual(signed.readUInt32BE(at: Int(info.codeSignatureOffset)), 0xfade0cc0)
-        XCTAssertEqual(signed.readUInt32BE(at: Int(info.codeSignatureOffset) + 4), info.codeSignatureSize)
+        XCTAssertLessThanOrEqual(signed.readUInt32BE(at: Int(info.codeSignatureOffset) + 4), info.codeSignatureSize)
         XCTAssertEqual(signed.readUInt32BE(at: Int(info.codeSignatureOffset) + 8), 3)
 
         let blobs = try signatureBlobs(in: signed)
@@ -326,6 +330,10 @@ final class MachOSigningTests: XCTestCase {
         XCTAssertEqual(signed.readUInt32LE(at: 20), 168)
         XCTAssertEqual(signed.readUInt32LE(at: 184), 0x1d)
         XCTAssertEqual(signed.readUInt32LE(at: 192), 0x130)
+        XCTAssertEqual(
+            info.codeSignatureSize,
+            compatibleCodeSignatureReservationSize(codeLimit: UInt64(info.codeSignatureOffset))
+        )
         XCTAssertEqual(signed.count, Int(info.codeSignatureOffset + info.codeSignatureSize))
     }
 
@@ -646,7 +654,7 @@ final class MachOSigningTests: XCTestCase {
         let secondOffset = Int(signed.readUInt32BE(at: 36))
         let secondSize = Int(signed.readUInt32BE(at: 40))
         XCTAssertEqual(firstOffset, 0x1000)
-        XCTAssertEqual(secondOffset, 0x2000)
+        XCTAssertEqual(secondOffset, alignUpForTest(firstOffset + firstSize, alignment: 0x1000))
         XCTAssertGreaterThan(firstSize, 0x140)
         XCTAssertGreaterThan(secondSize, 0x140)
 
@@ -673,4 +681,15 @@ final class MachOSigningTests: XCTestCase {
         XCTAssertTrue(signatures.allSatisfy { $0.firstSlot(2) != nil })
         XCTAssertTrue(signatures.allSatisfy { $0.firstSlot(0x1000) != nil })
     }
+}
+
+private func compatibleCodeSignatureReservationSize(codeLimit: UInt64) -> UInt32 {
+    let hashBudget = ((codeLimit / 4096) + 1) * UInt64(20 + 32)
+    let alignedHashBudget = UInt64(alignUpForTest(Int(hashBudget), alignment: 4096))
+    return UInt32(alignedHashBudget + 32 * 1024)
+}
+
+private func alignUpForTest(_ value: Int, alignment: Int) -> Int {
+    let remainder = value % alignment
+    return remainder == 0 ? value : value + alignment - remainder
 }
