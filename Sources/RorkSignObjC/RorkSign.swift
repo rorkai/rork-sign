@@ -695,7 +695,10 @@ public final class Signer: NSObject {
     /// Reads high-level Mach-O metadata from a file.
     @objc(inspectMachOAtURL:error:)
     public func inspectMachO(at url: URL) throws -> NSDictionary {
-        try inspectMachO(Data(contentsOf: url))
+        guard url.isFileURL else {
+            throw SignerBridgeError.invalidOption("inspectMachO(at:) requires a file URL.")
+        }
+        return try inspectMachO(Data(contentsOf: url))
     }
 
     /// Extracts ZSign-compatible metadata from an app bundle.

@@ -399,6 +399,9 @@ RKSigner *signer = [[RKSigner alloc] init];
 
 NSData *profile = [NSData dataWithContentsOfURL:profileURL];
 NSData *credential = [NSData dataWithContentsOfURL:credentialURL];
+if (!profile || !credential) {
+    return;
+}
 
 NSString *teamID = [signer validatedTeamIdentifierWithProvisioningProfileData:profile
                                                                 credentialData:credential

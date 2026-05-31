@@ -133,9 +133,10 @@ private func objcFacadeProvisioningProfile(
     bundleIdentifier: String,
     certificateDER: Data
 ) throws -> Data {
+    let farFutureExpiration = Date(timeIntervalSince1970: 4_102_444_800)
     let plist: [String: Any] = [
         "TeamIdentifier": ["TEAMID1234"],
-        "ExpirationDate": Date(timeIntervalSince1970: 1_900_000_000),
+        "ExpirationDate": farFutureExpiration,
         "DeveloperCertificates": [certificateDER],
         "Entitlements": [
             "application-identifier": "TEAMID1234.\(bundleIdentifier)",
