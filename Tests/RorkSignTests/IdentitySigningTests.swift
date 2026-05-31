@@ -1455,7 +1455,7 @@ final class IdentitySigningTests: XCTestCase {
         let entitlements = try XCTUnwrap(hostBlobs[5])
         let length = Int(entitlements.readUInt32BE(at: 4))
         let payload = String(decoding: entitlements.subdata(in: 8..<length), as: UTF8.self)
-        XCTAssertTrue(payload.contains("TEAMID1234.app.rork.identity.*"), payload)
+        XCTAssertTrue(payload.contains("TEAMID1234.app.rork.identity.host"), payload)
     }
 
     func testIdentityBundleSigningRejectsProfileForDifferentBundleIdentifier() throws {
@@ -1533,7 +1533,45 @@ final class IdentitySigningTests: XCTestCase {
         let cmsLength = Int(cmsBlob.readUInt32BE(at: 4))
 
         XCTAssertTrue(entitlementsPayload.contains("TEAMID1234.app.rork.identity.host"))
+        XCTAssertEqual(try RorkSigner.checkMachOCodeSignatures(hostExecutable).first?.codeDirectories.map(\.hashAlgorithm), [.sha256])
         try fixture.verifyDetachedCMS(cmsBlob.subdata(in: 8..<cmsLength), content: codeDirectory)
+    }
+
+    func testBundleCredentialSigningCanUseNonEmbeddedProfileForDifferentBundleIdentifier() throws {
+        let fixture = try OpenSSLFixture()
+        defer {
+            fixture.remove()
+        }
+        let bundleURL = try makeIdentityBundleFixture(bundleIdentifier: "app.rork.identity.guest")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
+        }
+        let profile = try identityProvisioningProfile(
+            bundleIdentifier: "app.rork.identity.host",
+            certificateDER: fixture.identity.certificateDER
+        )
+
+        let report = try RorkSigner.signBundleWithCredential(
+            at: bundleURL,
+            provisioningProfileData: profile,
+            credentialData: Data(fixture.privateKeyPEM.utf8)
+        )
+
+        XCTAssertEqual(report.embeddedProvisioningProfiles, [])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: bundleURL.appendingPathComponent("embedded.mobileprovision").path))
+
+        let hostExecutable = try Data(contentsOf: bundleURL.appendingPathComponent("Host"))
+        let hostBlobs = try signatureBlobs(in: hostExecutable)
+        let entitlements = try XCTUnwrap(hostBlobs[5])
+        let entitlementsLength = Int(entitlements.readUInt32BE(at: 4))
+        let entitlementsPayload = String(
+            decoding: entitlements.subdata(in: 8..<entitlementsLength),
+            as: UTF8.self
+        )
+
+        XCTAssertTrue(entitlementsPayload.contains("TEAMID1234.app.rork.identity.guest"), entitlementsPayload)
+        XCTAssertFalse(entitlementsPayload.contains("TEAMID1234.app.rork.identity.host"), entitlementsPayload)
+        XCTAssertEqual(try RorkSigner.checkMachOCodeSignatures(hostExecutable).first?.codeDirectories.map(\.hashAlgorithm), [.sha256])
     }
 
     func testIdentityBundleSigningRejectsUnauthorizedProvisioningProfile() throws {
@@ -1572,7 +1610,7 @@ final class IdentitySigningTests: XCTestCase {
     }
 }
 
-private func makeIdentityBundleFixture() throws -> URL {
+private func makeIdentityBundleFixture(bundleIdentifier: String = "app.rork.identity.host") throws -> URL {
     let rootURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
     let bundleURL = rootURL.appendingPathComponent("Host.app", isDirectory: true)
@@ -1580,12 +1618,12 @@ private func makeIdentityBundleFixture() throws -> URL {
     try FileManager.default.createDirectory(at: frameworkURL, withIntermediateDirectories: true)
 
     try writeIdentityInfoPlist(
-        bundleIdentifier: "app.rork.identity.host",
+        bundleIdentifier: bundleIdentifier,
         executableName: "Host",
         to: bundleURL.appendingPathComponent("Info.plist")
     )
     try writeIdentityInfoPlist(
-        bundleIdentifier: "app.rork.identity.host.nested",
+        bundleIdentifier: "\(bundleIdentifier).nested",
         executableName: "Nested",
         to: frameworkURL.appendingPathComponent("Info.plist")
     )

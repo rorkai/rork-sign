@@ -506,6 +506,7 @@ public final class BundleSigningOptionsObjC: NSObject {
     static func preserveIdentifierCredentialDefaults() -> BundleSigningOptionsObjC {
         let options = BundleSigningOptionsObjC()
         options.embedProvisioningProfiles = false
+        options.codeDirectoryHashingMode = .sha256Only
         return options
     }
 }

@@ -972,7 +972,7 @@ final class CLITests: XCTestCase {
         let entitlements = try XCTUnwrap(signatureBlobs(in: signedExecutable)[5])
         let length = Int(entitlements.readUInt32BE(at: 4))
         let payload = String(decoding: entitlements.subdata(in: 8..<length), as: UTF8.self)
-        XCTAssertTrue(payload.contains("TEAMID1234.com.example.*"), payload)
+        XCTAssertTrue(payload.contains("TEAMID1234.com.example.wildcard"), payload)
     }
 
     func testDefaultCommandVerbosePrintsArchiveSigningPaths() throws {

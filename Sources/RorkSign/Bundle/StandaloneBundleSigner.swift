@@ -216,7 +216,7 @@ enum StandaloneBundleSigner {
                let rootEntitlementsOverride {
                 entitlementsByIdentifier[bundle.rewrittenIdentifier] = rootEntitlementsOverride
             } else {
-                entitlementsByIdentifier[bundle.rewrittenIdentifier] = try StandaloneEntitlements.expand(
+                entitlementsByIdentifier[bundle.rewrittenIdentifier] = try BundleEntitlements.expand(
                     profile: asset.profile,
                     bundleIdentifier: bundle.rewrittenIdentifier,
                     originalEntitlementsXML: bundle.originalEntitlementsXML,
@@ -653,104 +653,6 @@ private struct StandaloneProvisioningAssets {
     }
 }
 
-/// Builds final entitlement XML from profile and executable state.
-private enum StandaloneEntitlements {
-    /// Expands profile entitlements for one rewritten bundle identifier.
-    ///
-    /// The profile is the upper bound of allowed capabilities. The original
-    /// executable entitlement plist is used as a filter so optional profile
-    /// capabilities are kept only when the executable already asked for them.
-    static func expand(
-        profile: ProvisioningProfile,
-        bundleIdentifier: String,
-        originalEntitlementsXML: String,
-        associatedBundleIdentifier: String?,
-        appGroupIdentifiers: [String]
-    ) throws -> String {
-        var entitlements = try EntitlementPlist.dictionary(fromXML: profile.entitlementsXML)
-        guard !entitlements.isEmpty else {
-            return ""
-        }
-
-        let original = try EntitlementPlist.dictionary(fromXML: originalEntitlementsXML)
-        let appGroups = AppGroupIdentifiers.normalize(appGroupIdentifiers)
-        for key in entitlements.keys where !shouldKeep(key, original: original, appGroupIdentifiers: appGroups) {
-            entitlements.removeValue(forKey: key)
-        }
-
-        let applicationIdentifier = "\(profile.teamIdentifier).\(bundleIdentifier)"
-        entitlements["application-identifier"] = applicationIdentifier
-        entitlements["com.apple.developer.team-identifier"] = profile.teamIdentifier
-        entitlements["keychain-access-groups"] = normalizedKeychainGroups(
-            original: original,
-            teamIdentifier: profile.teamIdentifier,
-            applicationIdentifier: applicationIdentifier
-        )
-
-        if let associatedBundleIdentifier,
-           !associatedBundleIdentifier.isEmpty,
-           entitlements["com.apple.developer.associated-application-identifier"] != nil {
-            entitlements["com.apple.developer.associated-application-identifier"] =
-                "\(profile.teamIdentifier).\(associatedBundleIdentifier)"
-        }
-
-        if !appGroups.isEmpty {
-            entitlements["com.apple.security.application-groups"] = appGroups
-        }
-
-        return try EntitlementPlist.xml(from: entitlements)
-    }
-
-    private static func shouldKeep(
-        _ key: String,
-        original: [String: Any],
-        appGroupIdentifiers: [String]
-    ) -> Bool {
-        let alwaysKept: Set<String> = [
-            "application-identifier",
-            "com.apple.developer.team-identifier",
-            "get-task-allow",
-            "keychain-access-groups",
-        ]
-        if alwaysKept.contains(key) {
-            return true
-        }
-        if key == "com.apple.security.application-groups" {
-            return !appGroupIdentifiers.isEmpty || original[key] != nil
-        }
-        return original[key] != nil
-    }
-
-    private static func normalizedKeychainGroups(
-        original: [String: Any],
-        teamIdentifier: String,
-        applicationIdentifier: String
-    ) -> [String] {
-        var groups: [String] = []
-        for value in original["keychain-access-groups"] as? [String] ?? [] {
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else {
-                continue
-            }
-
-            let normalized: String
-            if let dot = trimmed.firstIndex(of: ".") {
-                normalized = teamIdentifier + trimmed[dot...]
-            } else {
-                normalized = "\(teamIdentifier).\(trimmed)"
-            }
-            if !groups.contains(normalized) {
-                groups.append(normalized)
-            }
-        }
-
-        if groups.isEmpty {
-            groups.append(applicationIdentifier)
-        }
-        return groups
-    }
-}
-
 /// Safe mutable wrapper for an `Info.plist` dictionary on disk.
 private struct MutableInfoPlist {
     let url: URL
@@ -914,56 +816,6 @@ private enum BundleIdentifier {
             return originalIdentifier
         }
         return replacementRootIdentifier + "." + originalIdentifier.dropFirst(originalPrefix.count)
-    }
-}
-
-/// Normalizes caller-provided app-group identifiers while preserving order.
-private enum AppGroupIdentifiers {
-    static func normalize(_ values: [String]) -> [String] {
-        var result: [String] = []
-        for value in values {
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, !result.contains(trimmed) else {
-                continue
-            }
-            result.append(trimmed)
-        }
-        return result
-    }
-}
-
-/// XML property-list helpers for entitlement dictionaries.
-private enum EntitlementPlist {
-    static func dictionary(fromXML xml: String) throws -> [String: Any] {
-        let trimmed = xml.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return [:]
-        }
-        do {
-            let data = Data(trimmed.utf8)
-            let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
-            guard let dictionary = plist as? [String: Any] else {
-                throw RorkSignError.invalidEntitlements("Entitlement plist must contain a dictionary.")
-            }
-            return dictionary
-        } catch let error as RorkSignError {
-            throw error
-        } catch {
-            throw RorkSignError.invalidEntitlements("Entitlement plist could not be parsed.")
-        }
-    }
-
-    static func xml(from dictionary: [String: Any]) throws -> String {
-        do {
-            let data = try PropertyListSerialization.data(
-                fromPropertyList: dictionary,
-                format: .xml,
-                options: 0
-            )
-            return String(decoding: data, as: UTF8.self)
-        } catch {
-            throw RorkSignError.invalidEntitlements("Entitlement plist could not be serialized.")
-        }
     }
 }
 
