@@ -116,16 +116,11 @@ enum BundleSigner {
             )
         }
 
-        let executableOriginalEntitlementsXML = try bundle.executableURL.map {
-            try originalEntitlementsXML(at: $0)
-        } ?? ""
-        let bundleEntitlementsXML = try bundle.identifier == nil
-            ? ""
-            : options.entitlementsXML(
-                for: bundle,
-                isRoot: isRoot,
-                originalEntitlementsXML: executableOriginalEntitlementsXML
-            )
+        let bundleEntitlementsXML = try entitlementsXML(
+            for: bundle,
+            isRoot: isRoot,
+            options: options
+        )
 
         for codeURL in try BundleCodeScanner.standaloneCodeFiles(in: bundle) {
             try signCode(
@@ -266,6 +261,35 @@ enum BundleSigner {
         } catch {
             return ""
         }
+    }
+
+    /// Selects the entitlement XML that should be written to code in `bundle`.
+    ///
+    /// Identifier-less bundles cannot be matched against explicit entitlement or
+    /// provisioning-profile rules, so they intentionally get no entitlement
+    /// payload. Bundles with identifiers may use their executable's current
+    /// entitlement slot as input when expanding provisioning-profile values.
+    private static func entitlementsXML(
+        for bundle: SigningBundle,
+        isRoot: Bool,
+        options: BundleSigningOptions
+    ) throws -> String {
+        guard bundle.identifier != nil else {
+            return ""
+        }
+        return try options.entitlementsXML(
+            for: bundle,
+            isRoot: isRoot,
+            originalEntitlementsXML: originalExecutableEntitlementsXML(for: bundle)
+        )
+    }
+
+    /// Reads the bundle executable's current entitlement slot when one exists.
+    private static func originalExecutableEntitlementsXML(for bundle: SigningBundle) throws -> String {
+        guard let executableURL = bundle.executableURL else {
+            return ""
+        }
+        return try originalEntitlementsXML(at: executableURL)
     }
 }
 
@@ -520,7 +544,7 @@ private extension BundleSigningOptions {
     /// decodable provisioning profile but no explicit entitlements, the profile
     /// entitlement dictionary becomes the fallback because those are the
     /// capabilities Apple authorizes for the bundle. Nested bundles otherwise
-    /// default to empty entitlements so frameworks do not inherit app-only
+    /// default to no entitlement payload so frameworks do not inherit app-only
     /// capabilities by accident.
     func entitlementsXML(
         for bundle: SigningBundle,

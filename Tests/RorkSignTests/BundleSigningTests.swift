@@ -272,7 +272,7 @@ final class BundleSigningTests: XCTestCase {
         XCTAssertEqual(entitlements["keychain-access-groups"] as? [String], ["TEAMID1234.app.rork.host"])
     }
 
-    func testSignBundleAdHocUsesEmptyXMLEntitlementsForNonExecuteRootMachO() throws {
+    func testSignBundleAdHocOmitsEntitlementsForNonExecuteRootMachO() throws {
         let bundleURL = try makeNestedBundleFixture(
             hostExecutable: Fixtures.machO64DylibWithCodeSignature()
         )
@@ -292,12 +292,11 @@ final class BundleSigningTests: XCTestCase {
 
         let hostExecutable = try Data(contentsOf: bundleURL.appendingPathComponent("Host"))
         let blobs = try signatureBlobs(in: hostExecutable)
-        let entitlements = try entitlementsDictionary(inSignedMachO: hostExecutable)
         let codeDirectory = try XCTUnwrap(blobs[0])
 
-        XCTAssertTrue(entitlements.isEmpty)
+        XCTAssertNil(blobs[5])
         XCTAssertNil(blobs[7])
-        XCTAssertEqual(codeDirectory.readUInt32BE(at: 24), 5)
+        XCTAssertEqual(codeDirectory.readUInt32BE(at: 24), 3)
         XCTAssertEqual(codeDirectory.readUInt64BE(at: 80), 0)
         XCTAssertEqual(
             nullTerminatedString(in: codeDirectory, offset: Int(codeDirectory.readUInt32BE(at: 48))),

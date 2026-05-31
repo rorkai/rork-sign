@@ -477,14 +477,6 @@ private enum Constants {
     static let csSlotEntitlements: UInt32 = 5
     static let csExecSegMainBinary: UInt64 = 0x1
     static let csExecSegAllowUnsigned: UInt64 = 0x10
-    static let emptyEntitlementsXML = """
-    <?xml version="1.0" encoding="UTF-8"?>
-    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-    <plist version="1.0">
-    <dict/>
-    </plist>
-
-    """
 }
 
 private struct ThinHeader {
@@ -527,11 +519,10 @@ private struct ThinSigningLayout {
 
     /// Builds the CodeDirectory input after applying Mach-O-type signing policy.
     ///
-    /// Non-`MH_EXECUTE` images emit an empty XML entitlement slot, omit DER
-    /// entitlements, and clear executable-only flags. The original entitlement
-    /// XML still feeds `teamIdentifier` through `MachOSigningOptions`, matching
-    /// signing tools that keep the Team ID in CodeDirectory while treating
-    /// dylibs and helper images as non-app code.
+    /// Non-`MH_EXECUTE` images omit XML and DER entitlement slots and clear
+    /// executable-only flags. The original entitlement XML still feeds
+    /// `teamIdentifier` through `MachOSigningOptions`, keeping the Team ID in
+    /// CodeDirectory while treating dylibs and helper images as non-app code.
     func codeSignatureInput(
         code: Data,
         options: MachOSigningOptions,
@@ -542,7 +533,7 @@ private struct ThinSigningLayout {
         let isMainExecutable = header.fileType == Constants.mhExecuteFileType
         let effectiveEntitlementsXML = isMainExecutable
             ? options.entitlementsXML
-            : Constants.emptyEntitlementsXML
+            : ""
         let effectiveEntitlementsDER = isMainExecutable
             ? options.entitlementsDER
             : Data()

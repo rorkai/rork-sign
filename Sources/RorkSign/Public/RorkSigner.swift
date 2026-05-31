@@ -862,7 +862,7 @@ public struct SigningIdentity {
     /// Plain certificate/key identities do not imply a team id, so this value is
     /// empty unless the identity was built from a provisioning profile. Bundle
     /// signing uses it to keep non-executable code signatures tied to the same
-    /// team even when those images intentionally receive empty entitlements.
+    /// team even when those images intentionally omit entitlement payloads.
     public let teamIdentifier: String
 
     /// Parsed certificate fields used by CMS SignerInfo.
@@ -1344,8 +1344,8 @@ public struct BundleSigningOptions: Equatable {
     ///
     /// `defaultEntitlementsXML` is used only for the root executable when no
     /// identifier-specific entitlement entry or profile-derived fallback
-    /// exists. Nested bundles intentionally default to empty entitlements unless
-    /// they have a matching entitlement or provisioning-profile entry.
+    /// exists. Nested bundles intentionally default to no entitlement payload
+    /// unless they have a matching entitlement or provisioning-profile entry.
     public init(
         defaultEntitlementsXML: String = "",
         rootProvisioningProfile: Data? = nil,
@@ -1372,7 +1372,7 @@ public struct BundleSigningOptions: Equatable {
 public enum RorkSigner {
     /// Package version for CLI diagnostics and consumers that expose signer info.
     public static var version: String {
-        "0.2.8"
+        "0.2.9"
     }
 
     /// Reads high-level Mach-O metadata needed by signing and diagnostics.

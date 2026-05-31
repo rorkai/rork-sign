@@ -1270,7 +1270,7 @@ final class IdentitySigningTests: XCTestCase {
         XCTAssertEqual(swiftReport.signingCertificate.subjectCommonName, "RorkSignTest")
     }
 
-    func testIdentitySigningUsesEmptyXMLEntitlementsForNonExecuteMachO() throws {
+    func testIdentitySigningOmitsEntitlementsForNonExecuteMachO() throws {
         let fixture = try OpenSSLFixture()
         defer {
             fixture.remove()
@@ -1290,21 +1290,13 @@ final class IdentitySigningTests: XCTestCase {
 
         let blobs = try signatureBlobs(in: signed)
         let codeDirectory = try XCTUnwrap(blobs[0])
-        let entitlementsBlob = try XCTUnwrap(blobs[5])
         let cmsBlob = try XCTUnwrap(blobs[0x10000])
-        let entitlementsLength = Int(entitlementsBlob.readUInt32BE(at: 4))
-        let entitlementsPayload = entitlementsBlob.subdata(in: 8..<entitlementsLength)
-        let entitlementsPlist = try PropertyListSerialization.propertyList(
-            from: entitlementsPayload,
-            options: [],
-            format: nil
-        )
         let cmsLength = Int(cmsBlob.readUInt32BE(at: 4))
         let cmsPayload = cmsBlob.subdata(in: 8..<cmsLength)
 
-        XCTAssertTrue(try XCTUnwrap(entitlementsPlist as? [String: Any]).isEmpty)
+        XCTAssertNil(blobs[5])
         XCTAssertNil(blobs[7])
-        XCTAssertEqual(codeDirectory.readUInt32BE(at: 24), 5)
+        XCTAssertEqual(codeDirectory.readUInt32BE(at: 24), 2)
         XCTAssertEqual(codeDirectory.readUInt64BE(at: 80), 0)
         XCTAssertEqual(
             nullTerminatedString(in: codeDirectory, offset: Int(codeDirectory.readUInt32BE(at: 48))),
@@ -1676,7 +1668,7 @@ final class IdentitySigningTests: XCTestCase {
         XCTAssertEqual(try RorkSigner.checkMachOCodeSignatures(hostExecutable).first?.codeDirectories.map(\.hashAlgorithm), [.sha256])
     }
 
-    func testBundleCredentialSigningUsesEmptyEntitlementsForStandaloneDylib() throws {
+    func testBundleCredentialSigningOmitsEntitlementsForStandaloneDylib() throws {
         let fixture = try OpenSSLFixture()
         defer {
             fixture.remove()
@@ -1705,15 +1697,8 @@ final class IdentitySigningTests: XCTestCase {
         let standaloneCode = try Data(contentsOf: standaloneCodeURL)
         let blobs = try signatureBlobs(in: standaloneCode)
         let codeDirectory = try XCTUnwrap(blobs[0])
-        let entitlements = try XCTUnwrap(blobs[5])
-        let entitlementsLength = Int(entitlements.readUInt32BE(at: 4))
-        let entitlementsPayload = String(
-            decoding: entitlements.subdata(in: 8..<entitlementsLength),
-            as: UTF8.self
-        )
 
-        XCTAssertTrue(entitlementsPayload.contains("<dict/>"), entitlementsPayload)
-        XCTAssertFalse(entitlementsPayload.contains("TEAMID1234.app.rork.identity.guest"), entitlementsPayload)
+        XCTAssertNil(blobs[5])
         XCTAssertNil(blobs[7])
         XCTAssertEqual(
             nullTerminatedString(in: codeDirectory, offset: Int(codeDirectory.readUInt32BE(at: 20))),
