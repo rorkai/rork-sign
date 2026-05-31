@@ -382,10 +382,10 @@ Objective-C++:
 .product(name: "RorkSignObjC", package: "rork-sign")
 ```
 
-Then import the generated Swift header from Objective-C/Objective-C++:
+Then import the module from Objective-C/Objective-C++:
 
 ```objc
-#import <RorkSignObjC/RorkSignObjC-Swift.h>
+@import RorkSignObjC;
 ```
 
 The facade uses `RK*` Objective-C names, typed option objects, Foundation
