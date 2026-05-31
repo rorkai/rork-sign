@@ -25,6 +25,7 @@ oracle for certificate and CMS interoperability.
 - [Examples](#examples)
 - [Certificate Checks](#certificate-checks)
 - [Swift API](#swift-api)
+- [Objective-C API](#objective-c-api)
 - [ZSign Compatibility](#zsign-compatibility)
 - [Fast Re-signing](#fast-re-signing)
 - [Limitations](#limitations)
@@ -37,6 +38,8 @@ oracle for certificate and CMS interoperability.
   IPA, bundle, and Mach-O workflows.
 - **Swift-first library** - the `RorkSign` module exposes signing, inspection,
   resource sealing, and credential APIs directly to Swift applications.
+- **Objective-C facade** - the `RorkSignObjC` module exposes the public signer
+  surface to Objective-C and Objective-C++ with Foundation types.
 - **Mach-O signing** - ad-hoc and identity-backed signatures for thin and
   universal 64-bit Mach-O files.
 - **CMS signatures** - pure Swift detached CMS SignedData generation and
@@ -369,6 +372,60 @@ let teamID = try RorkSigner.validatedTeamIdentifier(
     password: "password"
 )
 ```
+
+## Objective-C API
+
+Add the `RorkSignObjC` product when integrating from Objective-C or
+Objective-C++:
+
+```swift
+.product(name: "RorkSignObjC", package: "rork-sign")
+```
+
+Then import the generated Swift header from Objective-C/Objective-C++:
+
+```objc
+#import <RorkSignObjC/RorkSignObjC-Swift.h>
+```
+
+The facade uses `RK*` Objective-C names, typed option objects, Foundation
+inputs, `NSError **` failures, and typed reusable wrappers for signing
+identities, provisioning profiles, OCSP requests, Mach-O CMS preparation, and
+bundle/IPA signing reports.
+
+```objc
+NSError *error = nil;
+RKSigner *signer = [[RKSigner alloc] init];
+
+NSData *profile = [NSData dataWithContentsOfURL:profileURL];
+NSData *credential = [NSData dataWithContentsOfURL:credentialURL];
+
+NSString *teamID = [signer validatedTeamIdentifierWithProvisioningProfileData:profile
+                                                                credentialData:credential
+                                                                      password:@"password"
+                                                                         error:&error];
+```
+
+Sign a bundle with a provisioning profile and credential:
+
+```objc
+RKBundleSigningOptions *options = [[RKBundleSigningOptions alloc] init];
+options.embedProvisioningProfile = YES;
+options.codeDirectoryHashingMode = RKCodeDirectoryHashingModeSha256Only;
+
+RKBundleSigningReport *report =
+    [signer signBundleWithCredentialAtURL:bundleURL
+                  provisioningProfileData:profile
+                           credentialData:credential
+                                 password:@"password"
+                                  options:options
+                                    error:&error];
+```
+
+For APIs whose Swift reports contain non-Objective-C value types, `RKSigner`
+returns `NSDictionary` / `NSArray<NSDictionary *>` reports with Foundation
+values. Mutating/signing APIs return typed report objects when the report is
+part of the primary workflow.
 
 ## ZSign Compatibility
 
