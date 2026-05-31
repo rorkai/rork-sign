@@ -321,7 +321,7 @@ Add the package to your SwiftPM project:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/rorkai/rork-sign.git", from: "0.1.0"),
+    .package(url: "https://github.com/rorkai/rork-sign.git", from: "0.2.1"),
 ]
 ```
 

@@ -298,7 +298,7 @@ final class BundleSigningTests: XCTestCase {
 
         let hostExecutable = try Data(contentsOf: bundleURL.appendingPathComponent("Host"))
         let nestedExecutable = try Data(contentsOf: bundleURL.appendingPathComponent("Frameworks/Nested.framework/Nested"))
-        XCTAssertTrue(try entitlementsPayload(inSignedMachO: hostExecutable).contains("TEAMID1234.app.rork.*"))
+        XCTAssertTrue(try entitlementsPayload(inSignedMachO: hostExecutable).contains("TEAMID1234.app.rork.host"))
         if let nestedEntitlements = try signatureBlobs(in: nestedExecutable)[5] {
             let length = Int(nestedEntitlements.readUInt32BE(at: 4))
             let payload = String(decoding: nestedEntitlements.subdata(in: 8..<length), as: UTF8.self)

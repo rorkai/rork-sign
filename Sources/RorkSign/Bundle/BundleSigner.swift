@@ -37,7 +37,43 @@ enum BundleSigner {
         identity: SigningIdentity,
         options: BundleSigningOptions
     ) throws -> BundleSigningReport {
-        var context = BundleSigningContext(options: options)
+        var context = BundleSigningContext(
+            options: options,
+            profileValidationPolicy: .strictBundleIdentifier
+        )
+        try signBundle(
+            bundleURL,
+            isRoot: true,
+            options: options,
+            signingMode: .identity(identity),
+            context: &context
+        )
+        return BundleSigningReport(
+            sealedBundles: context.sealedBundles,
+            embeddedProvisioningProfiles: context.embeddedProvisioningProfiles,
+            signedCode: context.signedCode,
+            cachedCode: context.cachedCode
+        )
+    }
+
+    /// Signs `bundleURL` with a credential/profile pair while preserving IDs.
+    ///
+    /// This is the ZSign-compatible folder-signing flow: the profile authorizes
+    /// the signing certificate and supplies entitlement material, but callers
+    /// may choose not to embed it. When the profile is not embedded, the bundle
+    /// identifier check is skipped so development hosts can sign guest bundles
+    /// that keep their original identifiers.
+    static func signWithCredential(
+        bundleURL: URL,
+        identity: SigningIdentity,
+        options: BundleSigningOptions
+    ) throws -> BundleSigningReport {
+        var context = BundleSigningContext(
+            options: options,
+            profileValidationPolicy: options.embedProvisioningProfiles
+                ? .strictBundleIdentifier
+                : .certificateOnly
+        )
         try signBundle(
             bundleURL,
             isRoot: true,
@@ -95,7 +131,8 @@ enum BundleSigner {
         if let provisioningProfile = options.provisioningProfile(for: bundle, isRoot: isRoot) {
             try signingMode.validateProvisioningProfile(
                 provisioningProfile,
-                bundleIdentifier: try bundle.requireIdentifier()
+                bundleIdentifier: try bundle.requireIdentifier(),
+                requireBundleIdentifierMatch: context.profileValidationPolicy == .strictBundleIdentifier
             )
             if options.embedProvisioningProfiles {
                 let embeddedProfileURL = bundle.url.appendingPathComponent("embedded.mobileprovision")
@@ -116,10 +153,15 @@ enum BundleSigner {
 
         let codeResources = try Data(contentsOf: codeResourcesURL)
         let infoPlist = try bundle.infoPlistData()
+        let originalEntitlementsXML = try originalEntitlementsXML(at: executableURL)
         try signCode(
             at: executableURL,
             bundleIdentifier: try bundle.requireIdentifier(),
-            entitlementsXML: try options.entitlementsXML(for: bundle, isRoot: isRoot),
+            entitlementsXML: try options.entitlementsXML(
+                for: bundle,
+                isRoot: isRoot,
+                originalEntitlementsXML: originalEntitlementsXML
+            ),
             infoPlist: infoPlist,
             resourceDirectory: codeResources,
             signingMode: signingMode,
@@ -209,6 +251,15 @@ enum BundleSigner {
             return
         }
         try FileManager.default.removeItem(at: profileURL)
+    }
+
+    /// Reads the current executable entitlements before the signature is replaced.
+    private static func originalEntitlementsXML(at executableURL: URL) throws -> String {
+        do {
+            return try MachOSigner.readEntitlementsXML(Data(contentsOf: executableURL))
+        } catch {
+            return ""
+        }
     }
 }
 
@@ -402,12 +453,22 @@ private struct BundleSigningContext {
     var signedCode: [URL] = []
     var cachedCode: [URL] = []
     var codeDirectoryHashingMode: CodeDirectoryHashingMode = .compatible
+    var profileValidationPolicy: ProvisioningProfileValidationPolicy = .strictBundleIdentifier
     var signatureCache: BundleSignatureCache?
 
-    init(options: BundleSigningOptions) {
+    init(
+        options: BundleSigningOptions,
+        profileValidationPolicy: ProvisioningProfileValidationPolicy = .strictBundleIdentifier
+    ) {
         self.codeDirectoryHashingMode = options.codeDirectoryHashingMode
+        self.profileValidationPolicy = profileValidationPolicy
         self.signatureCache = options.signingCache.map { BundleSignatureCache(options: $0) }
     }
+}
+
+private enum ProvisioningProfileValidationPolicy {
+    case strictBundleIdentifier
+    case certificateOnly
 }
 
 enum BundleCodeSigningMode {
@@ -422,13 +483,17 @@ enum BundleCodeSigningMode {
     /// provisioning profile, the profile must authorize the bundle identifier
     /// and the selected identity needs to be one of that profile's developer
     /// certificates, matching Apple's install-time authorization model.
-    func validateProvisioningProfile(_ data: Data, bundleIdentifier: String) throws {
+    func validateProvisioningProfile(
+        _ data: Data,
+        bundleIdentifier: String,
+        requireBundleIdentifierMatch: Bool
+    ) throws {
         guard case .identity(let identity) = self else {
             return
         }
 
         let profile = try RorkSigner.decodeProvisioningProfile(data)
-        guard profile.supportsBundleIdentifier(bundleIdentifier) else {
+        guard !requireBundleIdentifierMatch || profile.supportsBundleIdentifier(bundleIdentifier) else {
             throw RorkSignError.invalidProvisioningProfile(
                 "Provisioning profile does not authorize bundle identifier \(bundleIdentifier)."
             )
@@ -451,7 +516,11 @@ private extension BundleSigningOptions {
     /// capabilities Apple authorizes for the bundle. Nested bundles otherwise
     /// default to empty entitlements so frameworks do not inherit app-only
     /// capabilities by accident.
-    func entitlementsXML(for bundle: SigningBundle, isRoot: Bool) throws -> String {
+    func entitlementsXML(
+        for bundle: SigningBundle,
+        isRoot: Bool,
+        originalEntitlementsXML: String
+    ) throws -> String {
         let bundleIdentifier = try bundle.requireIdentifier()
         if let entitlementsXML = entitlementsByBundleIdentifier[bundleIdentifier] {
             return entitlementsXML
@@ -461,7 +530,11 @@ private extension BundleSigningOptions {
         }
         if let data = provisioningProfile(for: bundle, isRoot: isRoot),
            let profile = try? RorkSigner.decodeProvisioningProfile(data) {
-            return profile.entitlementsXML
+            return try BundleEntitlements.expand(
+                profile: profile,
+                bundleIdentifier: bundleIdentifier,
+                originalEntitlementsXML: originalEntitlementsXML
+            )
         }
         return isRoot ? defaultEntitlementsXML : ""
     }

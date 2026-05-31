@@ -1361,7 +1361,7 @@ public struct BundleSigningOptions: Equatable {
 public enum RorkSigner {
     /// Package version for CLI diagnostics and consumers that expose signer info.
     public static var version: String {
-        "0.1.0"
+        "0.2.1"
     }
 
     /// Reads high-level Mach-O metadata needed by signing and diagnostics.
@@ -2216,8 +2216,11 @@ public enum RorkSigner {
     ///
     /// By default the profile is used for entitlements and certificate
     /// authorization but is not embedded into the bundle, matching the existing
-    /// non-standalone signer behavior. Set `embedProvisioningProfile` when the
-    /// output bundle should carry `embedded.mobileprovision`.
+    /// non-standalone signer behavior. Profile entitlements are expanded to the
+    /// bundle identifiers on disk so wildcard or host-profile App IDs do not
+    /// leak into the signed executable. Set `embedProvisioningProfile` when the
+    /// output bundle should carry `embedded.mobileprovision`; embedded profiles
+    /// must authorize the bundle identifier they are written into.
     @discardableResult
     public static func signBundleWithCredential(
         at bundleURL: URL,
@@ -2225,7 +2228,7 @@ public enum RorkSigner {
         credentialData: Data,
         password: String = "",
         embedProvisioningProfile: Bool = false,
-        codeDirectoryHashingMode: CodeDirectoryHashingMode = .compatible,
+        codeDirectoryHashingMode: CodeDirectoryHashingMode = .sha256Only,
         dylibInjections: [BundleDylibInjection] = [],
         dylibLoadCommandsToRemove: [String] = []
     ) throws -> BundleSigningReport {
@@ -2234,8 +2237,8 @@ public enum RorkSigner {
             credentialData: credentialData,
             password: password
         )
-        return try signBundleWithIdentity(
-            at: bundleURL,
+        return try BundleSigner.signWithCredential(
+            bundleURL: bundleURL,
             identity: identity,
             options: BundleSigningOptions(
                 rootProvisioningProfile: provisioningProfileData,
