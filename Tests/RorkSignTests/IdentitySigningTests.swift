@@ -1212,6 +1212,50 @@ final class IdentitySigningTests: XCTestCase {
         XCTAssertEqual(swiftReport.signingCertificate.subjectCommonName, "RorkSignTest")
     }
 
+    func testIdentitySigningUsesEmptyEntitlementsForNonExecuteMachO() throws {
+        let fixture = try OpenSSLFixture()
+        defer {
+            fixture.remove()
+        }
+        let entitlements = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict><key>application-identifier</key><string>TEAMID1234.app.rork.sign.dylib</string><key>com.apple.developer.team-identifier</key><string>TEAMID1234</string><key>get-task-allow</key><true/></dict></plist>
+        """
+
+        let signed = try RorkSigner.signMachOWithIdentity(
+            Fixtures.machO64DylibWithCodeSignature(),
+            bundleIdentifier: "app.rork.sign.dylib",
+            identity: fixture.identity,
+            entitlementsXML: entitlements
+        )
+
+        let blobs = try signatureBlobs(in: signed)
+        let codeDirectory = try XCTUnwrap(blobs[0])
+        let entitlementsBlob = try XCTUnwrap(blobs[5])
+        let cmsBlob = try XCTUnwrap(blobs[0x10000])
+        let entitlementsLength = Int(entitlementsBlob.readUInt32BE(at: 4))
+        let entitlementsPayload = entitlementsBlob.subdata(in: 8..<entitlementsLength)
+        let entitlementsPlist = try PropertyListSerialization.propertyList(
+            from: entitlementsPayload,
+            options: [],
+            format: nil
+        )
+        let cmsLength = Int(cmsBlob.readUInt32BE(at: 4))
+        let cmsPayload = cmsBlob.subdata(in: 8..<cmsLength)
+
+        XCTAssertTrue(try XCTUnwrap(entitlementsPlist as? [String: Any]).isEmpty)
+        XCTAssertNil(blobs[7])
+        XCTAssertEqual(codeDirectory.readUInt32BE(at: 24), 5)
+        XCTAssertEqual(codeDirectory.readUInt64BE(at: 80), 0)
+        XCTAssertEqual(
+            nullTerminatedString(in: codeDirectory, offset: Int(codeDirectory.readUInt32BE(at: 48))),
+            "TEAMID1234"
+        )
+
+        try fixture.verifyDetachedCMS(cmsPayload, content: codeDirectory)
+    }
+
     func testSignsMachOWithP256IdentityAndEmbedsVerifiableCMSBlob() throws {
         let fixture = try OpenSSLECFixture()
         defer {

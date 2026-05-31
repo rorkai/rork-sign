@@ -635,6 +635,12 @@ enum Fixtures {
         return data
     }
 
+    static func machO64DylibWithCodeSignature() -> Data {
+        var data = machO64WithCodeSignature()
+        data.writeUInt32LE(6, at: 12)
+        return data
+    }
+
     static func machO64WithoutCodeSignatureButWithLoadCommandSpace() -> Data {
         var data = Data(repeating: 0, count: 0x130)
         data.writeUInt32LE(0xfeedfacf, at: 0)

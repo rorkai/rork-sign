@@ -272,6 +272,39 @@ final class BundleSigningTests: XCTestCase {
         XCTAssertEqual(entitlements["keychain-access-groups"] as? [String], ["TEAMID1234.app.rork.host"])
     }
 
+    func testSignBundleAdHocUsesEmptyEntitlementsForNonExecuteRootMachO() throws {
+        let bundleURL = try makeNestedBundleFixture(
+            hostExecutable: Fixtures.machO64DylibWithCodeSignature()
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
+        }
+        let profile = try rawProvisioningProfile(bundleIdentifier: "app.rork.host")
+
+        try RorkSigner.signBundleAdHoc(
+            at: bundleURL,
+            options: BundleSigningOptions(
+                provisioningProfilesByBundleIdentifier: [
+                    "app.rork.host": profile,
+                ]
+            )
+        )
+
+        let hostExecutable = try Data(contentsOf: bundleURL.appendingPathComponent("Host"))
+        let blobs = try signatureBlobs(in: hostExecutable)
+        let entitlements = try entitlementsDictionary(inSignedMachO: hostExecutable)
+        let codeDirectory = try XCTUnwrap(blobs[0])
+
+        XCTAssertTrue(entitlements.isEmpty)
+        XCTAssertNil(blobs[7])
+        XCTAssertEqual(codeDirectory.readUInt32BE(at: 24), 5)
+        XCTAssertEqual(codeDirectory.readUInt64BE(at: 80), 0)
+        XCTAssertEqual(
+            nullTerminatedString(in: codeDirectory, offset: Int(codeDirectory.readUInt32BE(at: 48))),
+            "TEAMID1234"
+        )
+    }
+
     func testSignBundleAdHocUsesRootProvisioningProfileFallback() throws {
         let bundleURL = try makeNestedBundleFixture()
         addTeardownBlock {

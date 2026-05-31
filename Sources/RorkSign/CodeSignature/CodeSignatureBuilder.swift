@@ -19,6 +19,14 @@ struct CodeSignatureInput {
     /// requirement to the selected leaf identity.
     let subjectCommonName: String
 
+    /// Team identifier serialized into the CodeDirectory.
+    ///
+    /// Most signatures infer this from the entitlement plist. Callers can set
+    /// it explicitly when the embedded entitlement shape intentionally differs
+    /// from the provisioning-profile entitlement source, such as ZSign-style
+    /// signatures for non-`MH_EXECUTE` images.
+    let teamIdentifier: String
+
     /// XML entitlement plist embedded in CSSLOT_ENTITLEMENTS.
     let entitlementsXML: String
 
@@ -162,6 +170,33 @@ enum CodeSignatureBuilder {
             IndexedBlob(slot: Constants.csslotSignature, data: cmsSignature),
         ])
     }
+
+    /// Extracts the Apple team identifier from entitlement XML.
+    ///
+    /// Provisioning-profile entitlements normally carry
+    /// `com.apple.developer.team-identifier`; older or synthetic profiles may
+    /// only carry `application-identifier`, whose prefix before the first dot is
+    /// the team identifier. Returning an empty string keeps ad-hoc or
+    /// entitlement-free signatures compact and matches Apple's zero
+    /// `teamOffset` shape.
+    static func inferTeamIdentifier(from entitlementsXML: String) -> String {
+        guard !entitlementsXML.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let data = entitlementsXML.data(using: .utf8),
+              let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let dictionary = plist as? [String: Any] else {
+            return ""
+        }
+
+        if let team = trimmedString(dictionary["com.apple.developer.team-identifier"]) {
+            return team
+        }
+        guard let applicationIdentifier = trimmedString(dictionary["application-identifier"]),
+              let dotIndex = applicationIdentifier.firstIndex(of: "."),
+              dotIndex > applicationIdentifier.startIndex else {
+            return ""
+        }
+        return String(applicationIdentifier[..<dotIndex])
+    }
 }
 
 private enum Constants {
@@ -269,7 +304,10 @@ private func buildCodeDirectoryBlob(
     let remainingBytes = input.code.count % pageSize
     let codeSlots = fullPages + (remainingBytes > 0 ? 1 : 0)
     let specialSlots = Int(specialHashes.map(\.slot).max() ?? 0)
-    let teamIdentifier = teamIdentifier(from: input.entitlementsXML)
+    let explicitTeamIdentifier = input.teamIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+    let teamIdentifier = explicitTeamIdentifier.isEmpty
+        ? CodeSignatureBuilder.inferTeamIdentifier(from: input.entitlementsXML)
+        : explicitTeamIdentifier
     let identifierOffset = headerLength
     let identifierLength = input.bundleIdentifier.utf8.count + 1
     let teamOffset = teamIdentifier.isEmpty ? 0 : identifierOffset + identifierLength
@@ -452,32 +490,6 @@ private func buildSuperBlob(_ blobs: [IndexedBlob]) -> Data {
         output.append(blob.data)
     }
     return output
-}
-
-/// Extracts the Apple team identifier that belongs in the CodeDirectory header.
-///
-/// Provisioning-profile entitlements normally carry
-/// `com.apple.developer.team-identifier`; older or synthetic profiles may only
-/// carry `application-identifier`, whose prefix before the first dot is the
-/// team identifier. Returning an empty string keeps ad-hoc or entitlement-free
-/// signatures compact and matches Apple's zero `teamOffset` shape.
-private func teamIdentifier(from entitlementsXML: String) -> String {
-    guard !entitlementsXML.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-          let data = entitlementsXML.data(using: .utf8),
-          let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
-          let dictionary = plist as? [String: Any] else {
-        return ""
-    }
-
-    if let team = trimmedString(dictionary["com.apple.developer.team-identifier"]) {
-        return team
-    }
-    guard let applicationIdentifier = trimmedString(dictionary["application-identifier"]),
-          let dotIndex = applicationIdentifier.firstIndex(of: "."),
-          dotIndex > applicationIdentifier.startIndex else {
-        return ""
-    }
-    return String(applicationIdentifier[..<dotIndex])
 }
 
 private func trimmedString(_ value: Any?) -> String? {

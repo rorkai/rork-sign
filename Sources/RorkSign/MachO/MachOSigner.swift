@@ -405,6 +405,7 @@ private func thinSigningCacheInput(_ data: Data) throws -> Data {
 private struct MachOSigningOptions {
     let bundleIdentifier: String
     let subjectCommonName: String
+    let teamIdentifier: String
     let entitlementsXML: String
     let entitlementsDER: Data
     let infoPlist: Data
@@ -428,6 +429,7 @@ private struct MachOSigningOptions {
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.subjectCommonName = subjectCommonName
+        self.teamIdentifier = CodeSignatureBuilder.inferTeamIdentifier(from: entitlementsXML)
         self.entitlementsXML = entitlementsXML
         self.entitlementsDER = entitlementsDER
         self.infoPlist = infoPlist
@@ -449,6 +451,12 @@ private enum Constants {
     static let lcLoadDylib: UInt32 = 0xc
     static let lcLoadWeakDylib: UInt32 = 0x80000018
     static let mhExecuteFileType: UInt32 = 2
+    static let emptyEntitlementsXML =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+        "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n" +
+        "<plist version=\"1.0\">\n" +
+        "<dict/>\n" +
+        "</plist>\n"
 
     static let machHeader32Size = 28
     static let machHeader64Size = 32
@@ -501,6 +509,46 @@ private struct ThinSigningLayout {
             flags |= Constants.csExecSegAllowUnsigned
         }
         return flags
+    }
+
+    /// Builds the CodeDirectory input after applying Mach-O-type signing policy.
+    ///
+    /// ZSign intentionally treats non-`MH_EXECUTE` images as entitlement-free:
+    /// they still receive an XML entitlement slot containing an empty plist, but
+    /// they do not receive DER entitlements and do not inherit executable-only
+    /// flags from the provisioning profile. Some embedding runtimes patch app
+    /// executables into `MH_DYLIB` before signing, so this distinction is part
+    /// of the compatibility contract rather than a cosmetic slot difference.
+    func codeSignatureInput(
+        code: Data,
+        options: MachOSigningOptions,
+        infoPlist: Data,
+        cmsSignature: Data,
+        adHoc: Bool
+    ) -> CodeSignatureInput {
+        let isMainExecutable = header.fileType == Constants.mhExecuteFileType
+        let effectiveEntitlementsXML = isMainExecutable
+            ? options.entitlementsXML
+            : Constants.emptyEntitlementsXML
+        let effectiveEntitlementsDER = isMainExecutable
+            ? options.entitlementsDER
+            : Data()
+
+        return CodeSignatureInput(
+            code: code,
+            bundleIdentifier: options.bundleIdentifier,
+            subjectCommonName: options.subjectCommonName,
+            teamIdentifier: options.teamIdentifier,
+            entitlementsXML: effectiveEntitlementsXML,
+            entitlementsDER: effectiveEntitlementsDER,
+            infoPlist: infoPlist,
+            resourceDirectory: options.resourceDirectory,
+            executableSegmentLimit: executableSegmentLimit,
+            executableSegmentFlags: executableSegmentFlags(entitlementsXML: effectiveEntitlementsXML),
+            cmsSignature: cmsSignature,
+            adHoc: adHoc,
+            codeDirectoryHashingMode: options.codeDirectoryHashingMode
+        )
     }
 }
 
@@ -1016,19 +1064,12 @@ private func signThinMachO(_ data: Data, options: MachOSigningOptions) throws ->
 
     func buildSignature(cmsSignature: Data = options.cmsSignature) throws -> Data {
         try CodeSignatureBuilder.buildCodeSignature(
-            CodeSignatureInput(
+            layout.codeSignatureInput(
                 code: output.subdata(in: 0..<Int(codeLimit)),
-                bundleIdentifier: options.bundleIdentifier,
-                subjectCommonName: options.subjectCommonName,
-                entitlementsXML: options.entitlementsXML,
-                entitlementsDER: options.entitlementsDER,
+                options: options,
                 infoPlist: options.infoPlist.isEmpty ? layout.embeddedInfoPlist : options.infoPlist,
-                resourceDirectory: options.resourceDirectory,
-                executableSegmentLimit: layout.executableSegmentLimit,
-                executableSegmentFlags: layout.executableSegmentFlags(entitlementsXML: options.entitlementsXML),
                 cmsSignature: cmsSignature,
                 adHoc: options.adHoc,
-                codeDirectoryHashingMode: options.codeDirectoryHashingMode
             )
         )
     }
@@ -1131,19 +1172,12 @@ private func prepareThinMachOCMSCodeDirectories(
 
     func buildPlaceholderSignature() throws -> Data {
         try CodeSignatureBuilder.buildCodeSignature(
-            CodeSignatureInput(
+            layout.codeSignatureInput(
                 code: output.subdata(in: 0..<Int(codeLimit)),
-                bundleIdentifier: options.bundleIdentifier,
-                subjectCommonName: options.subjectCommonName,
-                entitlementsXML: options.entitlementsXML,
-                entitlementsDER: options.entitlementsDER,
+                options: options,
                 infoPlist: options.infoPlist.isEmpty ? layout.embeddedInfoPlist : options.infoPlist,
-                resourceDirectory: options.resourceDirectory,
-                executableSegmentLimit: layout.executableSegmentLimit,
-                executableSegmentFlags: layout.executableSegmentFlags(entitlementsXML: options.entitlementsXML),
                 cmsSignature: options.cmsSignature,
                 adHoc: false,
-                codeDirectoryHashingMode: options.codeDirectoryHashingMode
             )
         )
     }
@@ -1169,19 +1203,12 @@ private func prepareThinMachOCMSCodeDirectories(
     try writeSignatureLayout(signatureSize: placeholderSignature.count)
 
     return try CodeSignatureBuilder.buildCodeDirectories(
-        CodeSignatureInput(
+        layout.codeSignatureInput(
             code: output.subdata(in: 0..<Int(codeLimit)),
-            bundleIdentifier: options.bundleIdentifier,
-            subjectCommonName: options.subjectCommonName,
-            entitlementsXML: options.entitlementsXML,
-            entitlementsDER: options.entitlementsDER,
+            options: options,
             infoPlist: options.infoPlist.isEmpty ? layout.embeddedInfoPlist : options.infoPlist,
-            resourceDirectory: options.resourceDirectory,
-            executableSegmentLimit: layout.executableSegmentLimit,
-            executableSegmentFlags: layout.executableSegmentFlags(entitlementsXML: options.entitlementsXML),
             cmsSignature: Data(),
             adHoc: false,
-            codeDirectoryHashingMode: options.codeDirectoryHashingMode
         )
     )
 }
