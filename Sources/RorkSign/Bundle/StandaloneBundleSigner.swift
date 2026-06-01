@@ -279,6 +279,20 @@ enum StandaloneBundleSigner {
     }
 }
 
+/// Read-only standalone bundle inspection entry point.
+enum StandaloneBundleInspector {
+    /// Returns the identifier rewrite plan for `rootBundleURL` without changing files.
+    static func inspect(
+        rootBundleURL: URL,
+        replacementBundleIdentifier: String
+    ) throws -> StandaloneBundleInspectionReport {
+        try StandaloneBundleIdentityRewriter.inspect(
+            rootBundleURL: rootBundleURL,
+            replacementBundleIdentifier: replacementBundleIdentifier
+        )
+    }
+}
+
 /// One provisioned bundle after identifier rewriting.
 private struct StandaloneBundleDescriptor: Equatable {
     let url: URL
@@ -292,6 +306,45 @@ private struct StandaloneBundleDescriptor: Equatable {
 
 /// Rewrites app and extension identifiers before resources are sealed.
 private enum StandaloneBundleIdentityRewriter {
+    /// Reads root and nested bundle metadata without changing files on disk.
+    static func inspect(
+        rootBundleURL: URL,
+        replacementBundleIdentifier: String
+    ) throws -> StandaloneBundleInspectionReport {
+        let replacementIdentifier = try BundleIdentifier.normalize(replacementBundleIdentifier)
+        let rootInfo = try MutableInfoPlist(url: rootBundleURL.appendingPathComponent("Info.plist"))
+        let originalRootIdentifier = try rootInfo.requireBundleIdentifier(bundleURL: rootBundleURL)
+
+        var requirements: [StandaloneBundleProvisioningRequirement] = [
+            try inspectOneBundle(
+                bundleURL: rootBundleURL,
+                originalRootIdentifier: originalRootIdentifier,
+                replacementRootIdentifier: replacementIdentifier,
+                isRoot: true,
+                rootBundleURL: rootBundleURL
+            ),
+        ]
+
+        for nestedBundleURL in try nestedRewritableBundles(in: rootBundleURL) {
+            requirements.append(
+                try inspectOneBundle(
+                    bundleURL: nestedBundleURL,
+                    originalRootIdentifier: originalRootIdentifier,
+                    replacementRootIdentifier: replacementIdentifier,
+                    isRoot: false,
+                    rootBundleURL: rootBundleURL
+                )
+            )
+        }
+
+        return StandaloneBundleInspectionReport(
+            rootBundleURL: rootBundleURL,
+            rootBundleIdentifier: originalRootIdentifier,
+            replacementBundleIdentifier: replacementIdentifier,
+            provisioningRequirements: requirements
+        )
+    }
+
     /// Rewrites the root app and nested app/extension bundles.
     ///
     /// The root app receives the caller-supplied identifier. Extensions are
@@ -332,6 +385,54 @@ private enum StandaloneBundleIdentityRewriter {
         }
 
         return descriptors
+    }
+
+    /// Reads one bundle's pre-rewrite and post-rewrite metadata.
+    private static func inspectOneBundle(
+        bundleURL: URL,
+        originalRootIdentifier: String,
+        replacementRootIdentifier: String,
+        isRoot: Bool,
+        rootBundleURL: URL
+    ) throws -> StandaloneBundleProvisioningRequirement {
+        let info = try MutableInfoPlist(url: bundleURL.appendingPathComponent("Info.plist"))
+        let originalIdentifier = try info.requireBundleIdentifier(bundleURL: bundleURL)
+        let rewrittenIdentifier: String
+        if isRoot {
+            rewrittenIdentifier = replacementRootIdentifier
+        } else if bundleURL.pathExtension.lowercased() == "appex" {
+            rewrittenIdentifier = BundleIdentifier.rebasedExtensionIdentifier(
+                originalIdentifier,
+                originalRootIdentifier: originalRootIdentifier,
+                replacementRootIdentifier: replacementRootIdentifier
+            )
+        } else {
+            rewrittenIdentifier = BundleIdentifier.rebasedNestedIdentifier(
+                originalIdentifier,
+                originalRootIdentifier: originalRootIdentifier,
+                replacementRootIdentifier: replacementRootIdentifier
+            )
+        }
+
+        let watch = isWatchBundle(info: info.dictionary, bundleURL: bundleURL)
+        let bundleRelativePath = isRoot ? "." : try relativePath(for: bundleURL, under: rootBundleURL)
+        let reportURL = isRoot
+            ? rootBundleURL
+            : rootBundleURL.appendingPathComponent(bundleRelativePath, isDirectory: true)
+        return StandaloneBundleProvisioningRequirement(
+            url: reportURL,
+            relativePath: bundleRelativePath,
+            originalBundleIdentifier: originalIdentifier,
+            rewrittenBundleIdentifier: rewrittenIdentifier,
+            kind: provisioningKind(isRoot: isRoot, bundleURL: bundleURL, isWatchBundle: watch),
+            isWatchBundle: watch,
+            associatedBundleIdentifier: associatedBundleIdentifier(
+                in: info,
+                originalRootIdentifier: originalRootIdentifier,
+                replacementRootIdentifier: replacementRootIdentifier
+            ),
+            executableName: info.trimmedString(forKey: "CFBundleExecutable")
+        )
     }
 
     /// Rewrites one `Info.plist` and returns the metadata needed for signing.
@@ -385,7 +486,11 @@ private enum StandaloneBundleIdentityRewriter {
             url: bundleURL,
             originalIdentifier: originalIdentifier,
             rewrittenIdentifier: rewrittenIdentifier,
-            associatedBundleIdentifier: info.string(forKeyPath: ["WKCompanionAppBundleIdentifier"]),
+            associatedBundleIdentifier: associatedBundleIdentifier(
+                in: info,
+                originalRootIdentifier: originalRootIdentifier,
+                replacementRootIdentifier: replacementRootIdentifier
+            ),
             originalEntitlementsXML: try originalEntitlementsXML(bundleURL: bundleURL, info: info),
             isProvisionedBundle: isProvisionedBundle(bundleURL),
             isWatchBundle: isWatchBundle(info: info.dictionary, bundleURL: bundleURL)
@@ -438,11 +543,13 @@ private enum StandaloneBundleIdentityRewriter {
         return try MachOSigner.readEntitlementsXML(Data(contentsOf: executableURL))
     }
 
+    /// Returns whether a bundle can carry an embedded provisioning profile.
     private static func isProvisionedBundle(_ url: URL) -> Bool {
         let pathExtension = url.pathExtension.lowercased()
         return pathExtension == "app" || pathExtension == "appex"
     }
 
+    /// Detects Watch bundles from path and common watchOS Info.plist markers.
     private static func isWatchBundle(info: [String: Any], bundleURL: URL) -> Bool {
         if bundleURL.path.contains("/Watch/") {
             return true
@@ -456,6 +563,42 @@ private enum StandaloneBundleIdentityRewriter {
             return true
         }
         return (info["WKApplication"] as? Bool) == true
+    }
+
+    /// Classifies the bundle role while keeping Watch-ness as a separate flag.
+    private static func provisioningKind(
+        isRoot: Bool,
+        bundleURL: URL,
+        isWatchBundle: Bool
+    ) -> StandaloneBundleProvisioningKind {
+        if isRoot {
+            return .rootApp
+        }
+        if bundleURL.pathExtension.lowercased() == "appex" {
+            return .appExtension
+        }
+        if isWatchBundle {
+            return .watchApp
+        }
+        return .nestedApp
+    }
+
+    /// Returns the associated bundle identifier after applying the root rewrite.
+    private static func associatedBundleIdentifier(
+        in info: MutableInfoPlist,
+        originalRootIdentifier: String,
+        replacementRootIdentifier: String
+    ) -> String? {
+        let rawAssociatedIdentifier = info.string(forKeyPath: ["WKCompanionAppBundleIdentifier"])
+            ?? info.string(forKeyPath: ["NSExtension", "NSExtensionAttributes", "WKAppBundleIdentifier"])
+        guard let rawAssociatedIdentifier else {
+            return nil
+        }
+        return BundleIdentifier.rebasedNestedIdentifier(
+            rawAssociatedIdentifier,
+            originalRootIdentifier: originalRootIdentifier,
+            replacementRootIdentifier: replacementRootIdentifier
+        )
     }
 }
 

@@ -217,6 +217,15 @@ public final class ProvisioningProfileObjC: NSObject {
     /// DER-encoded developer certificates embedded in the profile.
     @objc public let developerCertificatesDER: [Data]
 
+    /// Bundle identifier pattern authorized by the profile's App ID.
+    @objc public let authorizedBundleIdentifier: String?
+
+    /// Explicit authorized bundle identifier, or `nil` for wildcard profiles.
+    @objc public let explicitAuthorizedBundleIdentifier: String?
+
+    /// Whether the profile uses a wildcard App ID.
+    @objc public let usesWildcardBundleIdentifier: Bool
+
     /// Wraps a decoded Swift provisioning profile without reparsing its plist.
     init(_ profile: RorkSign.ProvisioningProfile) {
         coreValue = profile
@@ -225,6 +234,9 @@ public final class ProvisioningProfileObjC: NSObject {
         applicationIdentifier = profile.applicationIdentifier
         expirationDate = profile.expirationDate
         developerCertificatesDER = profile.developerCertificatesDER
+        authorizedBundleIdentifier = profile.authorizedBundleIdentifier
+        explicitAuthorizedBundleIdentifier = profile.explicitAuthorizedBundleIdentifier
+        usesWildcardBundleIdentifier = profile.usesWildcardBundleIdentifier
         super.init()
     }
 
@@ -240,10 +252,121 @@ public final class ProvisioningProfileObjC: NSObject {
         coreValue.supportsBundleIdentifier(bundleIdentifier)
     }
 
+    /// Returns whether the profile embeds the supplied DER-encoded developer certificate.
+    @objc(containsDeveloperCertificateDER:)
+    public func containsDeveloperCertificateDER(_ certificateDER: Data) -> Bool {
+        coreValue.containsDeveloperCertificateDER(certificateDER)
+    }
+
     /// Returns whether the profile contains the identity's leaf certificate.
     @objc(containsDeveloperCertificateForIdentity:)
     public func containsDeveloperCertificate(for identity: SigningIdentityObjC) -> Bool {
         coreValue.containsDeveloperCertificate(for: identity.coreValue)
+    }
+}
+
+/// Role of a provisioned bundle found during standalone app inspection.
+@objc(RKStandaloneBundleProvisioningKind)
+public enum StandaloneBundleProvisioningKindObjC: Int {
+    /// The root `.app` bundle passed to the inspector or signer.
+    case rootApp
+
+    /// An embedded app extension bundle.
+    case appExtension
+
+    /// An embedded Apple Watch app bundle.
+    case watchApp
+
+    /// Another embedded `.app` bundle that is not detected as a Watch app.
+    case nestedApp
+
+    init(_ kind: RorkSign.StandaloneBundleProvisioningKind) {
+        switch kind {
+        case .rootApp:
+            self = .rootApp
+        case .appExtension:
+            self = .appExtension
+        case .watchApp:
+            self = .watchApp
+        case .nestedApp:
+            self = .nestedApp
+        }
+    }
+}
+
+/// One provisioned bundle that standalone signing would rewrite.
+@objc(RKStandaloneBundleProvisioningRequirement)
+public final class StandaloneBundleProvisioningRequirementObjC: NSObject {
+    /// Bundle URL on disk.
+    @objc public let url: URL
+
+    /// Root-bundle-relative path, or `.` for the root bundle.
+    @objc public let relativePath: String
+
+    /// Bundle identifier currently stored in `Info.plist`.
+    @objc public let originalBundleIdentifier: String
+
+    /// Bundle identifier standalone signing would write before signing.
+    @objc public let rewrittenBundleIdentifier: String
+
+    /// Provisioning role for this bundle.
+    @objc public let kind: StandaloneBundleProvisioningKindObjC
+
+    /// Whether this bundle is detected as an Apple Watch app.
+    @objc public let isWatchBundle: Bool
+
+    /// Rewritten associated bundle identifier when the bundle declares one.
+    @objc public let associatedBundleIdentifier: String?
+
+    /// `CFBundleExecutable` value, when present.
+    @objc public let executableName: String?
+
+    init(_ requirement: RorkSign.StandaloneBundleProvisioningRequirement) {
+        url = requirement.url
+        relativePath = requirement.relativePath
+        originalBundleIdentifier = requirement.originalBundleIdentifier
+        rewrittenBundleIdentifier = requirement.rewrittenBundleIdentifier
+        kind = StandaloneBundleProvisioningKindObjC(requirement.kind)
+        isWatchBundle = requirement.isWatchBundle
+        associatedBundleIdentifier = requirement.associatedBundleIdentifier
+        executableName = requirement.executableName
+        super.init()
+    }
+}
+
+/// Read-only standalone app inspection report for Objective-C callers.
+@objc(RKStandaloneBundleInspectionReport)
+public final class StandaloneBundleInspectionReportObjC: NSObject {
+    /// Root app bundle that was inspected.
+    @objc public let rootBundleURL: URL
+
+    /// Root bundle identifier currently stored in `Info.plist`.
+    @objc public let rootBundleIdentifier: String
+
+    /// Replacement root bundle identifier used for the inspection.
+    @objc public let replacementBundleIdentifier: String
+
+    /// Provisioned app-style bundles found in standalone signing order.
+    @objc public let provisioningRequirements: [StandaloneBundleProvisioningRequirementObjC]
+
+    /// Rewritten bundle identifiers that need root/per-bundle profile coverage.
+    @objc public let rewrittenBundleIdentifiers: [String]
+
+    /// Rewritten Watch app bundle identifiers that may need a Watch profile.
+    @objc public let watchBundleIdentifiers: [String]
+
+    /// Rewritten non-Watch extension identifiers that may need per-bundle profiles.
+    @objc public let appExtensionBundleIdentifiers: [String]
+
+    init(_ report: RorkSign.StandaloneBundleInspectionReport) {
+        rootBundleURL = report.rootBundleURL
+        rootBundleIdentifier = report.rootBundleIdentifier
+        replacementBundleIdentifier = report.replacementBundleIdentifier
+        provisioningRequirements = report.provisioningRequirements.map(StandaloneBundleProvisioningRequirementObjC.init)
+        rewrittenBundleIdentifiers = report.rewrittenBundleIdentifiers
+        watchBundleIdentifiers = report.watchBundleIdentifiers
+        appExtensionBundleIdentifiers = report.appExtensionBundleIdentifiers
+        super.init()
     }
 }
 
@@ -1327,6 +1450,62 @@ public final class Signer: NSObject {
         RorkSigner.teamIdentifier(provisioningProfile: provisioningProfile.coreValue)
     }
 
+    /// Returns the bundle identifier pattern authorized by a provisioning profile payload.
+    @objc(authorizedBundleIdentifierForProvisioningProfileData:error:)
+    public func authorizedBundleIdentifierForProvisioningProfileData(
+        _ data: Data,
+        error: NSErrorPointer
+    ) -> String? {
+        nullableObjCReturn(error) {
+            try RorkSigner.authorizedBundleIdentifier(provisioningProfileData: data)
+        }
+    }
+
+    /// Returns the bundle identifier pattern authorized by a provisioning profile file.
+    @objc(authorizedBundleIdentifierForProvisioningProfileAtURL:error:)
+    public func authorizedBundleIdentifierForProvisioningProfile(
+        at url: URL,
+        error: NSErrorPointer
+    ) -> String? {
+        nullableObjCReturn(error) {
+            try RorkSigner.authorizedBundleIdentifier(provisioningProfileAt: url)
+        }
+    }
+
+    /// Returns the bundle identifier pattern authorized by an already-decoded profile.
+    @objc(authorizedBundleIdentifierForProvisioningProfile:)
+    public func authorizedBundleIdentifier(for provisioningProfile: ProvisioningProfileObjC) -> String? {
+        RorkSigner.authorizedBundleIdentifier(provisioningProfile: provisioningProfile.coreValue)
+    }
+
+    /// Returns the explicit authorized bundle identifier, or `nil` for wildcard profiles.
+    @objc(explicitAuthorizedBundleIdentifierForProvisioningProfileData:error:)
+    public func explicitAuthorizedBundleIdentifierForProvisioningProfileData(
+        _ data: Data,
+        error: NSErrorPointer
+    ) -> String? {
+        nullableObjCReturn(error) {
+            try RorkSigner.explicitAuthorizedBundleIdentifier(provisioningProfileData: data)
+        }
+    }
+
+    /// Returns the explicit authorized bundle identifier from a profile file.
+    @objc(explicitAuthorizedBundleIdentifierForProvisioningProfileAtURL:error:)
+    public func explicitAuthorizedBundleIdentifierForProvisioningProfile(
+        at url: URL,
+        error: NSErrorPointer
+    ) -> String? {
+        nullableObjCReturn(error) {
+            try RorkSigner.explicitAuthorizedBundleIdentifier(provisioningProfileAt: url)
+        }
+    }
+
+    /// Returns the explicit authorized bundle identifier from an already-decoded profile.
+    @objc(explicitAuthorizedBundleIdentifierForProvisioningProfile:)
+    public func explicitAuthorizedBundleIdentifier(for provisioningProfile: ProvisioningProfileObjC) -> String? {
+        RorkSigner.explicitAuthorizedBundleIdentifier(provisioningProfile: provisioningProfile.coreValue)
+    }
+
     /// Checks a provisioning profile's plist payload and embedded certificates.
     @objc(checkProvisioningProfileData:error:)
     public func checkProvisioningProfile(_ data: Data) throws -> NSDictionary {
@@ -1717,6 +1896,19 @@ public final class Signer: NSObject {
             .map(ReportBridge.dictionary(from:))
     }
 
+    /// Inspects a copied app bundle before standalone signing mutates it.
+    @objc(inspectStandaloneBundleAtURL:replacementBundleIdentifier:error:)
+    public func inspectStandaloneBundle(
+        at bundleURL: URL,
+        replacementBundleIdentifier: String
+    ) throws -> StandaloneBundleInspectionReportObjC {
+        let report = try RorkSigner.inspectStandaloneBundle(
+            at: bundleURL,
+            replacementBundleIdentifier: replacementBundleIdentifier
+        )
+        return StandaloneBundleInspectionReportObjC(report)
+    }
+
     /// Signs an app-style bundle inside-out with ad-hoc signatures.
     @objc(signBundleAdHocAtURL:options:error:)
     public func signBundleAdHoc(
@@ -2042,6 +2234,20 @@ private enum SignerBridgeError: LocalizedError {
         case let .invalidOption(message):
             return message
         }
+    }
+}
+
+/// Bridges nullable Objective-C returns whose `nil` value can also be a valid result.
+private func nullableObjCReturn<T>(
+    _ errorPointer: NSErrorPointer,
+    _ body: () throws -> T?
+) -> T? {
+    do {
+        errorPointer?.pointee = nil
+        return try body()
+    } catch let error as NSError {
+        errorPointer?.pointee = error
+        return nil
     }
 }
 

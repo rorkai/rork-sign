@@ -406,9 +406,25 @@ instead when the output must be installed and launched directly.
 Read a team id from a provisioning profile:
 
 ```swift
-let teamID = try RorkSigner.teamIdentifier(
-    provisioningProfileData: Data(contentsOf: URL(fileURLWithPath: "app.mobileprovision"))
+let profileData = try Data(contentsOf: URL(fileURLWithPath: "app.mobileprovision"))
+let profile = try RorkSigner.decodeProvisioningProfile(profileData)
+
+print(profile.teamIdentifier)
+print(profile.authorizedBundleIdentifier ?? "unknown")
+print(profile.usesWildcardBundleIdentifier)
+```
+
+Preview the provisioning profiles needed for standalone app signing:
+
+```swift
+let inspection = try RorkSigner.inspectStandaloneBundle(
+    at: URL(fileURLWithPath: "Demo.app"),
+    replacementBundleIdentifier: "com.example.demo"
 )
+
+for requirement in inspection.provisioningRequirements {
+    print("\(requirement.relativePath): \(requirement.rewrittenBundleIdentifier)")
+}
 ```
 
 Validate a profile/private-key pair before signing:
@@ -453,6 +469,9 @@ if (!profile || !credential) {
 
 NSString *teamID = [signer teamIdentifierForProvisioningProfileData:profile
                                                               error:&error];
+RKProvisioningProfile *decoded = [signer decodeProvisioningProfileData:profile
+                                                                  error:&error];
+NSString *authorizedBundleID = decoded.authorizedBundleIdentifier;
 ```
 
 Sign a bundle with a provisioning profile and credential:
@@ -484,6 +503,20 @@ RKBundleSigningReport *frameworkReport =
                                     password:@"password"
                                      options:frameworkOptions
                                        error:&error];
+```
+
+Inspect a standalone app before signing:
+
+```objc
+RKStandaloneBundleInspectionReport *inspection =
+    [signer inspectStandaloneBundleAtURL:bundleURL
+             replacementBundleIdentifier:@"com.example.demo"
+                                   error:&error];
+
+for (RKStandaloneBundleProvisioningRequirement *requirement
+        in inspection.provisioningRequirements) {
+    NSLog(@"%@: %@", requirement.relativePath, requirement.rewrittenBundleIdentifier);
+}
 ```
 
 Sign a hosted bundle:
