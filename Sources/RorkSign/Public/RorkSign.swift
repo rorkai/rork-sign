@@ -168,6 +168,37 @@ public struct ProvisioningProfile: Equatable {
     /// DER-encoded developer certificates embedded in the profile.
     public let developerCertificatesDER: [Data]
 
+    /// Bundle identifier pattern authorized by the profile's App ID.
+    ///
+    /// The value is derived from `applicationIdentifier` by removing the
+    /// `<team-id>.` prefix. Explicit profiles return a concrete bundle
+    /// identifier, while wildcard profiles return patterns such as `*` or
+    /// `com.example.*`.
+    public var authorizedBundleIdentifier: String? {
+        guard let applicationIdentifier,
+              applicationIdentifier.hasPrefix(teamIdentifier + ".") else {
+            return nil
+        }
+        return String(applicationIdentifier.dropFirst(teamIdentifier.count + 1))
+    }
+
+    /// Explicit bundle identifier authorized by the profile, when it is not a wildcard App ID.
+    public var explicitAuthorizedBundleIdentifier: String? {
+        guard let authorizedBundleIdentifier,
+              !usesWildcardBundleIdentifier else {
+            return nil
+        }
+        return authorizedBundleIdentifier
+    }
+
+    /// Whether the profile uses a wildcard App ID such as `*` or `com.example.*`.
+    public var usesWildcardBundleIdentifier: Bool {
+        guard let authorizedBundleIdentifier else {
+            return false
+        }
+        return authorizedBundleIdentifier == "*" || authorizedBundleIdentifier.hasSuffix(".*")
+    }
+
     /// Whether `expirationDate` is in the past at the supplied date.
     public func isExpired(at date: Date = Date()) -> Bool {
         guard let expirationDate else {
@@ -185,12 +216,10 @@ public struct ProvisioningProfile: Equatable {
     public func supportsBundleIdentifier(_ bundleIdentifier: String) -> Bool {
         let requestedIdentifier = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !requestedIdentifier.isEmpty,
-              let applicationIdentifier,
-              applicationIdentifier.hasPrefix(teamIdentifier + ".") else {
+              let pattern = authorizedBundleIdentifier else {
             return false
         }
 
-        let pattern = String(applicationIdentifier.dropFirst(teamIdentifier.count + 1))
         if pattern == "*" || pattern == requestedIdentifier {
             return true
         }
@@ -201,9 +230,14 @@ public struct ProvisioningProfile: Equatable {
         return requestedIdentifier.hasPrefix(wildcardPrefix + ".")
     }
 
+    /// Returns whether the profile embeds the supplied DER-encoded developer certificate.
+    public func containsDeveloperCertificateDER(_ certificateDER: Data) -> Bool {
+        developerCertificatesDER.contains(certificateDER)
+    }
+
     /// Returns whether the profile authorizes the supplied signing identity.
     public func containsDeveloperCertificate(for identity: SigningIdentity) -> Bool {
-        developerCertificatesDER.contains(identity.certificateDER)
+        containsDeveloperCertificateDER(identity.certificateDER)
     }
 }
 
@@ -1250,6 +1284,125 @@ public struct IPAArchiveSigningReport: Equatable {
     public let cachedCodePaths: [String]
 }
 
+/// Role of a provisioned bundle found during standalone app inspection.
+public enum StandaloneBundleProvisioningKind: String, Equatable {
+    /// The root `.app` bundle passed to the inspector or signer.
+    case rootApp
+
+    /// An embedded app extension bundle.
+    case appExtension
+
+    /// An embedded Apple Watch app bundle.
+    case watchApp
+
+    /// Another embedded `.app` bundle that is not detected as a Watch app.
+    case nestedApp
+}
+
+/// One app-style bundle that may need a provisioning profile after rewriting.
+///
+/// Standalone signing can re-home an app under a new root bundle identifier.
+/// This value describes the identifier that is currently on disk and the
+/// identifier that standalone signing would write before selecting profiles and
+/// entitlements.
+public struct StandaloneBundleProvisioningRequirement: Equatable {
+    /// Bundle URL on disk.
+    public let url: URL
+
+    /// Root-bundle-relative path, or `.` for the root bundle.
+    public let relativePath: String
+
+    /// Bundle identifier currently stored in `Info.plist`.
+    public let originalBundleIdentifier: String
+
+    /// Bundle identifier standalone signing would write before signing.
+    public let rewrittenBundleIdentifier: String
+
+    /// Provisioning role for this bundle.
+    public let kind: StandaloneBundleProvisioningKind
+
+    /// Whether this bundle is detected as an Apple Watch app.
+    public let isWatchBundle: Bool
+
+    /// Rewritten associated bundle identifier when the bundle declares one.
+    public let associatedBundleIdentifier: String?
+
+    /// `CFBundleExecutable` value, when present.
+    public let executableName: String?
+
+    /// Creates a provisioning requirement value.
+    public init(
+        url: URL,
+        relativePath: String,
+        originalBundleIdentifier: String,
+        rewrittenBundleIdentifier: String,
+        kind: StandaloneBundleProvisioningKind,
+        isWatchBundle: Bool,
+        associatedBundleIdentifier: String?,
+        executableName: String?
+    ) {
+        self.url = url
+        self.relativePath = relativePath
+        self.originalBundleIdentifier = originalBundleIdentifier
+        self.rewrittenBundleIdentifier = rewrittenBundleIdentifier
+        self.kind = kind
+        self.isWatchBundle = isWatchBundle
+        self.associatedBundleIdentifier = associatedBundleIdentifier
+        self.executableName = executableName
+    }
+}
+
+/// Read-only standalone app inspection report.
+///
+/// The report does not mutate the bundle. It lets callers preview which bundle
+/// identifiers will need provisioning profiles before calling
+/// `signStandaloneBundle*` or `signStandaloneIPA*`.
+public struct StandaloneBundleInspectionReport: Equatable {
+    /// Root app bundle that was inspected.
+    public let rootBundleURL: URL
+
+    /// Root bundle identifier currently stored in `Info.plist`.
+    public let rootBundleIdentifier: String
+
+    /// Replacement root bundle identifier used for the inspection.
+    public let replacementBundleIdentifier: String
+
+    /// Provisioned app-style bundles found in standalone signing order.
+    public let provisioningRequirements: [StandaloneBundleProvisioningRequirement]
+
+    /// Rewritten bundle identifiers that need root/per-bundle profile coverage.
+    public var rewrittenBundleIdentifiers: [String] {
+        provisioningRequirements.map(\.rewrittenBundleIdentifier)
+    }
+
+    /// Rewritten Watch app bundle identifiers that may need a Watch profile.
+    public var watchBundleIdentifiers: [String] {
+        provisioningRequirements
+            .filter(\.isWatchBundle)
+            .map(\.rewrittenBundleIdentifier)
+    }
+
+    /// Rewritten non-Watch extension identifiers that may need per-bundle profiles.
+    public var appExtensionBundleIdentifiers: [String] {
+        provisioningRequirements
+            .filter { $0.kind == .appExtension && !$0.isWatchBundle }
+            .map(\.rewrittenBundleIdentifier)
+    }
+
+    /// Creates a standalone inspection report.
+    public init(
+        rootBundleURL: URL,
+        rootBundleIdentifier: String,
+        replacementBundleIdentifier: String,
+        provisioningRequirements: [StandaloneBundleProvisioningRequirement]
+    ) {
+        self.rootBundleURL = rootBundleURL
+        self.rootBundleIdentifier = rootBundleIdentifier
+        self.replacementBundleIdentifier = replacementBundleIdentifier
+        self.provisioningRequirements = provisioningRequirements
+    }
+}
+
 /// ZIP compression choice used when writing IPA archives.
 ///
 /// ZSign exposes numeric compression levels from `0` through `9`. The Swift
@@ -2276,6 +2429,51 @@ public enum RorkSigner {
     /// Returns the Apple team identifier from an already-decoded profile.
     public static func teamIdentifier(provisioningProfile: ProvisioningProfile) -> String {
         provisioningProfile.teamIdentifier
+    }
+
+    /// Returns the bundle identifier pattern authorized by a provisioning profile payload.
+    public static func authorizedBundleIdentifier(provisioningProfileData: Data) throws -> String? {
+        try decodeProvisioningProfile(provisioningProfileData).authorizedBundleIdentifier
+    }
+
+    /// Returns the bundle identifier pattern authorized by a provisioning profile file.
+    public static func authorizedBundleIdentifier(provisioningProfileAt url: URL) throws -> String? {
+        try authorizedBundleIdentifier(provisioningProfileData: Data(contentsOf: url))
+    }
+
+    /// Returns the bundle identifier pattern authorized by an already-decoded profile.
+    public static func authorizedBundleIdentifier(provisioningProfile: ProvisioningProfile) -> String? {
+        provisioningProfile.authorizedBundleIdentifier
+    }
+
+    /// Returns the explicit authorized bundle identifier, or `nil` for wildcard profiles.
+    public static func explicitAuthorizedBundleIdentifier(provisioningProfileData: Data) throws -> String? {
+        try decodeProvisioningProfile(provisioningProfileData).explicitAuthorizedBundleIdentifier
+    }
+
+    /// Returns the explicit authorized bundle identifier from a profile file.
+    public static func explicitAuthorizedBundleIdentifier(provisioningProfileAt url: URL) throws -> String? {
+        try explicitAuthorizedBundleIdentifier(provisioningProfileData: Data(contentsOf: url))
+    }
+
+    /// Returns the explicit authorized bundle identifier from an already-decoded profile.
+    public static func explicitAuthorizedBundleIdentifier(provisioningProfile: ProvisioningProfile) -> String? {
+        provisioningProfile.explicitAuthorizedBundleIdentifier
+    }
+
+    /// Inspects a copied app bundle before standalone signing mutates it.
+    ///
+    /// The report previews the root and nested bundle identifiers that
+    /// standalone signing would write for `replacementBundleIdentifier`. It does
+    /// not validate provisioning profiles and does not change files on disk.
+    public static func inspectStandaloneBundle(
+        at bundleURL: URL,
+        replacementBundleIdentifier: String
+    ) throws -> StandaloneBundleInspectionReport {
+        try StandaloneBundleInspector.inspect(
+            rootBundleURL: bundleURL,
+            replacementBundleIdentifier: replacementBundleIdentifier
+        )
     }
 
     /// Returns the Apple team identifier after validating a profile/credential pair.

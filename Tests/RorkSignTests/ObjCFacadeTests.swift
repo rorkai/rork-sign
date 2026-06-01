@@ -133,6 +133,65 @@ final class ObjCFacadeTests: XCTestCase {
         XCTAssertEqual(try signer.teamIdentifierForProvisioningProfileData(profile), "TEAMID1234")
         XCTAssertEqual(try signer.teamIdentifierForProvisioningProfile(at: url), "TEAMID1234")
         XCTAssertEqual(signer.teamIdentifier(for: decodedProfile), "TEAMID1234")
+        XCTAssertEqual(decodedProfile.authorizedBundleIdentifier, "app.rork.objc.profile-team")
+        XCTAssertEqual(decodedProfile.explicitAuthorizedBundleIdentifier, "app.rork.objc.profile-team")
+        XCTAssertFalse(decodedProfile.usesWildcardBundleIdentifier)
+        XCTAssertTrue(decodedProfile.containsDeveloperCertificateDER(Data([0x01])))
+        XCTAssertFalse(decodedProfile.containsDeveloperCertificateDER(Data([0x02])))
+        var nullableError: NSError?
+        XCTAssertEqual(
+            signer.authorizedBundleIdentifierForProvisioningProfileData(profile, error: &nullableError),
+            "app.rork.objc.profile-team"
+        )
+        XCTAssertNil(nullableError)
+        XCTAssertEqual(
+            signer.authorizedBundleIdentifierForProvisioningProfile(at: url, error: &nullableError),
+            "app.rork.objc.profile-team"
+        )
+        XCTAssertNil(nullableError)
+        XCTAssertEqual(
+            signer.authorizedBundleIdentifier(for: decodedProfile),
+            "app.rork.objc.profile-team"
+        )
+        XCTAssertEqual(
+            signer.explicitAuthorizedBundleIdentifierForProvisioningProfileData(profile, error: &nullableError),
+            "app.rork.objc.profile-team"
+        )
+        XCTAssertNil(nullableError)
+        XCTAssertEqual(
+            signer.explicitAuthorizedBundleIdentifierForProvisioningProfile(at: url, error: &nullableError),
+            "app.rork.objc.profile-team"
+        )
+        XCTAssertNil(nullableError)
+        XCTAssertEqual(
+            signer.explicitAuthorizedBundleIdentifier(for: decodedProfile),
+            "app.rork.objc.profile-team"
+        )
+    }
+
+    /// Verifies nullable Objective-C profile helpers distinguish wildcard results from failures.
+    func testNullableProfileIdentifierHelpersPreserveWildcardNilSuccess() throws {
+        let profile = try objcFacadeProvisioningProfile(
+            bundleIdentifier: "unused",
+            certificateDER: Data([0x01]),
+            applicationIdentifier: "TEAMID1234.*"
+        )
+        let signer = Signer()
+        let decodedProfile = try signer.decodeProvisioningProfile(profile)
+        var nullableError: NSError?
+
+        XCTAssertEqual(decodedProfile.authorizedBundleIdentifier, "*")
+        XCTAssertNil(decodedProfile.explicitAuthorizedBundleIdentifier)
+        XCTAssertTrue(decodedProfile.usesWildcardBundleIdentifier)
+        XCTAssertEqual(
+            signer.authorizedBundleIdentifierForProvisioningProfileData(profile, error: &nullableError),
+            "*"
+        )
+        XCTAssertNil(nullableError)
+        XCTAssertNil(
+            signer.explicitAuthorizedBundleIdentifierForProvisioningProfileData(profile, error: &nullableError)
+        )
+        XCTAssertNil(nullableError)
     }
 
     /// Verifies profile-backed identities expose their team identifier through Objective-C.
@@ -374,6 +433,49 @@ final class ObjCFacadeTests: XCTestCase {
         )
     }
 
+    /// Verifies Objective-C callers can inspect standalone bundle profile requirements.
+    func testInspectStandaloneBundleReturnsTypedObjectiveCReport() throws {
+        let fixture = try makeObjCFacadeStandaloneBundleFixture()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
+        }
+
+        let report = try Signer().inspectStandaloneBundle(
+            at: fixture.bundleURL,
+            replacementBundleIdentifier: "app.rork.objc.inspect"
+        )
+
+        XCTAssertEqual(report.rootBundleURL, fixture.bundleURL)
+        XCTAssertEqual(report.rootBundleIdentifier, "com.original.host")
+        XCTAssertEqual(report.replacementBundleIdentifier, "app.rork.objc.inspect")
+        XCTAssertEqual(report.rewrittenBundleIdentifiers, [
+            "app.rork.objc.inspect",
+            "app.rork.objc.inspect.ShareExtension",
+        ])
+        XCTAssertEqual(report.watchBundleIdentifiers, [])
+        XCTAssertEqual(report.appExtensionBundleIdentifiers, ["app.rork.objc.inspect.ShareExtension"])
+
+        let root = try XCTUnwrap(report.provisioningRequirements.first)
+        XCTAssertEqual(root.url, fixture.bundleURL)
+        XCTAssertEqual(root.relativePath, ".")
+        XCTAssertEqual(root.originalBundleIdentifier, "com.original.host")
+        XCTAssertEqual(root.rewrittenBundleIdentifier, "app.rork.objc.inspect")
+        XCTAssertEqual(root.kind, .rootApp)
+        XCTAssertFalse(root.isWatchBundle)
+        XCTAssertNil(root.associatedBundleIdentifier)
+        XCTAssertEqual(root.executableName, "Host")
+
+        let extensionRequirement = try XCTUnwrap(report.provisioningRequirements.dropFirst().first)
+        XCTAssertEqual(extensionRequirement.url, fixture.extensionURL)
+        XCTAssertEqual(extensionRequirement.relativePath, "PlugIns/Share.appex")
+        XCTAssertEqual(extensionRequirement.originalBundleIdentifier, "com.vendor.ShareExtension")
+        XCTAssertEqual(extensionRequirement.rewrittenBundleIdentifier, "app.rork.objc.inspect.ShareExtension")
+        XCTAssertEqual(extensionRequirement.kind, .appExtension)
+        XCTAssertFalse(extensionRequirement.isWatchBundle)
+        XCTAssertEqual(extensionRequirement.associatedBundleIdentifier, "app.rork.objc.inspect")
+        XCTAssertEqual(extensionRequirement.executableName, "Share")
+    }
+
     /// Verifies dictionary-backed option validation rejects non-data values.
     func testStandaloneOptionsRejectInvalidProfileMapValues() throws {
         let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "app.rork.objc.invalid")
@@ -400,6 +502,11 @@ private final class ObjCFacadeSigningLogger: NSObject, SigningLoggerObjC {
     }
 }
 
+private struct ObjCFacadeStandaloneBundleFixture {
+    let bundleURL: URL
+    let extensionURL: URL
+}
+
 /// Creates a minimal app bundle fixture for Objective-C facade tests.
 private func makeObjCFacadeBundleFixture(
     bundleIdentifier: String,
@@ -416,6 +523,26 @@ private func makeObjCFacadeBundleFixture(
     )
     try executable.write(to: bundleURL.appendingPathComponent("Host"))
     return bundleURL
+}
+
+/// Creates a standalone app fixture with one extension for read-only inspection tests.
+private func makeObjCFacadeStandaloneBundleFixture() throws -> ObjCFacadeStandaloneBundleFixture {
+    let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "com.original.host")
+    let extensionURL = bundleURL.appendingPathComponent("PlugIns/Share.appex", isDirectory: true)
+    try FileManager.default.createDirectory(at: extensionURL, withIntermediateDirectories: true)
+    let extensionInfo: [String: Any] = [
+        "CFBundleIdentifier": "com.vendor.ShareExtension",
+        "CFBundleExecutable": "Share",
+        "WKCompanionAppBundleIdentifier": "com.original.host",
+    ]
+    let extensionInfoData = try PropertyListSerialization.data(
+        fromPropertyList: extensionInfo,
+        format: .xml,
+        options: 0
+    )
+    try extensionInfoData.write(to: extensionURL.appendingPathComponent("Info.plist"))
+    try Fixtures.machO64WithCodeSignature().write(to: extensionURL.appendingPathComponent("Share"))
+    return ObjCFacadeStandaloneBundleFixture(bundleURL: bundleURL, extensionURL: extensionURL)
 }
 
 /// Creates a minimal framework fixture for Objective-C facade tests.
@@ -462,7 +589,8 @@ private func objcFacadeEntitlementsPayload(inSignedMachO signed: Data) throws ->
 /// Builds a raw plist provisioning profile authorized for the fixture identity.
 private func objcFacadeProvisioningProfile(
     bundleIdentifier: String,
-    certificateDER: Data
+    certificateDER: Data,
+    applicationIdentifier: String? = nil
 ) throws -> Data {
     let farFutureExpiration = Date(timeIntervalSince1970: 4_102_444_800)
     let plist: [String: Any] = [
@@ -470,7 +598,7 @@ private func objcFacadeProvisioningProfile(
         "ExpirationDate": farFutureExpiration,
         "DeveloperCertificates": [certificateDER],
         "Entitlements": [
-            "application-identifier": "TEAMID1234.\(bundleIdentifier)",
+            "application-identifier": applicationIdentifier ?? "TEAMID1234.\(bundleIdentifier)",
             "com.apple.developer.team-identifier": "TEAMID1234",
         ],
     ]

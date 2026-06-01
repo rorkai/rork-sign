@@ -3,6 +3,67 @@ import RorkSign
 import XCTest
 
 final class StandaloneBundleSigningTests: XCTestCase {
+    func testStandaloneInspectionReportsRewrittenProvisioningRequirementsWithoutMutatingBundle() throws {
+        let fixture = try makeStandaloneBundleFixture(includeWatchApp: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
+        }
+
+        let report = try RorkSigner.inspectStandaloneBundle(
+            at: fixture.bundleURL,
+            replacementBundleIdentifier: " app.rork.inspect "
+        )
+
+        XCTAssertEqual(report.rootBundleURL, fixture.bundleURL)
+        XCTAssertEqual(report.rootBundleIdentifier, "com.original.host")
+        XCTAssertEqual(report.replacementBundleIdentifier, "app.rork.inspect")
+        XCTAssertEqual(report.rewrittenBundleIdentifiers, [
+            "app.rork.inspect",
+            "app.rork.inspect.ShareExtension",
+            "app.rork.inspect.watchkitapp",
+        ])
+        XCTAssertEqual(report.appExtensionBundleIdentifiers, ["app.rork.inspect.ShareExtension"])
+        XCTAssertEqual(report.watchBundleIdentifiers, ["app.rork.inspect.watchkitapp"])
+
+        let root = try XCTUnwrap(report.provisioningRequirements.first)
+        XCTAssertEqual(root.url, fixture.bundleURL)
+        XCTAssertEqual(root.relativePath, ".")
+        XCTAssertEqual(root.originalBundleIdentifier, "com.original.host")
+        XCTAssertEqual(root.rewrittenBundleIdentifier, "app.rork.inspect")
+        XCTAssertEqual(root.kind, .rootApp)
+        XCTAssertFalse(root.isWatchBundle)
+        XCTAssertNil(root.associatedBundleIdentifier)
+        XCTAssertEqual(root.executableName, "Host")
+
+        let extensionRequirement = try XCTUnwrap(report.provisioningRequirements.dropFirst().first)
+        XCTAssertEqual(extensionRequirement.url, fixture.extensionURL)
+        XCTAssertEqual(extensionRequirement.relativePath, "PlugIns/Share.appex")
+        XCTAssertEqual(extensionRequirement.originalBundleIdentifier, "com.vendor.ShareExtension")
+        XCTAssertEqual(extensionRequirement.rewrittenBundleIdentifier, "app.rork.inspect.ShareExtension")
+        XCTAssertEqual(extensionRequirement.kind, .appExtension)
+        XCTAssertFalse(extensionRequirement.isWatchBundle)
+        XCTAssertEqual(extensionRequirement.associatedBundleIdentifier, "app.rork.inspect")
+        XCTAssertEqual(extensionRequirement.executableName, "Share")
+
+        let watchURL = try XCTUnwrap(fixture.watchURL)
+        let watchRequirement = try XCTUnwrap(report.provisioningRequirements.dropFirst(2).first)
+        XCTAssertEqual(watchRequirement.url, watchURL)
+        XCTAssertEqual(watchRequirement.relativePath, "Watch/WatchApp.app")
+        XCTAssertEqual(watchRequirement.originalBundleIdentifier, "com.original.host.watchkitapp")
+        XCTAssertEqual(watchRequirement.rewrittenBundleIdentifier, "app.rork.inspect.watchkitapp")
+        XCTAssertEqual(watchRequirement.kind, .watchApp)
+        XCTAssertTrue(watchRequirement.isWatchBundle)
+        XCTAssertNil(watchRequirement.associatedBundleIdentifier)
+        XCTAssertEqual(watchRequirement.executableName, "WatchApp")
+
+        XCTAssertEqual(try infoPlist(at: fixture.bundleURL)["CFBundleIdentifier"] as? String, "com.original.host")
+        XCTAssertEqual(try infoPlist(at: fixture.extensionURL)["CFBundleIdentifier"] as? String, "com.vendor.ShareExtension")
+        XCTAssertEqual(
+            try infoPlist(at: watchURL)["CFBundleIdentifier"] as? String,
+            "com.original.host.watchkitapp"
+        )
+    }
+
     func testStandaloneAdHocRewritesIdentifiersEmbedsProfilesAndExpandsEntitlements() throws {
         let fixture = try makeStandaloneBundleFixture()
         addTeardownBlock {

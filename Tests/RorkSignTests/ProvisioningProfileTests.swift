@@ -16,8 +16,13 @@ final class ProvisioningProfileTests: XCTestCase {
 
         XCTAssertEqual(profile.teamIdentifier, "TEAMID1234")
         XCTAssertEqual(profile.applicationIdentifier, "TEAMID1234.app.rork.fixture")
+        XCTAssertEqual(profile.authorizedBundleIdentifier, "app.rork.fixture")
+        XCTAssertEqual(profile.explicitAuthorizedBundleIdentifier, "app.rork.fixture")
+        XCTAssertFalse(profile.usesWildcardBundleIdentifier)
         XCTAssertEqual(profile.expirationDate, expirationDate)
         XCTAssertEqual(profile.developerCertificatesDER, [Data([0x01, 0x02, 0x03])])
+        XCTAssertTrue(profile.containsDeveloperCertificateDER(Data([0x01, 0x02, 0x03])))
+        XCTAssertFalse(profile.containsDeveloperCertificateDER(Data([0x03, 0x02, 0x01])))
         XCTAssertTrue(profile.entitlementsXML.contains("application-identifier"))
         XCTAssertFalse(profile.isExpired(at: Date(timeIntervalSince1970: 1_700_000_000)))
         XCTAssertTrue(profile.isExpired(at: Date(timeIntervalSince1970: 1_900_000_000)))
@@ -71,6 +76,18 @@ final class ProvisioningProfileTests: XCTestCase {
             RorkSigner.teamIdentifier(provisioningProfile: try RorkSigner.decodeProvisioningProfile(data)),
             "TEAMID1234"
         )
+        XCTAssertEqual(try RorkSigner.authorizedBundleIdentifier(provisioningProfileData: data), "app.rork.fixture")
+        XCTAssertEqual(try RorkSigner.authorizedBundleIdentifier(provisioningProfileAt: url), "app.rork.fixture")
+        XCTAssertEqual(
+            RorkSigner.authorizedBundleIdentifier(provisioningProfile: try RorkSigner.decodeProvisioningProfile(data)),
+            "app.rork.fixture"
+        )
+        XCTAssertEqual(try RorkSigner.explicitAuthorizedBundleIdentifier(provisioningProfileData: data), "app.rork.fixture")
+        XCTAssertEqual(try RorkSigner.explicitAuthorizedBundleIdentifier(provisioningProfileAt: url), "app.rork.fixture")
+        XCTAssertEqual(
+            RorkSigner.explicitAuthorizedBundleIdentifier(provisioningProfile: try RorkSigner.decodeProvisioningProfile(data)),
+            "app.rork.fixture"
+        )
     }
 
     func testSupportsExplicitBundleIdentifier() throws {
@@ -85,6 +102,9 @@ final class ProvisioningProfileTests: XCTestCase {
         XCTAssertTrue(profile.supportsBundleIdentifier("app.rork.fixture"))
         XCTAssertTrue(profile.supportsBundleIdentifier(" app.rork.fixture "))
         XCTAssertFalse(profile.supportsBundleIdentifier("app.rork.other"))
+        XCTAssertEqual(profile.authorizedBundleIdentifier, "app.rork.fixture")
+        XCTAssertEqual(profile.explicitAuthorizedBundleIdentifier, "app.rork.fixture")
+        XCTAssertFalse(profile.usesWildcardBundleIdentifier)
     }
 
     func testSupportsRootWildcardBundleIdentifier() throws {
@@ -99,6 +119,9 @@ final class ProvisioningProfileTests: XCTestCase {
         XCTAssertTrue(profile.supportsBundleIdentifier("app.rork.fixture"))
         XCTAssertTrue(profile.supportsBundleIdentifier("com.example.tool"))
         XCTAssertFalse(profile.supportsBundleIdentifier(""))
+        XCTAssertEqual(profile.authorizedBundleIdentifier, "*")
+        XCTAssertNil(profile.explicitAuthorizedBundleIdentifier)
+        XCTAssertTrue(profile.usesWildcardBundleIdentifier)
     }
 
     func testSupportsPrefixWildcardBundleIdentifier() throws {
@@ -114,6 +137,9 @@ final class ProvisioningProfileTests: XCTestCase {
         XCTAssertTrue(profile.supportsBundleIdentifier("com.example.child.extension"))
         XCTAssertFalse(profile.supportsBundleIdentifier("com.example"))
         XCTAssertFalse(profile.supportsBundleIdentifier("com.examples.child"))
+        XCTAssertEqual(profile.authorizedBundleIdentifier, "com.example.*")
+        XCTAssertNil(profile.explicitAuthorizedBundleIdentifier)
+        XCTAssertTrue(profile.usesWildcardBundleIdentifier)
     }
 
     func testRejectsProfileWithoutDeveloperCertificates() {
