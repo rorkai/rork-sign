@@ -364,6 +364,25 @@ try RorkSigner.signIPAWithIdentity(
 )
 ```
 
+Sign a framework directly:
+
+```swift
+let frameworkURL = URL(fileURLWithPath: "Demo.framework")
+let profile = try Data(contentsOf: URL(fileURLWithPath: "app.mobileprovision"))
+let credential = try Data(contentsOf: URL(fileURLWithPath: "dev.p12"))
+
+try RorkSigner.signFrameworkWithCredential(
+    at: frameworkURL,
+    provisioningProfileData: profile,
+    credentialData: credential,
+    password: "password"
+)
+```
+
+Framework signing seals resources and signs the framework executable in place.
+It does not embed provisioning profiles or copy app entitlements from the
+profile by default.
+
 Validate a profile/private-key pair before signing:
 
 ```swift
@@ -424,6 +443,21 @@ RKBundleSigningReport *report =
                                  password:@"password"
                                   options:options
                                     error:&error];
+```
+
+Sign a framework directly:
+
+```objc
+RKFrameworkSigningOptions *frameworkOptions = [[RKFrameworkSigningOptions alloc] init];
+frameworkOptions.codeDirectoryHashingMode = RKCodeDirectoryHashingModeCompatible;
+
+RKBundleSigningReport *frameworkReport =
+    [signer signFrameworkWithCredentialAtURL:frameworkURL
+                     provisioningProfileData:profile
+                              credentialData:credential
+                                    password:@"password"
+                                     options:frameworkOptions
+                                       error:&error];
 ```
 
 For APIs whose Swift reports contain non-Objective-C value types, `RKSigner`

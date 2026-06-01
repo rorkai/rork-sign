@@ -1391,6 +1391,70 @@ public struct BundleSigningOptions: Equatable {
     }
 }
 
+/// Options for signing a standalone `.framework` bundle in place.
+///
+/// Framework signing is narrower than app signing. A framework should be
+/// resource-sealed and its executable should receive a Mach-O code signature,
+/// but it normally should not embed an `embedded.mobileprovision` file or
+/// inherit app-only entitlements from a provisioning profile. When signing with
+/// a provisioning profile and credential, the profile is used to authorize the
+/// certificate/private-key pair; entitlement input is supplied only when
+/// `entitlementsXML` is set explicitly.
+public struct FrameworkSigningOptions: Equatable {
+    /// Entitlement plist XML supplied for the framework executable.
+    ///
+    /// The default empty string omits entitlement input entirely. Dynamic
+    /// framework binaries are usually `MH_DYLIB`; those images omit XML and DER
+    /// entitlement slots even when entitlement XML is supplied, matching the
+    /// signer policy for non-main Mach-O code. App capabilities should normally
+    /// remain on the embedding app or extension.
+    public var entitlementsXML: String
+
+    /// CodeDirectory digest layout used for framework Mach-O signatures.
+    ///
+    /// The default `.compatible` mode emits SHA-1 and SHA-256 CodeDirectories,
+    /// matching the broad compatibility default used by ordinary bundle
+    /// signing.
+    public var codeDirectoryHashingMode: CodeDirectoryHashingMode
+
+    /// Optional persistent cache for signed Mach-O outputs.
+    ///
+    /// The cache key includes normalized Mach-O bytes plus the framework
+    /// entitlements, resource seal, Info.plist, identity, and hash-mode inputs.
+    public var signingCache: SigningCacheOptions?
+
+    /// Optional logger-backed diagnostics for framework signing.
+    ///
+    /// Logging is intentionally opt-in. The signer never bootstraps SwiftLog or
+    /// prints directly, so callers can route framework signing progress through
+    /// the same diagnostics sink used by app bundle and IPA signing.
+    public var diagnostics: SigningDiagnostics
+
+    /// Creates framework-signing options.
+    ///
+    /// Leave `entitlementsXML` empty for the ordinary framework case. Supply an
+    /// explicit plist only for framework artifacts that intentionally need
+    /// entitlement input and whose Mach-O type can carry entitlement slots.
+    public init(
+        entitlementsXML: String = "",
+        codeDirectoryHashingMode: CodeDirectoryHashingMode = .compatible,
+        signingCache: SigningCacheOptions? = nil,
+        diagnostics: SigningDiagnostics = .disabled
+    ) {
+        self.entitlementsXML = entitlementsXML
+        self.codeDirectoryHashingMode = codeDirectoryHashingMode
+        self.signingCache = signingCache
+        self.diagnostics = diagnostics
+    }
+
+    /// Compares semantic signing inputs while ignoring the diagnostics sink.
+    public static func == (lhs: FrameworkSigningOptions, rhs: FrameworkSigningOptions) -> Bool {
+        lhs.entitlementsXML == rhs.entitlementsXML
+            && lhs.codeDirectoryHashingMode == rhs.codeDirectoryHashingMode
+            && lhs.signingCache == rhs.signingCache
+    }
+}
+
 public enum RorkSigner {
     /// Package version for CLI diagnostics and consumers that expose signer info.
     public static var version: String {
@@ -2324,6 +2388,67 @@ public enum RorkSigner {
             bundleURL: bundleURL,
             identity: identity,
             options: resolvedOptions
+        )
+    }
+
+    /// Signs a standalone `.framework` bundle with an ad-hoc Mach-O signature.
+    ///
+    /// The framework is sealed and signed in place. Unlike app bundle signing,
+    /// framework signing never embeds provisioning profiles and does not derive
+    /// entitlements from a profile fallback.
+    @discardableResult
+    public static func signFrameworkAdHoc(
+        at frameworkURL: URL,
+        options: FrameworkSigningOptions = FrameworkSigningOptions()
+    ) throws -> BundleSigningReport {
+        try BundleSigner.signFrameworkAdHoc(
+            frameworkURL: frameworkURL,
+            options: options
+        )
+    }
+
+    /// Signs a standalone `.framework` bundle with identity-backed CMS signatures.
+    ///
+    /// The identity supplies the certificate chain and private key used for the
+    /// framework executable. Entitlement input is supplied only when provided
+    /// through `options.entitlementsXML`.
+    @discardableResult
+    public static func signFrameworkWithIdentity(
+        at frameworkURL: URL,
+        identity: SigningIdentity,
+        options: FrameworkSigningOptions = FrameworkSigningOptions()
+    ) throws -> BundleSigningReport {
+        try BundleSigner.signFrameworkWithIdentity(
+            frameworkURL: frameworkURL,
+            identity: identity,
+            options: options
+        )
+    }
+
+    /// Signs a standalone `.framework` bundle with a provisioning profile and credential.
+    ///
+    /// The profile is decoded only to select and authorize the developer
+    /// certificate that matches the supplied credential. It is not embedded into
+    /// the framework and its app entitlements are not copied onto the framework
+    /// executable. Entitlement input is supplied only when the caller provides
+    /// explicit framework entitlements in `options`.
+    @discardableResult
+    public static func signFrameworkWithCredential(
+        at frameworkURL: URL,
+        provisioningProfileData: Data,
+        credentialData: Data,
+        password: String = "",
+        options: FrameworkSigningOptions = FrameworkSigningOptions()
+    ) throws -> BundleSigningReport {
+        let identity = try SigningIdentity(
+            provisioningProfileData: provisioningProfileData,
+            credentialData: credentialData,
+            password: password
+        )
+        return try BundleSigner.signFrameworkWithIdentity(
+            frameworkURL: frameworkURL,
+            identity: identity,
+            options: options
         )
     }
 

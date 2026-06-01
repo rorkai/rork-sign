@@ -213,6 +213,55 @@ final class ObjCFacadeTests: XCTestCase {
         XCTAssertEqual(try RorkSigner.checkMachOCodeSignatures(executable).first?.codeDirectories.map(\.hashAlgorithm), [.sha256])
     }
 
+    /// Verifies Objective-C framework signing exposes direct framework semantics.
+    func testSignFrameworkWithCredentialMapsOptionsAndSignsCode() throws {
+        let fixture = try OpenSSLFixture()
+        defer {
+            fixture.remove()
+        }
+        let frameworkURL = try makeObjCFacadeFrameworkFixture(bundleIdentifier: "app.rork.objc.framework")
+        let profile = try objcFacadeProvisioningProfile(
+            bundleIdentifier: "app.rork.objc.host",
+            certificateDER: fixture.identity.certificateDER
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: frameworkURL.deletingLastPathComponent())
+        }
+
+        let options = FrameworkSigningOptionsObjC()
+        options.codeDirectoryHashingMode = .sha256Only
+
+        let report = try Signer().signFrameworkWithCredential(
+            at: frameworkURL,
+            provisioningProfileData: profile,
+            credentialData: Data(fixture.privateKeyPEM.utf8),
+            password: nil,
+            options: options
+        )
+
+        XCTAssertEqual(report.sealedBundleURLs, [frameworkURL])
+        XCTAssertEqual(report.embeddedProvisioningProfileURLs, [])
+        XCTAssertEqual(report.signedCodeURLs, [frameworkURL.appendingPathComponent("TestFramework")])
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: frameworkURL.appendingPathComponent("embedded.mobileprovision").path
+            )
+        )
+
+        let executableURL = frameworkURL.appendingPathComponent("TestFramework")
+        let executable = try Data(contentsOf: executableURL)
+        let blobs = try signatureBlobs(in: executable)
+        XCTAssertNil(blobs[5])
+        XCTAssertNil(blobs[7])
+        XCTAssertEqual(
+            try RorkSigner.checkMachOCodeSignatures(at: executableURL)
+                .first?
+                .codeDirectories
+                .map(\.hashAlgorithm),
+            [.sha256]
+        )
+    }
+
     /// Verifies dictionary-backed option validation rejects non-data values.
     func testStandaloneOptionsRejectInvalidProfileMapValues() throws {
         let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "app.rork.objc.invalid")
@@ -252,6 +301,21 @@ private func makeObjCFacadeBundleFixture(bundleIdentifier: String) throws -> URL
     )
     try Fixtures.machO64WithCodeSignature().write(to: bundleURL.appendingPathComponent("Host"))
     return bundleURL
+}
+
+/// Creates a minimal framework fixture for Objective-C facade tests.
+private func makeObjCFacadeFrameworkFixture(bundleIdentifier: String) throws -> URL {
+    let rootURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let frameworkURL = rootURL.appendingPathComponent("TestFramework.framework", isDirectory: true)
+    try FileManager.default.createDirectory(at: frameworkURL, withIntermediateDirectories: true)
+    try objcFacadeInfoPlist(
+        bundleIdentifier: bundleIdentifier,
+        executableName: "TestFramework",
+        to: frameworkURL.appendingPathComponent("Info.plist")
+    )
+    try Fixtures.machO64DylibWithCodeSignature().write(to: frameworkURL.appendingPathComponent("TestFramework"))
+    return frameworkURL
 }
 
 /// Writes the `Info.plist` required for a signable test app bundle.

@@ -89,6 +89,48 @@ enum BundleSigner {
         )
     }
 
+    /// Signs one standalone `.framework` bundle with ad-hoc Mach-O signatures.
+    ///
+    /// This is the direct framework API used when callers already have a
+    /// framework artifact and do not want to wrap it in a temporary app just to
+    /// reuse app-bundle signing. The framework is still signed in the normal
+    /// inside-out order, but provisioning profiles are intentionally disabled.
+    static func signFrameworkAdHoc(
+        frameworkURL: URL,
+        options: FrameworkSigningOptions
+    ) throws -> BundleSigningReport {
+        try validateFrameworkURL(frameworkURL)
+        return try signAdHoc(
+            bundleURL: frameworkURL,
+            options: options.bundleSigningOptions
+        )
+    }
+
+    /// Signs one standalone `.framework` bundle with identity-backed signatures.
+    ///
+    /// The identity may have been created from a provisioning profile, but the
+    /// profile is not embedded or used as an entitlement fallback for framework
+    /// code. Framework entitlements must be explicit.
+    static func signFrameworkWithIdentity(
+        frameworkURL: URL,
+        identity: SigningIdentity,
+        options: FrameworkSigningOptions
+    ) throws -> BundleSigningReport {
+        try validateFrameworkURL(frameworkURL)
+        return try signWithIdentity(
+            bundleURL: frameworkURL,
+            identity: identity,
+            options: options.bundleSigningOptions
+        )
+    }
+
+    /// Ensures direct framework APIs are not accidentally used for app bundles.
+    private static func validateFrameworkURL(_ url: URL) throws {
+        guard url.pathExtension.lowercased() == "framework" else {
+            throw RorkSignError.invalidBundle("Expected a .framework bundle: \(url.path).")
+        }
+    }
+
     /// Recursively signs one bundle. Nested bundles are fully completed before
     /// the current bundle writes its CodeResources plist.
     private static func signBundle(
@@ -316,6 +358,24 @@ enum BundleSigner {
             return ""
         }
         return try originalEntitlementsXML(at: executableURL)
+    }
+}
+
+private extension FrameworkSigningOptions {
+    /// Maps framework-specific options onto the shared bundle signer.
+    ///
+    /// The shared signer owns the ordering and CodeResources machinery. This
+    /// adapter deliberately omits provisioning profiles so a framework cannot
+    /// inherit root app entitlements or seal an `embedded.mobileprovision` file
+    /// by accident.
+    var bundleSigningOptions: BundleSigningOptions {
+        BundleSigningOptions(
+            defaultEntitlementsXML: entitlementsXML,
+            embedProvisioningProfiles: false,
+            codeDirectoryHashingMode: codeDirectoryHashingMode,
+            signingCache: signingCache,
+            diagnostics: diagnostics
+        )
     }
 }
 

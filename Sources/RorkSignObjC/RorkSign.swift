@@ -636,6 +636,81 @@ public final class BundleSigningOptionsObjC: NSObject {
     }
 }
 
+/// Options for signing a standalone `.framework` bundle through Objective-C.
+///
+/// Framework signing seals the framework resources and signs the framework
+/// executable. It does not embed provisioning profiles or derive app
+/// entitlements from provisioning profiles; set `entitlementsXML` only when the
+/// framework intentionally needs entitlement input and its Mach-O type can
+/// carry entitlement slots.
+@objc(RKFrameworkSigningOptions)
+public final class FrameworkSigningOptionsObjC: NSObject {
+    /// Entitlement plist XML supplied for the framework executable.
+    @objc public var entitlementsXML: String
+
+    /// CodeDirectory digest layout used for every signed Mach-O.
+    @objc public var codeDirectoryHashingMode: CodeDirectoryHashingModeObjC
+
+    /// Optional persistent cache for signed Mach-O outputs.
+    @objc public var signingCache: SigningCacheOptionsObjC?
+
+    /// Minimum signing log level emitted through `logHandler` and `logger`.
+    ///
+    /// The default is `.none`, which keeps the library silent.
+    @objc public var logLevel: SigningLogLevelObjC
+
+    /// Optional block sink for rendered signing log lines.
+    ///
+    /// Set `logLevel` to `.info` or `.debug` to enable this callback.
+    @objc public var logHandler: ((SigningDiagnosticLevelObjC, String) -> Void)?
+
+    /// Optional object sink for rendered signing log lines.
+    ///
+    /// Set `logLevel` to `.info` or `.debug` to enable this logger.
+    @objc public weak var logger: SigningLoggerObjC?
+
+    /// Compatibility alias matching the other signing option objects.
+    ///
+    /// New callers should use `logLevel` plus `logHandler` or `logger`.
+    @available(*, deprecated, message: "Use logLevel with logHandler or logger.")
+    @objc public var diagnosticHandler: ((SigningDiagnosticLevelObjC, String) -> Void)? {
+        get {
+            logHandler
+        }
+        set {
+            logHandler = newValue
+            if newValue != nil, logLevel == .none {
+                logLevel = .debug
+            }
+        }
+    }
+
+    /// Creates default framework-signing options.
+    @objc public override init() {
+        entitlementsXML = ""
+        codeDirectoryHashingMode = .compatible
+        signingCache = nil
+        logLevel = .none
+        logHandler = nil
+        logger = nil
+        super.init()
+    }
+
+    /// Builds Swift framework-signing options from Objective-C-compatible fields.
+    func coreValue() -> RorkSign.FrameworkSigningOptions {
+        RorkSign.FrameworkSigningOptions(
+            entitlementsXML: entitlementsXML,
+            codeDirectoryHashingMode: codeDirectoryHashingMode.coreValue,
+            signingCache: signingCache?.coreValue,
+            diagnostics: signingDiagnostics(
+                logLevel: logLevel,
+                logHandler: logHandler,
+                logger: logger
+            )
+        )
+    }
+}
+
 /// Options for rewriting and signing a standalone app bundle.
 ///
 /// Standalone signing re-homes the app under `bundleIdentifier`, rewrites nested
@@ -1619,6 +1694,60 @@ public final class Signer: NSObject {
             credentialData: credentialData,
             password: password ?? "",
             options: try options.coreValue(rootProvisioningProfile: provisioningProfileData)
+        )
+        return BundleSigningReportObjC(report)
+    }
+
+    /// Signs a standalone `.framework` bundle with ad-hoc signatures.
+    @objc(signFrameworkAdHocAtURL:options:error:)
+    public func signFrameworkAdHoc(
+        at frameworkURL: URL,
+        options: FrameworkSigningOptionsObjC?
+    ) throws -> BundleSigningReportObjC {
+        let options = options ?? FrameworkSigningOptionsObjC()
+        let report = try RorkSigner.signFrameworkAdHoc(
+            at: frameworkURL,
+            options: options.coreValue()
+        )
+        return BundleSigningReportObjC(report)
+    }
+
+    /// Signs a standalone `.framework` bundle with identity-backed CMS signatures.
+    @objc(signFrameworkWithIdentityAtURL:identity:options:error:)
+    public func signFrameworkWithIdentity(
+        at frameworkURL: URL,
+        identity: SigningIdentityObjC,
+        options: FrameworkSigningOptionsObjC?
+    ) throws -> BundleSigningReportObjC {
+        let options = options ?? FrameworkSigningOptionsObjC()
+        let report = try RorkSigner.signFrameworkWithIdentity(
+            at: frameworkURL,
+            identity: identity.coreValue,
+            options: options.coreValue()
+        )
+        return BundleSigningReportObjC(report)
+    }
+
+    /// Signs a standalone `.framework` bundle with a provisioning profile and credential.
+    ///
+    /// The profile authorizes the credential but is not embedded into the
+    /// framework and does not supply framework entitlements unless explicit
+    /// entitlement input is provided on `options`.
+    @objc(signFrameworkWithCredentialAtURL:provisioningProfileData:credentialData:password:options:error:)
+    public func signFrameworkWithCredential(
+        at frameworkURL: URL,
+        provisioningProfileData: Data,
+        credentialData: Data,
+        password: String?,
+        options: FrameworkSigningOptionsObjC?
+    ) throws -> BundleSigningReportObjC {
+        let options = options ?? FrameworkSigningOptionsObjC()
+        let report = try RorkSigner.signFrameworkWithCredential(
+            at: frameworkURL,
+            provisioningProfileData: provisioningProfileData,
+            credentialData: credentialData,
+            password: password ?? "",
+            options: options.coreValue()
         )
         return BundleSigningReportObjC(report)
     }
