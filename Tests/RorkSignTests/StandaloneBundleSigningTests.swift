@@ -3,6 +3,7 @@ import RorkSign
 import XCTest
 
 final class StandaloneBundleSigningTests: XCTestCase {
+    /// Verifies standalone inspection previews rewritten identifiers without touching Info.plists.
     func testStandaloneInspectionReportsRewrittenProvisioningRequirementsWithoutMutatingBundle() throws {
         let fixture = try makeStandaloneBundleFixture(includeWatchApp: true)
         addTeardownBlock {
@@ -62,6 +63,45 @@ final class StandaloneBundleSigningTests: XCTestCase {
             try infoPlist(at: watchURL)["CFBundleIdentifier"] as? String,
             "com.original.host.watchkitapp"
         )
+    }
+
+    /// Verifies Watch extensions keep their extension role and Watch marker separately.
+    func testStandaloneInspectionClassifiesWatchAppExtensionsAsExtensions() throws {
+        let fixture = try makeStandaloneBundleFixture()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
+        }
+        let watchExtensionURL = fixture.bundleURL.appendingPathComponent(
+            "Watch/WatchExtension.appex",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: watchExtensionURL, withIntermediateDirectories: true)
+        try writeInfoPlist(
+            [
+                "CFBundleIdentifier": "com.original.host.watchkitextension",
+                "CFBundleExecutable": "WatchExtension",
+                "NSExtension": [
+                    "NSExtensionAttributes": [
+                        "WKAppBundleIdentifier": "com.original.host.watchkitapp",
+                    ],
+                ],
+            ],
+            to: watchExtensionURL.appendingPathComponent("Info.plist")
+        )
+
+        let report = try RorkSigner.inspectStandaloneBundle(
+            at: fixture.bundleURL,
+            replacementBundleIdentifier: "app.rork.inspect"
+        )
+        let requirement = try XCTUnwrap(
+            report.provisioningRequirements.first { $0.relativePath == "Watch/WatchExtension.appex" }
+        )
+
+        XCTAssertEqual(requirement.kind, .appExtension)
+        XCTAssertTrue(requirement.isWatchBundle)
+        XCTAssertEqual(requirement.originalBundleIdentifier, "com.original.host.watchkitextension")
+        XCTAssertEqual(requirement.rewrittenBundleIdentifier, "app.rork.inspect.watchkitextension")
+        XCTAssertEqual(requirement.associatedBundleIdentifier, "app.rork.inspect.watchkitapp")
     }
 
     func testStandaloneAdHocRewritesIdentifiersEmbedsProfilesAndExpandsEntitlements() throws {
@@ -159,6 +199,69 @@ final class StandaloneBundleSigningTests: XCTestCase {
         XCTAssertNil(hostBlobs[0x1000])
         XCTAssertEqual(hostCodeDirectory[36], 32)
         XCTAssertEqual(hostCodeDirectory[37], 2)
+    }
+
+    /// Verifies signing uses the same associated bundle identifier source as inspection.
+    func testStandaloneUsesExtensionAttributeAssociatedBundleIdentifierForEntitlements() throws {
+        let fixture = try makeStandaloneBundleFixture()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
+        }
+        try writeInfoPlist(
+            [
+                "CFBundleIdentifier": "com.vendor.ShareExtension",
+                "CFBundleExecutable": "Share",
+                "NSExtension": [
+                    "NSExtensionAttributes": [
+                        "WKAppBundleIdentifier": "com.original.host.watchkitapp",
+                    ],
+                ],
+            ],
+            to: fixture.extensionURL.appendingPathComponent("Info.plist")
+        )
+
+        let rootProfile = try provisioningProfilePlist(
+            teamIdentifier: "TEAMID1234",
+            entitlements: [
+                "application-identifier": "TEAMID1234.*",
+                "com.apple.developer.team-identifier": "TEAMID1234",
+                "get-task-allow": true,
+            ]
+        )
+        let extensionProfile = try provisioningProfilePlist(
+            teamIdentifier: "TEAMID1234",
+            entitlements: [
+                "application-identifier": "TEAMID1234.*",
+                "com.apple.developer.team-identifier": "TEAMID1234",
+                "get-task-allow": true,
+                "com.apple.developer.associated-application-identifier": "TEAMID1234.placeholder",
+            ]
+        )
+
+        try RorkSigner.signStandaloneBundleAdHoc(
+            at: fixture.bundleURL,
+            options: StandaloneBundleSigningOptions(
+                bundleIdentifier: "app.rork.associated",
+                rootProvisioningProfile: rootProfile,
+                provisioningProfilesByBundleIdentifier: [
+                    "app.rork.associated.ShareExtension": extensionProfile,
+                ]
+            )
+        )
+
+        let extensionInfo = try infoPlist(at: fixture.extensionURL)
+        XCTAssertNil(extensionInfo["WKCompanionAppBundleIdentifier"])
+        let extensionDictionary = try XCTUnwrap(extensionInfo["NSExtension"] as? [String: Any])
+        let attributes = try XCTUnwrap(extensionDictionary["NSExtensionAttributes"] as? [String: Any])
+        XCTAssertEqual(attributes["WKAppBundleIdentifier"] as? String, "app.rork.associated.watchkitapp")
+
+        let extensionEntitlements = try entitlementDictionary(
+            inSignedMachOAt: fixture.extensionURL.appendingPathComponent("Share")
+        )
+        XCTAssertEqual(
+            extensionEntitlements["com.apple.developer.associated-application-identifier"] as? String,
+            "TEAMID1234.app.rork.associated.watchkitapp"
+        )
     }
 
     func testStandaloneRootEntitlementsOverrideProfileExpansion() throws {

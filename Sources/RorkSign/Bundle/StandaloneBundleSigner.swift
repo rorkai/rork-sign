@@ -281,6 +281,7 @@ enum StandaloneBundleSigner {
 
 /// Read-only standalone bundle inspection entry point.
 enum StandaloneBundleInspector {
+    /// Returns the identifier rewrite plan for `rootBundleURL` without changing files.
     static func inspect(
         rootBundleURL: URL,
         replacementBundleIdentifier: String
@@ -485,7 +486,11 @@ private enum StandaloneBundleIdentityRewriter {
             url: bundleURL,
             originalIdentifier: originalIdentifier,
             rewrittenIdentifier: rewrittenIdentifier,
-            associatedBundleIdentifier: info.string(forKeyPath: ["WKCompanionAppBundleIdentifier"]),
+            associatedBundleIdentifier: associatedBundleIdentifier(
+                in: info,
+                originalRootIdentifier: originalRootIdentifier,
+                replacementRootIdentifier: replacementRootIdentifier
+            ),
             originalEntitlementsXML: try originalEntitlementsXML(bundleURL: bundleURL, info: info),
             isProvisionedBundle: isProvisionedBundle(bundleURL),
             isWatchBundle: isWatchBundle(info: info.dictionary, bundleURL: bundleURL)
@@ -538,11 +543,13 @@ private enum StandaloneBundleIdentityRewriter {
         return try MachOSigner.readEntitlementsXML(Data(contentsOf: executableURL))
     }
 
+    /// Returns whether a bundle can carry an embedded provisioning profile.
     private static func isProvisionedBundle(_ url: URL) -> Bool {
         let pathExtension = url.pathExtension.lowercased()
         return pathExtension == "app" || pathExtension == "appex"
     }
 
+    /// Detects Watch bundles from path and common watchOS Info.plist markers.
     private static func isWatchBundle(info: [String: Any], bundleURL: URL) -> Bool {
         if bundleURL.path.contains("/Watch/") {
             return true
@@ -558,6 +565,7 @@ private enum StandaloneBundleIdentityRewriter {
         return (info["WKApplication"] as? Bool) == true
     }
 
+    /// Classifies the bundle role while keeping Watch-ness as a separate flag.
     private static func provisioningKind(
         isRoot: Bool,
         bundleURL: URL,
@@ -566,15 +574,16 @@ private enum StandaloneBundleIdentityRewriter {
         if isRoot {
             return .rootApp
         }
-        if isWatchBundle {
-            return .watchApp
-        }
         if bundleURL.pathExtension.lowercased() == "appex" {
             return .appExtension
+        }
+        if isWatchBundle {
+            return .watchApp
         }
         return .nestedApp
     }
 
+    /// Returns the associated bundle identifier after applying the root rewrite.
     private static func associatedBundleIdentifier(
         in info: MutableInfoPlist,
         originalRootIdentifier: String,
