@@ -52,6 +52,27 @@ final class ProvisioningProfileTests: XCTestCase {
         XCTAssertEqual(profile.teamIdentifier, "TEAMID1234")
     }
 
+    func testReturnsTeamIdentifierFromProfileDataAndFile() throws {
+        let data = try provisioningProfilePlist(
+            teamIdentifiers: ["TEAMID1234"],
+            applicationIdentifier: "TEAMID1234.app.rork.fixture",
+            developerCertificates: [Data([0x0a])]
+        )
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try data.write(to: url)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        XCTAssertEqual(try RorkSigner.teamIdentifier(provisioningProfileData: data), "TEAMID1234")
+        XCTAssertEqual(try RorkSigner.teamIdentifier(provisioningProfileAt: url), "TEAMID1234")
+        XCTAssertEqual(
+            RorkSigner.teamIdentifier(provisioningProfile: try RorkSigner.decodeProvisioningProfile(data)),
+            "TEAMID1234"
+        )
+    }
+
     func testSupportsExplicitBundleIdentifier() throws {
         let profile = try RorkSigner.decodeProvisioningProfile(
             try provisioningProfilePlist(

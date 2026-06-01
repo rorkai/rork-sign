@@ -124,6 +124,50 @@ enum BundleSigner {
         )
     }
 
+    /// Signs a hosted bundle with a temporary host executable and identity.
+    ///
+    /// This intentionally reuses the ordinary inside-out bundle signer after
+    /// preparing a temporary root executable identity. The hosted transaction is
+    /// responsible for restoring `Info.plist` and removing the copied stub even
+    /// when signing fails.
+    static func signHostedWithIdentity(
+        bundleURL: URL,
+        identity: SigningIdentity,
+        options: HostedBundleSigningOptions
+    ) throws -> BundleSigningReport {
+        let transaction = try HostedBundleSigningTransaction.prepare(
+            bundleURL: bundleURL,
+            options: options
+        )
+        let result: Result<BundleSigningReport, Error>
+        do {
+            var context = BundleSigningContext(
+                options: options.bundleSigningOptions,
+                profileValidationPolicy: .strictBundleIdentifier
+            )
+            try signBundle(
+                bundleURL,
+                isRoot: true,
+                options: options.bundleSigningOptions,
+                signingMode: .identity(identity),
+                context: &context
+            )
+            result = .success(
+                BundleSigningReport(
+                    sealedBundles: context.sealedBundles,
+                    embeddedProvisioningProfiles: context.embeddedProvisioningProfiles,
+                    signedCode: context.signedCode.removing(transaction.stubURL),
+                    cachedCode: context.cachedCode.removing(transaction.stubURL)
+                )
+            )
+        } catch {
+            result = .failure(error)
+        }
+
+        try transaction.restore()
+        return try result.get()
+    }
+
     /// Ensures direct framework APIs are not accidentally used for app bundles.
     private static func validateFrameworkURL(_ url: URL) throws {
         guard url.pathExtension.lowercased() == "framework" else {
@@ -376,6 +420,174 @@ private extension FrameworkSigningOptions {
             signingCache: signingCache,
             diagnostics: diagnostics
         )
+    }
+}
+
+/// Manages the temporary filesystem mutations needed by hosted signing.
+///
+/// The signer needs a host-shaped root executable signature, while the final
+/// guest bundle must keep its original `Info.plist`. This transaction captures
+/// the exact original plist bytes, copies the host executable under a safe
+/// temporary name, writes the temporary host identity, and later restores the
+/// bundle to its public shape.
+private struct HostedBundleSigningTransaction {
+    let infoPlistURL: URL
+    let originalInfoPlistData: Data
+    let stubURL: URL
+
+    /// Prepares the bundle for a hosted signing pass.
+    static func prepare(
+        bundleURL: URL,
+        options: HostedBundleSigningOptions
+    ) throws -> HostedBundleSigningTransaction {
+        let fileManager = FileManager.default
+        try validateBundleDirectory(bundleURL, fileManager: fileManager)
+
+        let infoPlistURL = bundleURL.appendingPathComponent("Info.plist")
+        guard fileManager.fileExists(atPath: infoPlistURL.path) else {
+            throw RorkSignError.invalidBundle("Bundle Info.plist does not exist: \(infoPlistURL.path).")
+        }
+        let originalInfoPlistData = try Data(contentsOf: infoPlistURL)
+        let originalInfo = try readInfoPlist(originalInfoPlistData)
+        let originalExecutableName = try requirePlainFilename(
+            originalInfo["CFBundleExecutable"],
+            key: "CFBundleExecutable"
+        )
+        _ = try requireBundleIdentifier(originalInfo["CFBundleIdentifier"], key: "CFBundleIdentifier")
+
+        let stubExecutableName = try requirePlainFilename(
+            options.stubExecutableName,
+            key: "stubExecutableName"
+        )
+        guard stubExecutableName != originalExecutableName else {
+            throw RorkSignError.invalidBundle("Hosted signing stub must not replace the original executable.")
+        }
+        let hostBundleIdentifier = try requireBundleIdentifier(
+            options.hostBundleIdentifier,
+            key: "hostBundleIdentifier"
+        )
+
+        try validateHostExecutable(options.hostExecutableURL, fileManager: fileManager)
+        let stubURL = bundleURL.appendingPathComponent(stubExecutableName)
+        guard options.hostExecutableURL.standardizedFileURL.path != stubURL.standardizedFileURL.path else {
+            throw RorkSignError.invalidBundle("Host executable already points at the hosted signing stub.")
+        }
+
+        let transaction = HostedBundleSigningTransaction(
+            infoPlistURL: infoPlistURL,
+            originalInfoPlistData: originalInfoPlistData,
+            stubURL: stubURL
+        )
+
+        do {
+            if fileManager.fileExists(atPath: stubURL.path) {
+                var isDirectory: ObjCBool = false
+                guard fileManager.fileExists(atPath: stubURL.path, isDirectory: &isDirectory),
+                      !isDirectory.boolValue else {
+                    throw RorkSignError.invalidBundle("Hosted signing stub destination is a directory: \(stubURL.path).")
+                }
+                try fileManager.removeItem(at: stubURL)
+            }
+            try fileManager.copyItem(at: options.hostExecutableURL, to: stubURL)
+
+            var temporaryInfo = originalInfo
+            temporaryInfo["CFBundleExecutable"] = stubExecutableName
+            temporaryInfo["CFBundleIdentifier"] = hostBundleIdentifier
+            let temporaryInfoData = try PropertyListSerialization.data(
+                fromPropertyList: temporaryInfo,
+                format: .binary,
+                options: 0
+            )
+            try temporaryInfoData.write(to: infoPlistURL, options: .atomic)
+        } catch {
+            try? transaction.restore()
+            throw error
+        }
+
+        return transaction
+    }
+
+    /// Restores the original `Info.plist` bytes and removes the temporary stub.
+    func restore() throws {
+        let fileManager = FileManager.default
+        try originalInfoPlistData.write(to: infoPlistURL, options: .atomic)
+        if fileManager.fileExists(atPath: stubURL.path) {
+            try fileManager.removeItem(at: stubURL)
+        }
+    }
+
+    /// Ensures the target is an existing bundle directory.
+    private static func validateBundleDirectory(_ bundleURL: URL, fileManager: FileManager) throws {
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: bundleURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            throw RorkSignError.invalidBundle("Bundle does not exist: \(bundleURL.path).")
+        }
+    }
+
+    /// Parses the root Info.plist into a mutable dictionary.
+    private static func readInfoPlist(_ data: Data) throws -> [String: Any] {
+        let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+        guard let dictionary = plist as? [String: Any] else {
+            throw RorkSignError.invalidBundle("Info.plist is not a dictionary.")
+        }
+        return dictionary
+    }
+
+    /// Reads and validates a plain file name from a plist or option value.
+    private static func requirePlainFilename(_ value: Any?, key: String) throws -> String {
+        guard let string = value as? String else {
+            throw RorkSignError.invalidBundle("\(key) must be a string.")
+        }
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed != ".",
+              trimmed != "..",
+              !trimmed.contains("/"),
+              !trimmed.contains("\\"),
+              !trimmed.contains("\u{0}") else {
+            throw RorkSignError.invalidBundle("\(key) is not a plain filename: \(string).")
+        }
+        return trimmed
+    }
+
+    /// Reads and validates the bundle identifier used during hosted signing.
+    private static func requireBundleIdentifier(_ value: Any?, key: String) throws -> String {
+        guard let string = value as? String else {
+            throw RorkSignError.invalidBundle("\(key) must be a string.")
+        }
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.contains("/"),
+              !trimmed.contains("\\"),
+              !trimmed.contains("\u{0}") else {
+            throw RorkSignError.invalidBundle("\(key) is not a valid bundle identifier: \(string).")
+        }
+        return trimmed
+    }
+
+    /// Verifies the host stub source exists and is a supported Mach-O file.
+    private static func validateHostExecutable(_ url: URL, fileManager: FileManager) throws {
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue else {
+            throw RorkSignError.invalidBundle("Host executable does not exist: \(url.path).")
+        }
+        do {
+            _ = try RorkSigner.inspectMachO(Data(contentsOf: url))
+        } catch {
+            throw RorkSignError.invalidBundle("Host executable is not a supported Mach-O: \(url.path).")
+        }
+    }
+}
+
+private extension Array where Element == URL {
+    /// Removes one URL using standardized filesystem paths for comparison.
+    func removing(_ removedURL: URL) -> [URL] {
+        let removedPath = removedURL.standardizedFileURL.path
+        return filter { url in
+            url.standardizedFileURL.path != removedPath
+        }
     }
 }
 

@@ -115,6 +115,26 @@ final class ObjCFacadeTests: XCTestCase {
         XCTAssertEqual(teamIdentifier, "TEAMID1234")
     }
 
+    /// Verifies the Objective-C facade can read a profile team id without credentials.
+    func testTeamIdentifierConvenienceReturnsDecodedProfileTeam() throws {
+        let profile = try objcFacadeProvisioningProfile(
+            bundleIdentifier: "app.rork.objc.profile-team",
+            certificateDER: Data([0x01])
+        )
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try profile.write(to: url)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: url)
+        }
+        let signer = Signer()
+        let decodedProfile = try signer.decodeProvisioningProfile(profile)
+
+        XCTAssertEqual(try signer.teamIdentifierForProvisioningProfileData(profile), "TEAMID1234")
+        XCTAssertEqual(try signer.teamIdentifierForProvisioningProfile(at: url), "TEAMID1234")
+        XCTAssertEqual(signer.teamIdentifier(for: decodedProfile), "TEAMID1234")
+    }
+
     /// Verifies profile-backed identities expose their team identifier through Objective-C.
     func testSigningIdentityExposesProfileTeamIdentifier() throws {
         let fixture = try OpenSSLFixture()
@@ -213,6 +233,49 @@ final class ObjCFacadeTests: XCTestCase {
         XCTAssertEqual(try RorkSigner.checkMachOCodeSignatures(executable).first?.codeDirectories.map(\.hashAlgorithm), [.sha256])
     }
 
+    /// Verifies Objective-C hosted signing restores the guest bundle after signing.
+    func testSignHostedBundleWithCredentialRestoresGuestBundleShape() throws {
+        let fixture = try OpenSSLFixture()
+        defer {
+            fixture.remove()
+        }
+        let bundleURL = try makeObjCFacadeBundleFixture(
+            bundleIdentifier: "app.rork.objc.hosted.guest",
+            executable: Fixtures.machO64DylibWithCodeSignature()
+        )
+        let hostExecutableURL = bundleURL.deletingLastPathComponent().appendingPathComponent("HostStubSource")
+        try Fixtures.machO64WithCodeSignature().write(to: hostExecutableURL)
+        let originalInfoPlist = try Data(contentsOf: bundleURL.appendingPathComponent("Info.plist"))
+        let profile = try objcFacadeProvisioningProfile(
+            bundleIdentifier: "app.rork.objc.hosted.host",
+            certificateDER: fixture.identity.certificateDER
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
+        }
+
+        let options = HostedBundleSigningOptionsObjC(
+            hostExecutableURL: hostExecutableURL,
+            hostBundleIdentifier: "app.rork.objc.hosted.host"
+        )
+        let report = try Signer().signHostedBundleWithCredential(
+            at: bundleURL,
+            provisioningProfileData: profile,
+            credentialData: Data(fixture.privateKeyPEM.utf8),
+            password: nil,
+            options: options
+        )
+
+        let stubURL = bundleURL.appendingPathComponent("HostedSigningStub")
+        XCTAssertEqual(try Data(contentsOf: bundleURL.appendingPathComponent("Info.plist")), originalInfoPlist)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stubURL.path))
+        XCTAssertFalse(report.signedCodeURLs.contains(stubURL))
+        XCTAssertEqual(
+            report.signedCodeURLs.map { $0.standardizedFileURL },
+            [bundleURL.appendingPathComponent("Host").standardizedFileURL]
+        )
+    }
+
     /// Verifies Objective-C framework signing exposes direct framework semantics.
     func testSignFrameworkWithCredentialMapsOptionsAndSignsCode() throws {
         let fixture = try OpenSSLFixture()
@@ -289,7 +352,10 @@ private final class ObjCFacadeSigningLogger: NSObject, SigningLoggerObjC {
 }
 
 /// Creates a minimal app bundle fixture for Objective-C facade tests.
-private func makeObjCFacadeBundleFixture(bundleIdentifier: String) throws -> URL {
+private func makeObjCFacadeBundleFixture(
+    bundleIdentifier: String,
+    executable: Data = Fixtures.machO64WithCodeSignature()
+) throws -> URL {
     let rootURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
     let bundleURL = rootURL.appendingPathComponent("Host.app", isDirectory: true)
@@ -299,7 +365,7 @@ private func makeObjCFacadeBundleFixture(bundleIdentifier: String) throws -> URL
         executableName: "Host",
         to: bundleURL.appendingPathComponent("Info.plist")
     )
-    try Fixtures.machO64WithCodeSignature().write(to: bundleURL.appendingPathComponent("Host"))
+    try executable.write(to: bundleURL.appendingPathComponent("Host"))
     return bundleURL
 }
 

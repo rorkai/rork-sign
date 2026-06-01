@@ -1455,6 +1455,76 @@ public struct FrameworkSigningOptions: Equatable {
     }
 }
 
+/// Options for signing a bundle that will be hosted by another executable.
+///
+/// Hosted signing is for specialized runtimes that copy a guest bundle but load
+/// its code from an already-installed host app or extension instead of
+/// installing the copied bundle as a standalone app. The signer temporarily
+/// points `CFBundleExecutable` and `CFBundleIdentifier` at the host executable
+/// and host bundle identifier for the signing pass, then restores the original
+/// `Info.plist` and removes the copied host stub.
+///
+/// The final bundle is intentionally not standalone-installable: its restored
+/// `Info.plist` no longer matches the temporary root executable signature.
+/// Use `signStandaloneBundle*` APIs when the output must be installed and
+/// launched directly by iOS.
+public struct HostedBundleSigningOptions: Equatable {
+    /// Executable from the host app or extension used as the temporary signing stub.
+    ///
+    /// The file must be a supported Mach-O. It is copied into the bundle under
+    /// `stubExecutableName`, signed as the root executable, and removed after
+    /// the signing pass completes.
+    public var hostExecutableURL: URL
+
+    /// Host bundle identifier visible while the temporary root executable is signed.
+    ///
+    /// Identity-backed signing validates any selected root provisioning profile
+    /// against this identifier, not the guest identifier that is restored after
+    /// signing.
+    public var hostBundleIdentifier: String
+
+    /// Plain filename used for the copied host executable inside the guest bundle.
+    ///
+    /// The value must not contain path separators, `.` or `..`. The default is
+    /// deliberately generic so public callers do not inherit an application-
+    /// specific file name.
+    public var stubExecutableName: String
+
+    /// Regular bundle-signing options used during the temporary signing pass.
+    ///
+    /// Hosted signing defaults to not embedding provisioning profiles. The
+    /// credential overload fills `rootProvisioningProfile` with the supplied
+    /// profile when this value leaves it empty.
+    public var bundleSigningOptions: BundleSigningOptions
+
+    /// Creates hosted-bundle signing options.
+    ///
+    /// - Parameters:
+    ///   - hostExecutableURL: Host executable copied into the bundle as a
+    ///     temporary signing stub.
+    ///   - hostBundleIdentifier: Host bundle identifier used for the temporary
+    ///     root executable signature.
+    ///   - stubExecutableName: Filename for the copied host executable inside
+    ///     the bundle.
+    ///   - bundleSigningOptions: Full bundle-signing options for the signing
+    ///     pass. The default omits embedded provisioning profiles and uses the
+    ///     compatibility CodeDirectory hash layout.
+    public init(
+        hostExecutableURL: URL,
+        hostBundleIdentifier: String,
+        stubExecutableName: String = "HostedSigningStub",
+        bundleSigningOptions: BundleSigningOptions = BundleSigningOptions(
+            embedProvisioningProfiles: false,
+            codeDirectoryHashingMode: .compatible
+        )
+    ) {
+        self.hostExecutableURL = hostExecutableURL
+        self.hostBundleIdentifier = hostBundleIdentifier
+        self.stubExecutableName = stubExecutableName
+        self.bundleSigningOptions = bundleSigningOptions
+    }
+}
+
 public enum RorkSigner {
     /// Package version for CLI diagnostics and consumers that expose signer info.
     public static var version: String {
@@ -2189,6 +2259,25 @@ public enum RorkSigner {
         try decodeProvisioningProfile(Data(contentsOf: url))
     }
 
+    /// Returns the Apple team identifier from a provisioning profile payload.
+    ///
+    /// This is a parsing convenience only. It accepts raw plist or CMS-wrapped
+    /// `.mobileprovision` data and returns the decoded team id without checking
+    /// any signing credential, certificate trust, expiration, or revocation.
+    public static func teamIdentifier(provisioningProfileData: Data) throws -> String {
+        try decodeProvisioningProfile(provisioningProfileData).teamIdentifier
+    }
+
+    /// Returns the Apple team identifier from a provisioning profile file.
+    public static func teamIdentifier(provisioningProfileAt url: URL) throws -> String {
+        try teamIdentifier(provisioningProfileData: Data(contentsOf: url))
+    }
+
+    /// Returns the Apple team identifier from an already-decoded profile.
+    public static func teamIdentifier(provisioningProfile: ProvisioningProfile) -> String {
+        provisioningProfile.teamIdentifier
+    }
+
     /// Returns the Apple team identifier after validating a profile/credential pair.
     ///
     /// The method decodes `provisioningProfileData`, loads `credentialData` as a
@@ -2385,6 +2474,58 @@ public enum RorkSigner {
             resolvedOptions.rootProvisioningProfile = provisioningProfileData
         }
         return try BundleSigner.signWithCredential(
+            bundleURL: bundleURL,
+            identity: identity,
+            options: resolvedOptions
+        )
+    }
+
+    /// Signs a hosted bundle with identity-backed CMS signatures.
+    ///
+    /// The signing pass temporarily uses `options.hostExecutableURL` and
+    /// `options.hostBundleIdentifier` as the root executable identity, signs
+    /// the original bundle executable as loose code, seals resources, signs the
+    /// temporary stub, and then restores the original `Info.plist` while
+    /// removing the stub. Any root provisioning profile supplied through
+    /// `options.bundleSigningOptions` must authorize the host bundle identifier.
+    @discardableResult
+    public static func signHostedBundleWithIdentity(
+        at bundleURL: URL,
+        identity: SigningIdentity,
+        options: HostedBundleSigningOptions
+    ) throws -> BundleSigningReport {
+        try BundleSigner.signHostedWithIdentity(
+            bundleURL: bundleURL,
+            identity: identity,
+            options: options
+        )
+    }
+
+    /// Signs a hosted bundle with a provisioning profile and private-key credential.
+    ///
+    /// The supplied profile creates and authorizes the signing identity. When
+    /// `options.bundleSigningOptions.rootProvisioningProfile` is empty, the
+    /// profile is also used as the root provisioning profile for entitlement
+    /// derivation and host-bundle-identifier authorization during the temporary
+    /// signing pass.
+    @discardableResult
+    public static func signHostedBundleWithCredential(
+        at bundleURL: URL,
+        provisioningProfileData: Data,
+        credentialData: Data,
+        password: String = "",
+        options: HostedBundleSigningOptions
+    ) throws -> BundleSigningReport {
+        let identity = try SigningIdentity(
+            provisioningProfileData: provisioningProfileData,
+            credentialData: credentialData,
+            password: password
+        )
+        var resolvedOptions = options
+        if resolvedOptions.bundleSigningOptions.rootProvisioningProfile == nil {
+            resolvedOptions.bundleSigningOptions.rootProvisioningProfile = provisioningProfileData
+        }
+        return try BundleSigner.signHostedWithIdentity(
             bundleURL: bundleURL,
             identity: identity,
             options: resolvedOptions
