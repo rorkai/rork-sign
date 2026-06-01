@@ -83,6 +83,18 @@ final class BundleSigningTests: XCTestCase {
         }
     }
 
+    func testSignFrameworkAcceptsCaseVariantFrameworkExtension() throws {
+        let frameworkURL = try makeFrameworkFixture(extensionName: "Framework")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: frameworkURL.deletingLastPathComponent())
+        }
+
+        let report = try RorkSigner.signFrameworkAdHoc(at: frameworkURL)
+
+        XCTAssertEqual(report.sealedBundles, [frameworkURL])
+        XCTAssertEqual(report.signedCode, [frameworkURL.appendingPathComponent("TestFramework")])
+    }
+
     func testSignBundleAdHocSignsNestedBundlesBeforeParentExecutable() throws {
         let bundleURL = try makeNestedBundleFixture()
         addTeardownBlock {
@@ -735,11 +747,12 @@ private func makeNestedBundleFixture(
 
 private func makeFrameworkFixture(
     bundleIdentifier: String = "app.rork.framework",
-    executable: Data = Fixtures.machO64DylibWithCodeSignature()
+    executable: Data = Fixtures.machO64DylibWithCodeSignature(),
+    extensionName: String = "framework"
 ) throws -> URL {
     let rootURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    let frameworkURL = rootURL.appendingPathComponent("TestFramework.framework", isDirectory: true)
+    let frameworkURL = rootURL.appendingPathComponent("TestFramework.\(extensionName)", isDirectory: true)
     try FileManager.default.createDirectory(at: frameworkURL, withIntermediateDirectories: true)
     try writeInfoPlist(
         bundleIdentifier: bundleIdentifier,

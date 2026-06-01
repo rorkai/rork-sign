@@ -126,7 +126,7 @@ enum BundleSigner {
 
     /// Ensures direct framework APIs are not accidentally used for app bundles.
     private static func validateFrameworkURL(_ url: URL) throws {
-        guard url.pathExtension == "framework" else {
+        guard url.pathExtension.lowercased() == "framework" else {
             throw RorkSignError.invalidBundle("Expected a .framework bundle: \(url.path).")
         }
     }

@@ -249,6 +249,10 @@ final class ObjCFacadeTests: XCTestCase {
         )
 
         let executableURL = frameworkURL.appendingPathComponent("TestFramework")
+        let executable = try Data(contentsOf: executableURL)
+        let blobs = try signatureBlobs(in: executable)
+        XCTAssertNil(blobs[5])
+        XCTAssertNil(blobs[7])
         XCTAssertEqual(
             try RorkSigner.checkMachOCodeSignatures(at: executableURL)
                 .first?
