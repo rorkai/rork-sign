@@ -95,6 +95,102 @@ final class BundleSigningTests: XCTestCase {
         XCTAssertEqual(report.signedCode, [frameworkURL.appendingPathComponent("TestFramework")])
     }
 
+    func testSignHostedBundleRestoresInfoPlistAndRemovesTemporaryStub() throws {
+        let fixture = try OpenSSLFixture()
+        defer {
+            fixture.remove()
+        }
+        let bundleURL = try makeNestedBundleFixture(hostExecutable: Fixtures.machO64DylibWithCodeSignature())
+        let hostExecutableURL = bundleURL.deletingLastPathComponent().appendingPathComponent("HostStubSource")
+        try Fixtures.machO64WithCodeSignature().write(to: hostExecutableURL)
+        let originalInfoPlist = try Data(contentsOf: bundleURL.appendingPathComponent("Info.plist"))
+        let profile = try rawProvisioningProfile(
+            bundleIdentifier: "app.rork.hosted.host",
+            developerCertificates: [fixture.identity.certificateDER]
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
+        }
+
+        let report = try RorkSigner.signHostedBundleWithCredential(
+            at: bundleURL,
+            provisioningProfileData: profile,
+            credentialData: Data(fixture.privateKeyPEM.utf8),
+            options: HostedBundleSigningOptions(
+                hostExecutableURL: hostExecutableURL,
+                hostBundleIdentifier: "app.rork.hosted.host"
+            )
+        )
+
+        let stubURL = bundleURL.appendingPathComponent("HostedSigningStub")
+        XCTAssertEqual(try Data(contentsOf: bundleURL.appendingPathComponent("Info.plist")), originalInfoPlist)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stubURL.path))
+        XCTAssertFalse(report.signedCode.contains(stubURL))
+        XCTAssertEqual(
+            try report.signedCode.map { try relativePath($0, under: bundleURL) },
+            [
+                "Frameworks/Nested.framework/Nested",
+                "Host",
+            ]
+        )
+
+        let hostCodeResources = try parseCodeResources(
+            Data(contentsOf: bundleURL.appendingPathComponent("_CodeSignature/CodeResources"))
+        )
+        let files2 = try XCTUnwrap(hostCodeResources["files2"] as? [String: Any])
+        XCTAssertNotNil(files2["Host"])
+        XCTAssertNil(files2["HostedSigningStub"])
+
+        let originalExecutable = try Data(contentsOf: bundleURL.appendingPathComponent("Host"))
+        let originalExecutableBlobs = try signatureBlobs(in: originalExecutable)
+        XCTAssertNil(originalExecutableBlobs[5])
+        XCTAssertNil(originalExecutableBlobs[7])
+    }
+
+    func testSignHostedBundleRestoresTemporaryFilesAfterSigningFailure() throws {
+        let fixture = try OpenSSLFixture()
+        defer {
+            fixture.remove()
+        }
+        let bundleURL = try makeNestedBundleFixture(hostExecutable: Fixtures.machO64DylibWithCodeSignature())
+        let hostExecutableURL = bundleURL.deletingLastPathComponent().appendingPathComponent("HostStubSource")
+        try Fixtures.machO64WithCodeSignature().write(to: hostExecutableURL)
+        let originalInfoPlist = try Data(contentsOf: bundleURL.appendingPathComponent("Info.plist"))
+        let profile = try rawProvisioningProfile(
+            bundleIdentifier: "app.rork.hosted.other",
+            developerCertificates: [fixture.identity.certificateDER]
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
+        }
+
+        XCTAssertThrowsError(
+            try RorkSigner.signHostedBundleWithCredential(
+                at: bundleURL,
+                provisioningProfileData: profile,
+                credentialData: Data(fixture.privateKeyPEM.utf8),
+                options: HostedBundleSigningOptions(
+                    hostExecutableURL: hostExecutableURL,
+                    hostBundleIdentifier: "app.rork.hosted.host"
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? RorkSignError,
+                .invalidProvisioningProfile(
+                    "Provisioning profile does not authorize bundle identifier app.rork.hosted.host."
+                )
+            )
+        }
+
+        XCTAssertEqual(try Data(contentsOf: bundleURL.appendingPathComponent("Info.plist")), originalInfoPlist)
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: bundleURL.appendingPathComponent("HostedSigningStub").path
+            )
+        )
+    }
+
     func testSignBundleAdHocSignsNestedBundlesBeforeParentExecutable() throws {
         let bundleURL = try makeNestedBundleFixture()
         addTeardownBlock {

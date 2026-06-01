@@ -634,6 +634,14 @@ public final class BundleSigningOptionsObjC: NSObject {
         options.codeDirectoryHashingMode = .sha256Only
         return options
     }
+
+    /// Returns the defaults used by hosted bundle signing.
+    static func hostedDefaults() -> BundleSigningOptionsObjC {
+        let options = BundleSigningOptionsObjC()
+        options.embedProvisioningProfiles = false
+        options.codeDirectoryHashingMode = .compatible
+        return options
+    }
 }
 
 /// Options for signing a standalone `.framework` bundle through Objective-C.
@@ -707,6 +715,51 @@ public final class FrameworkSigningOptionsObjC: NSObject {
                 logHandler: logHandler,
                 logger: logger
             )
+        )
+    }
+}
+
+/// Options for hosted bundle signing through the Objective-C facade.
+///
+/// Hosted signing temporarily copies an already-installed host executable into
+/// a guest bundle, signs that copy as the root executable under the host bundle
+/// identifier, then restores the guest `Info.plist` and removes the temporary
+/// stub. The output is for hosted runtime loading, not standalone installation.
+@objc(RKHostedBundleSigningOptions)
+public final class HostedBundleSigningOptionsObjC: NSObject {
+    /// Host executable copied into the bundle as a temporary signing stub.
+    @objc public var hostExecutableURL: URL
+
+    /// Host bundle identifier used while the temporary root executable is signed.
+    @objc public var hostBundleIdentifier: String
+
+    /// Plain filename for the copied host executable inside the guest bundle.
+    @objc public var stubExecutableName: String
+
+    /// Full bundle-signing options used during the temporary signing pass.
+    ///
+    /// The default options do not embed provisioning profiles. The credential
+    /// signing method supplies its `provisioningProfileData` as the root
+    /// provisioning profile when this nested option object leaves it empty.
+    @objc public var bundleSigningOptions: BundleSigningOptionsObjC
+
+    /// Creates hosted bundle-signing options.
+    @objc(initWithHostExecutableURL:hostBundleIdentifier:)
+    public init(hostExecutableURL: URL, hostBundleIdentifier: String) {
+        self.hostExecutableURL = hostExecutableURL
+        self.hostBundleIdentifier = hostBundleIdentifier
+        stubExecutableName = "HostedSigningStub"
+        bundleSigningOptions = BundleSigningOptionsObjC.hostedDefaults()
+        super.init()
+    }
+
+    /// Builds Swift hosted-bundle signing options from Objective-C-compatible fields.
+    func coreValue(rootProvisioningProfile: Data? = nil) throws -> RorkSign.HostedBundleSigningOptions {
+        try RorkSign.HostedBundleSigningOptions(
+            hostExecutableURL: hostExecutableURL,
+            hostBundleIdentifier: hostBundleIdentifier,
+            stubExecutableName: stubExecutableName,
+            bundleSigningOptions: bundleSigningOptions.coreValue(rootProvisioningProfile: rootProvisioningProfile)
         )
     }
 }
@@ -1253,6 +1306,27 @@ public final class Signer: NSObject {
         try ProvisioningProfileObjC(RorkSigner.decodeProvisioningProfile(at: url))
     }
 
+    /// Returns the team identifier from a provisioning profile payload.
+    ///
+    /// This only decodes the profile; it does not validate a signing credential,
+    /// certificate trust, expiration, or revocation.
+    @objc(teamIdentifierForProvisioningProfileData:error:)
+    public func teamIdentifierForProvisioningProfileData(_ data: Data) throws -> String {
+        try RorkSigner.teamIdentifier(provisioningProfileData: data)
+    }
+
+    /// Returns the team identifier from a provisioning profile file.
+    @objc(teamIdentifierForProvisioningProfileAtURL:error:)
+    public func teamIdentifierForProvisioningProfile(at url: URL) throws -> String {
+        try RorkSigner.teamIdentifier(provisioningProfileAt: url)
+    }
+
+    /// Returns the team identifier from an already-decoded provisioning profile.
+    @objc(teamIdentifierForProvisioningProfile:)
+    public func teamIdentifier(for provisioningProfile: ProvisioningProfileObjC) -> String {
+        RorkSigner.teamIdentifier(provisioningProfile: provisioningProfile.coreValue)
+    }
+
     /// Checks a provisioning profile's plist payload and embedded certificates.
     @objc(checkProvisioningProfileData:error:)
     public func checkProvisioningProfile(_ data: Data) throws -> NSDictionary {
@@ -1694,6 +1768,48 @@ public final class Signer: NSObject {
             credentialData: credentialData,
             password: password ?? "",
             options: try options.coreValue(rootProvisioningProfile: provisioningProfileData)
+        )
+        return BundleSigningReportObjC(report)
+    }
+
+    /// Signs a hosted bundle with identity-backed CMS signatures.
+    ///
+    /// The signer temporarily uses the host executable and bundle identifier
+    /// from `options`, restores the original guest `Info.plist`, and removes
+    /// the copied host stub before returning.
+    @objc(signHostedBundleWithIdentityAtURL:identity:options:error:)
+    public func signHostedBundleWithIdentity(
+        at bundleURL: URL,
+        identity: SigningIdentityObjC,
+        options: HostedBundleSigningOptionsObjC
+    ) throws -> BundleSigningReportObjC {
+        let report = try RorkSigner.signHostedBundleWithIdentity(
+            at: bundleURL,
+            identity: identity.coreValue,
+            options: try options.coreValue()
+        )
+        return BundleSigningReportObjC(report)
+    }
+
+    /// Signs a hosted bundle with a provisioning profile and private-key credential.
+    ///
+    /// The profile creates the signing identity and, by default, supplies the
+    /// temporary root provisioning profile that must authorize
+    /// `options.hostBundleIdentifier`.
+    @objc(signHostedBundleWithCredentialAtURL:provisioningProfileData:credentialData:password:options:error:)
+    public func signHostedBundleWithCredential(
+        at bundleURL: URL,
+        provisioningProfileData: Data,
+        credentialData: Data,
+        password: String?,
+        options: HostedBundleSigningOptionsObjC
+    ) throws -> BundleSigningReportObjC {
+        let report = try RorkSigner.signHostedBundleWithCredential(
+            at: bundleURL,
+            provisioningProfileData: provisioningProfileData,
+            credentialData: credentialData,
+            password: password ?? "",
+            options: try options.coreValue()
         )
         return BundleSigningReportObjC(report)
     }

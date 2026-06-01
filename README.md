@@ -383,6 +383,34 @@ Framework signing seals resources and signs the framework executable in place.
 It does not embed provisioning profiles or copy app entitlements from the
 profile by default.
 
+Sign a hosted bundle for a runtime that loads guest code from an installed host:
+
+```swift
+try RorkSigner.signHostedBundleWithCredential(
+    at: URL(fileURLWithPath: "Guest.app"),
+    provisioningProfileData: profile,
+    credentialData: credential,
+    password: "password",
+    options: HostedBundleSigningOptions(
+        hostExecutableURL: URL(fileURLWithPath: "HostExecutable"),
+        hostBundleIdentifier: "com.example.host"
+    )
+)
+```
+
+Hosted signing temporarily signs a copied host executable as the root
+executable, signs the original executable as loose code, then restores the
+guest `Info.plist` and removes the temporary stub. Use standalone signing
+instead when the output must be installed and launched directly.
+
+Read a team id from a provisioning profile:
+
+```swift
+let teamID = try RorkSigner.teamIdentifier(
+    provisioningProfileData: Data(contentsOf: URL(fileURLWithPath: "app.mobileprovision"))
+)
+```
+
 Validate a profile/private-key pair before signing:
 
 ```swift
@@ -423,10 +451,8 @@ if (!profile || !credential) {
     return;
 }
 
-NSString *teamID = [signer validatedTeamIdentifierWithProvisioningProfileData:profile
-                                                                credentialData:credential
-                                                                      password:@"password"
-                                                                         error:&error];
+NSString *teamID = [signer teamIdentifierForProvisioningProfileData:profile
+                                                              error:&error];
 ```
 
 Sign a bundle with a provisioning profile and credential:
@@ -458,6 +484,22 @@ RKBundleSigningReport *frameworkReport =
                                     password:@"password"
                                      options:frameworkOptions
                                        error:&error];
+```
+
+Sign a hosted bundle:
+
+```objc
+RKHostedBundleSigningOptions *hostedOptions =
+    [[RKHostedBundleSigningOptions alloc] initWithHostExecutableURL:hostExecutableURL
+                                               hostBundleIdentifier:@"com.example.host"];
+
+RKBundleSigningReport *hostedReport =
+    [signer signHostedBundleWithCredentialAtURL:guestBundleURL
+                        provisioningProfileData:profile
+                                 credentialData:credential
+                                       password:@"password"
+                                        options:hostedOptions
+                                          error:&error];
 ```
 
 For APIs whose Swift reports contain non-Objective-C value types, `RKSigner`
