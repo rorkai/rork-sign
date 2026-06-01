@@ -1,6 +1,7 @@
 import ArgumentParser
 import Dispatch
 import Foundation
+import Logging
 import RorkSign
 import ZIPFoundation
 
@@ -320,7 +321,8 @@ struct ZSignCompatibleRunner {
             dylibInjections: try dylibInjections(),
             dylibLoadCommandsToRemove: command.dylibLoadCommandsToRemove,
             codeDirectoryHashingMode: codeDirectoryHashingMode,
-            signingCache: signingCacheOptions()
+            signingCache: signingCacheOptions(),
+            diagnostics: signingDiagnostics()
         )
     }
 
@@ -335,8 +337,20 @@ struct ZSignCompatibleRunner {
             codeDirectoryHashingMode: codeDirectoryHashingMode,
             dylibInjections: try dylibInjections(),
             dylibLoadCommandsToRemove: command.dylibLoadCommandsToRemove,
-            signingCache: signingCacheOptions()
+            signingCache: signingCacheOptions(),
+            diagnostics: signingDiagnostics()
         )
+    }
+
+    /// Creates the optional SwiftLog diagnostics sink for verbose signing runs.
+    private func signingDiagnostics() -> SigningDiagnostics {
+        guard command.verbose, !command.quiet else {
+            return .disabled
+        }
+
+        var logger = Logger(label: "rork-sign.signing")
+        logger.logLevel = command.debug ? .debug : .info
+        return SigningDiagnostics(logger: logger)
     }
 
     /// Returns the default ZSign-style folder signing cache configuration.

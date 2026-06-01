@@ -103,6 +103,12 @@ public struct StandaloneBundleSigningOptions: Equatable {
     /// Optional persistent cache for the final signed Mach-O outputs.
     public var signingCache: SigningCacheOptions?
 
+    /// Optional logger-backed diagnostics for the rewrite and signing pass.
+    ///
+    /// Diagnostics are forwarded to the underlying bundle signer after
+    /// standalone metadata, profiles, and entitlements have been prepared.
+    public var diagnostics: SigningDiagnostics
+
     /// Creates standalone signing options.
     public init(
         bundleIdentifier: String,
@@ -122,7 +128,8 @@ public struct StandaloneBundleSigningOptions: Equatable {
         dylibInjections: [BundleDylibInjection] = [],
         dylibLoadCommandsToRemove: [String] = [],
         codeDirectoryHashingMode: CodeDirectoryHashingMode = .sha256Only,
-        signingCache: SigningCacheOptions? = nil
+        signingCache: SigningCacheOptions? = nil,
+        diagnostics: SigningDiagnostics = .disabled
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.rootProvisioningProfile = rootProvisioningProfile
@@ -142,6 +149,32 @@ public struct StandaloneBundleSigningOptions: Equatable {
         self.dylibLoadCommandsToRemove = dylibLoadCommandsToRemove
         self.codeDirectoryHashingMode = codeDirectoryHashingMode
         self.signingCache = signingCache
+        self.diagnostics = diagnostics
+    }
+
+    /// Compares semantic signing inputs while ignoring the diagnostics sink.
+    public static func == (
+        lhs: StandaloneBundleSigningOptions,
+        rhs: StandaloneBundleSigningOptions
+    ) -> Bool {
+        lhs.bundleIdentifier == rhs.bundleIdentifier
+            && lhs.rootProvisioningProfile == rhs.rootProvisioningProfile
+            && lhs.watchProvisioningProfile == rhs.watchProvisioningProfile
+            && lhs.provisioningProfilesByBundleIdentifier == rhs.provisioningProfilesByBundleIdentifier
+            && lhs.appGroupIdentifiers == rhs.appGroupIdentifiers
+            && lhs.rootEntitlementsXML == rhs.rootEntitlementsXML
+            && lhs.displayName == rhs.displayName
+            && lhs.bundleVersion == rhs.bundleVersion
+            && lhs.minimumOSVersion == rhs.minimumOSVersion
+            && lhs.enableDocuments == rhs.enableDocuments
+            && lhs.removeExtensions == rhs.removeExtensions
+            && lhs.removeWatchApps == rhs.removeWatchApps
+            && lhs.removeUISupportedDevices == rhs.removeUISupportedDevices
+            && lhs.embedProvisioningProfiles == rhs.embedProvisioningProfiles
+            && lhs.dylibInjections == rhs.dylibInjections
+            && lhs.dylibLoadCommandsToRemove == rhs.dylibLoadCommandsToRemove
+            && lhs.codeDirectoryHashingMode == rhs.codeDirectoryHashingMode
+            && lhs.signingCache == rhs.signingCache
     }
 }
 
@@ -240,7 +273,8 @@ enum StandaloneBundleSigner {
             codeDirectoryHashingMode: options.codeDirectoryHashingMode,
             dylibInjections: options.dylibInjections,
             dylibLoadCommandsToRemove: options.dylibLoadCommandsToRemove,
-            signingCache: options.signingCache
+            signingCache: options.signingCache,
+            diagnostics: options.diagnostics
         )
     }
 }

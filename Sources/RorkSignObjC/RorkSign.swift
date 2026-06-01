@@ -24,6 +24,38 @@ public enum CodeDirectoryHashingModeObjC: Int {
     }
 }
 
+/// Signing diagnostic level exposed to Objective-C callbacks.
+@objc(RKSigningDiagnosticLevel)
+public enum SigningDiagnosticLevelObjC: Int {
+    /// High-level signing progress and preflight metadata.
+    case info
+
+    /// Detailed path-level events such as sealed bundles and cache hits.
+    case debug
+
+    init(_ level: RorkSign.SigningDiagnosticLevel) {
+        switch level {
+        case .info:
+            self = .info
+        case .debug:
+            self = .debug
+        }
+    }
+}
+
+/// Bridges Objective-C diagnostic blocks into the Swift signing diagnostics sink.
+private func signingDiagnostics(
+    handler: ((SigningDiagnosticLevelObjC, String) -> Void)?
+) -> RorkSign.SigningDiagnostics {
+    guard let handler else {
+        return .disabled
+    }
+
+    return RorkSign.SigningDiagnostics(eventHandler: { level, message in
+        handler(SigningDiagnosticLevelObjC(level), message)
+    })
+}
+
 /// ZIP compression mode used when writing IPA archives.
 @objc(RKArchiveCompressionMode)
 public enum ArchiveCompressionModeObjC: Int {
@@ -472,6 +504,12 @@ public final class BundleSigningOptionsObjC: NSObject {
     /// Optional persistent cache for signed Mach-O outputs.
     @objc public var signingCache: SigningCacheOptionsObjC?
 
+    /// Optional callback for signing diagnostics.
+    ///
+    /// The Swift API accepts a SwiftLog logger. Objective-C callers can use
+    /// this block to receive the same rendered diagnostic lines.
+    @objc public var diagnosticHandler: ((SigningDiagnosticLevelObjC, String) -> Void)?
+
     /// Creates default options matching Swift `BundleSigningOptions`.
     @objc public override init() {
         defaultEntitlementsXML = ""
@@ -483,6 +521,7 @@ public final class BundleSigningOptionsObjC: NSObject {
         dylibInjections = []
         dylibLoadCommandsToRemove = []
         signingCache = nil
+        diagnosticHandler = nil
         super.init()
     }
 
@@ -503,7 +542,8 @@ public final class BundleSigningOptionsObjC: NSObject {
             codeDirectoryHashingMode: codeDirectoryHashingMode.coreValue,
             dylibInjections: dylibInjections.map(\.coreValue),
             dylibLoadCommandsToRemove: dylibLoadCommandsToRemove,
-            signingCache: signingCache?.coreValue
+            signingCache: signingCache?.coreValue,
+            diagnostics: signingDiagnostics(handler: diagnosticHandler)
         )
     }
 
@@ -578,6 +618,12 @@ public final class StandaloneBundleSigningOptionsObjC: NSObject {
     /// Optional persistent cache for signed Mach-O outputs.
     @objc public var signingCache: SigningCacheOptionsObjC?
 
+    /// Optional callback for signing diagnostics.
+    ///
+    /// The Swift API accepts a SwiftLog logger. Objective-C callers can use
+    /// this block to receive the same rendered diagnostic lines.
+    @objc public var diagnosticHandler: ((SigningDiagnosticLevelObjC, String) -> Void)?
+
     /// Creates standalone signing options for the required replacement bundle identifier.
     @objc(initWithBundleIdentifier:)
     public init(bundleIdentifier: String) {
@@ -598,6 +644,7 @@ public final class StandaloneBundleSigningOptionsObjC: NSObject {
         dylibLoadCommandsToRemove = []
         codeDirectoryHashingMode = .sha256Only
         signingCache = nil
+        diagnosticHandler = nil
         super.init()
     }
 
@@ -624,7 +671,8 @@ public final class StandaloneBundleSigningOptionsObjC: NSObject {
             dylibInjections: dylibInjections.map(\.coreValue),
             dylibLoadCommandsToRemove: dylibLoadCommandsToRemove,
             codeDirectoryHashingMode: codeDirectoryHashingMode.coreValue,
-            signingCache: signingCache?.coreValue
+            signingCache: signingCache?.coreValue,
+            diagnostics: signingDiagnostics(handler: diagnosticHandler)
         )
     }
 }

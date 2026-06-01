@@ -28,6 +28,7 @@ oracle for certificate and CMS interoperability.
 - [Objective-C API](#objective-c-api)
 - [ZSign Compatibility](#zsign-compatibility)
 - [Fast Re-signing](#fast-re-signing)
+- [Logging](#logging)
 - [Limitations](#limitations)
 - [Development](#development)
 - [License](#license)
@@ -470,7 +471,34 @@ rorksign -k dev.p12 -p password -m app.mobileprovision -o output.ipa ExtractedAr
 rorksign -f -k dev.p12 -p password -m app.mobileprovision -o output.ipa ExtractedArchive/
 ```
 
-Use `-V/--verbose` to print signed, cached, sealed, and archived paths.
+Use `-V/--verbose` to print a signing preflight header plus signed, cached,
+sealed, and archived paths.
+
+## Logging
+
+The library is silent by default. Swift callers can pass `SigningDiagnostics`
+with a SwiftLog `Logger` through `BundleSigningOptions` or
+`StandaloneBundleSigningOptions`:
+
+```swift
+import Foundation
+import Logging
+import RorkSign
+
+LoggingSystem.bootstrap(StreamLogHandler.standardOutput)
+
+var logger = Logger(label: "signing")
+logger.logLevel = .info
+let cacheURL = URL(fileURLWithPath: ".zsign_cache", isDirectory: true)
+
+let options = BundleSigningOptions(
+    signingCache: SigningCacheOptions(directoryURL: cacheURL),
+    diagnostics: SigningDiagnostics(logger: logger)
+)
+```
+
+The CLI wires `-V/--verbose` to the same diagnostics path and keeps `-q/--quiet`
+silent.
 
 ## Focused Subcommands
 
