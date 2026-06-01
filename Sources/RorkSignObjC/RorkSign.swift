@@ -1809,7 +1809,7 @@ public final class Signer: NSObject {
             provisioningProfileData: provisioningProfileData,
             credentialData: credentialData,
             password: password ?? "",
-            options: try options.coreValue(rootProvisioningProfile: provisioningProfileData)
+            options: try options.coreValue()
         )
         return BundleSigningReportObjC(report)
     }

@@ -276,6 +276,55 @@ final class ObjCFacadeTests: XCTestCase {
         )
     }
 
+    /// Verifies hosted ObjC signing preserves an explicitly configured root profile.
+    func testSignHostedBundleWithCredentialPreservesExplicitRootProfile() throws {
+        let fixture = try OpenSSLFixture()
+        defer {
+            fixture.remove()
+        }
+        let bundleURL = try makeObjCFacadeBundleFixture(
+            bundleIdentifier: "app.rork.objc.hosted.override.guest",
+            executable: Fixtures.machO64DylibWithCodeSignature()
+        )
+        let hostExecutableURL = bundleURL.deletingLastPathComponent().appendingPathComponent("HostStubSource")
+        try Fixtures.machO64WithCodeSignature().write(to: hostExecutableURL)
+        let credentialProfile = try objcFacadeProvisioningProfile(
+            bundleIdentifier: "app.rork.objc.hosted.override.identity",
+            certificateDER: fixture.identity.certificateDER
+        )
+        let rootProfile = try objcFacadeProvisioningProfile(
+            bundleIdentifier: "app.rork.objc.hosted.override.host",
+            certificateDER: fixture.identity.certificateDER
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
+        }
+
+        let options = HostedBundleSigningOptionsObjC(
+            hostExecutableURL: hostExecutableURL,
+            hostBundleIdentifier: "app.rork.objc.hosted.override.host"
+        )
+        options.bundleSigningOptions.rootProvisioningProfileData = rootProfile
+
+        let report = try Signer().signHostedBundleWithCredential(
+            at: bundleURL,
+            provisioningProfileData: credentialProfile,
+            credentialData: Data(fixture.privateKeyPEM.utf8),
+            password: nil,
+            options: options
+        )
+
+        XCTAssertEqual(
+            report.signedCodeURLs.map { $0.standardizedFileURL },
+            [bundleURL.appendingPathComponent("Host").standardizedFileURL]
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: bundleURL.appendingPathComponent("HostedSigningStub").path
+            )
+        )
+    }
+
     /// Verifies Objective-C framework signing exposes direct framework semantics.
     func testSignFrameworkWithCredentialMapsOptionsAndSignsCode() throws {
         let fixture = try OpenSSLFixture()

@@ -164,7 +164,14 @@ enum BundleSigner {
             result = .failure(error)
         }
 
-        try transaction.restore()
+        do {
+            try transaction.restore()
+        } catch {
+            if case .failure(let signingError) = result {
+                throw signingError
+            }
+            throw error
+        }
         return try result.get()
     }
 
@@ -510,9 +517,23 @@ private struct HostedBundleSigningTransaction {
     /// Restores the original `Info.plist` bytes and removes the temporary stub.
     func restore() throws {
         let fileManager = FileManager.default
-        try originalInfoPlistData.write(to: infoPlistURL, options: .atomic)
+        var firstError: Error?
+        do {
+            try originalInfoPlistData.write(to: infoPlistURL, options: .atomic)
+        } catch {
+            firstError = error
+        }
         if fileManager.fileExists(atPath: stubURL.path) {
-            try fileManager.removeItem(at: stubURL)
+            do {
+                try fileManager.removeItem(at: stubURL)
+            } catch {
+                if firstError == nil {
+                    firstError = error
+                }
+            }
+        }
+        if let firstError {
+            throw firstError
         }
     }
 
