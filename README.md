@@ -497,6 +497,20 @@ let options = BundleSigningOptions(
 )
 ```
 
+Objective-C callers configure logging through the facade options:
+
+```objc
+RKBundleSigningOptions *options = [[RKBundleSigningOptions alloc] init];
+options.logLevel = RKSigningLogLevelInfo;
+options.logHandler = ^(RKSigningDiagnosticLevel level, NSString *message) {
+    NSLog(@"[RorkSign] %@", message);
+};
+```
+
+For object-oriented integrations, assign `options.logger` to an object that
+conforms to `RKSigningLogger`. Use `RKSigningLogLevelDebug` to include detailed
+path-level events such as sealed bundles and signed Mach-O files.
+
 The CLI wires `-V/--verbose` to the same diagnostics path and keeps `-q/--quiet`
 silent.
 
