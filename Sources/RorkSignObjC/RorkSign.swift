@@ -43,16 +43,65 @@ public enum SigningDiagnosticLevelObjC: Int {
     }
 }
 
-/// Bridges Objective-C diagnostic blocks into the Swift signing diagnostics sink.
+/// Logging verbosity exposed to Objective-C signing options.
+///
+/// Objective-C integrations cannot pass SwiftLog's `Logger` struct directly.
+/// Instead they choose a facade log level and route matching messages through a
+/// block or object conforming to `RKSigningLogger`.
+@objc(RKSigningLogLevel)
+public enum SigningLogLevelObjC: Int {
+    /// Do not emit signing diagnostics.
+    case none
+
+    /// Emit high-level signing progress and preflight metadata.
+    case info
+
+    /// Emit info logs plus detailed path-level signing events.
+    case debug
+
+    func includes(_ level: RorkSign.SigningDiagnosticLevel) -> Bool {
+        switch (self, level) {
+        case (.none, _):
+            return false
+        case (.info, .info):
+            return true
+        case (.info, .debug):
+            return false
+        case (.debug, _):
+            return true
+        }
+    }
+}
+
+/// Objective-C logging sink for signing diagnostics.
+///
+/// Use this protocol when an integration wants an object-oriented logger rather
+/// than a block. Messages are already rendered by the Swift signer.
+@objc(RKSigningLogger)
+public protocol SigningLoggerObjC: AnyObject {
+    /// Receives one rendered signing log line.
+    @objc(signingDidLogMessage:level:)
+    func signingDidLogMessage(_ message: String, level: SigningDiagnosticLevelObjC)
+}
+
+/// Bridges Objective-C logging sinks into the Swift signing diagnostics sink.
 private func signingDiagnostics(
-    handler: ((SigningDiagnosticLevelObjC, String) -> Void)?
+    logLevel: SigningLogLevelObjC,
+    logHandler: ((SigningDiagnosticLevelObjC, String) -> Void)?,
+    logger: SigningLoggerObjC?
 ) -> RorkSign.SigningDiagnostics {
-    guard let handler else {
+    guard logLevel != .none, logHandler != nil || logger != nil else {
         return .disabled
     }
 
     return RorkSign.SigningDiagnostics(eventHandler: { level, message in
-        handler(SigningDiagnosticLevelObjC(level), message)
+        guard logLevel.includes(level) else {
+            return
+        }
+
+        let objcLevel = SigningDiagnosticLevelObjC(level)
+        logHandler?(objcLevel, message)
+        logger?.signingDidLogMessage(message, level: objcLevel)
     })
 }
 
@@ -504,11 +553,36 @@ public final class BundleSigningOptionsObjC: NSObject {
     /// Optional persistent cache for signed Mach-O outputs.
     @objc public var signingCache: SigningCacheOptionsObjC?
 
-    /// Optional callback for signing diagnostics.
+    /// Minimum signing log level emitted through `logHandler` and `logger`.
     ///
-    /// The Swift API accepts a SwiftLog logger. Objective-C callers can use
-    /// this block to receive the same rendered diagnostic lines.
-    @objc public var diagnosticHandler: ((SigningDiagnosticLevelObjC, String) -> Void)?
+    /// The default is `.none`, which keeps the library silent.
+    @objc public var logLevel: SigningLogLevelObjC
+
+    /// Optional block sink for rendered signing log lines.
+    ///
+    /// Set `logLevel` to `.info` or `.debug` to enable this callback.
+    @objc public var logHandler: ((SigningDiagnosticLevelObjC, String) -> Void)?
+
+    /// Optional object sink for rendered signing log lines.
+    ///
+    /// Set `logLevel` to `.info` or `.debug` to enable this logger.
+    @objc public weak var logger: SigningLoggerObjC?
+
+    /// Compatibility alias for the original diagnostic block.
+    ///
+    /// New callers should use `logLevel` plus `logHandler` or `logger`.
+    @available(*, deprecated, message: "Use logLevel with logHandler or logger.")
+    @objc public var diagnosticHandler: ((SigningDiagnosticLevelObjC, String) -> Void)? {
+        get {
+            logHandler
+        }
+        set {
+            logHandler = newValue
+            if newValue != nil, logLevel == .none {
+                logLevel = .debug
+            }
+        }
+    }
 
     /// Creates default options matching Swift `BundleSigningOptions`.
     @objc public override init() {
@@ -521,7 +595,9 @@ public final class BundleSigningOptionsObjC: NSObject {
         dylibInjections = []
         dylibLoadCommandsToRemove = []
         signingCache = nil
-        diagnosticHandler = nil
+        logLevel = .none
+        logHandler = nil
+        logger = nil
         super.init()
     }
 
@@ -543,7 +619,11 @@ public final class BundleSigningOptionsObjC: NSObject {
             dylibInjections: dylibInjections.map(\.coreValue),
             dylibLoadCommandsToRemove: dylibLoadCommandsToRemove,
             signingCache: signingCache?.coreValue,
-            diagnostics: signingDiagnostics(handler: diagnosticHandler)
+            diagnostics: signingDiagnostics(
+                logLevel: logLevel,
+                logHandler: logHandler,
+                logger: logger
+            )
         )
     }
 
@@ -618,11 +698,36 @@ public final class StandaloneBundleSigningOptionsObjC: NSObject {
     /// Optional persistent cache for signed Mach-O outputs.
     @objc public var signingCache: SigningCacheOptionsObjC?
 
-    /// Optional callback for signing diagnostics.
+    /// Minimum signing log level emitted through `logHandler` and `logger`.
     ///
-    /// The Swift API accepts a SwiftLog logger. Objective-C callers can use
-    /// this block to receive the same rendered diagnostic lines.
-    @objc public var diagnosticHandler: ((SigningDiagnosticLevelObjC, String) -> Void)?
+    /// The default is `.none`, which keeps the library silent.
+    @objc public var logLevel: SigningLogLevelObjC
+
+    /// Optional block sink for rendered signing log lines.
+    ///
+    /// Set `logLevel` to `.info` or `.debug` to enable this callback.
+    @objc public var logHandler: ((SigningDiagnosticLevelObjC, String) -> Void)?
+
+    /// Optional object sink for rendered signing log lines.
+    ///
+    /// Set `logLevel` to `.info` or `.debug` to enable this logger.
+    @objc public weak var logger: SigningLoggerObjC?
+
+    /// Compatibility alias for the original diagnostic block.
+    ///
+    /// New callers should use `logLevel` plus `logHandler` or `logger`.
+    @available(*, deprecated, message: "Use logLevel with logHandler or logger.")
+    @objc public var diagnosticHandler: ((SigningDiagnosticLevelObjC, String) -> Void)? {
+        get {
+            logHandler
+        }
+        set {
+            logHandler = newValue
+            if newValue != nil, logLevel == .none {
+                logLevel = .debug
+            }
+        }
+    }
 
     /// Creates standalone signing options for the required replacement bundle identifier.
     @objc(initWithBundleIdentifier:)
@@ -644,7 +749,9 @@ public final class StandaloneBundleSigningOptionsObjC: NSObject {
         dylibLoadCommandsToRemove = []
         codeDirectoryHashingMode = .sha256Only
         signingCache = nil
-        diagnosticHandler = nil
+        logLevel = .none
+        logHandler = nil
+        logger = nil
         super.init()
     }
 
@@ -672,7 +779,11 @@ public final class StandaloneBundleSigningOptionsObjC: NSObject {
             dylibLoadCommandsToRemove: dylibLoadCommandsToRemove,
             codeDirectoryHashingMode: codeDirectoryHashingMode.coreValue,
             signingCache: signingCache?.coreValue,
-            diagnostics: signingDiagnostics(handler: diagnosticHandler)
+            diagnostics: signingDiagnostics(
+                logLevel: logLevel,
+                logHandler: logHandler,
+                logger: logger
+            )
         )
     }
 }

@@ -29,30 +29,70 @@ final class ObjCFacadeTests: XCTestCase {
         )
     }
 
-    /// Verifies Objective-C options can receive the same signing diagnostics as Swift options.
-    func testBundleOptionsCanReceiveDiagnosticLines() throws {
-        let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "app.rork.objc.diagnostics")
+    /// Verifies Objective-C options can receive info-level signing logs.
+    func testBundleOptionsCanReceiveLogLines() throws {
+        let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "app.rork.objc.logging")
         addTeardownBlock {
             try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
         }
 
         let options = BundleSigningOptionsObjC()
-        var diagnosticLines: [String] = []
-        options.diagnosticHandler = { level, message in
+        var logLines: [String] = []
+        options.logLevel = .info
+        options.logHandler = { level, message in
             guard level == .info else {
                 return
             }
-            diagnosticLines.append(message)
+            logLines.append(message)
         }
 
         _ = try Signer().signBundleAdHoc(at: bundleURL, options: options)
 
-        XCTAssertTrue(diagnosticLines.contains(">>> AppName: \tHost"), diagnosticLines.joined(separator: "\n"))
+        XCTAssertTrue(logLines.contains(">>> AppName: \tHost"), logLines.joined(separator: "\n"))
         XCTAssertTrue(
-            diagnosticLines.contains(">>> BundleId: \tapp.rork.objc.diagnostics"),
-            diagnosticLines.joined(separator: "\n")
+            logLines.contains(">>> BundleId: \tapp.rork.objc.logging"),
+            logLines.joined(separator: "\n")
         )
-        XCTAssertTrue(diagnosticLines.contains(">>> ReadCache: \tNO"), diagnosticLines.joined(separator: "\n"))
+        XCTAssertTrue(logLines.contains(">>> ReadCache: \tNO"), logLines.joined(separator: "\n"))
+    }
+
+    /// Verifies Objective-C logging stays silent unless a level is explicitly enabled.
+    func testBundleOptionsKeepLoggingSilentByDefault() throws {
+        let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "app.rork.objc.logging-silent")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
+        }
+
+        let options = BundleSigningOptionsObjC()
+        var logLines: [String] = []
+        options.logHandler = { _, message in
+            logLines.append(message)
+        }
+
+        _ = try Signer().signBundleAdHoc(at: bundleURL, options: options)
+
+        XCTAssertEqual(logLines, [])
+    }
+
+    /// Verifies Objective-C options can route logs through an object sink.
+    func testBundleOptionsCanReceiveLogsThroughLoggerObject() throws {
+        let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "app.rork.objc.logger")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
+        }
+
+        let logger = ObjCFacadeSigningLogger()
+        let options = BundleSigningOptionsObjC()
+        options.logLevel = .info
+        options.logger = logger
+
+        _ = try Signer().signBundleAdHoc(at: bundleURL, options: options)
+
+        XCTAssertTrue(logger.messages.contains(">>> AppName: \tHost"), logger.messages.joined(separator: "\n"))
+        XCTAssertTrue(
+            logger.messages.contains(">>> BundleId: \tapp.rork.objc.logger"),
+            logger.messages.joined(separator: "\n")
+        )
     }
 
     /// Verifies profile/credential validation succeeds through the facade.
@@ -187,6 +227,15 @@ final class ObjCFacadeTests: XCTestCase {
         XCTAssertThrowsError(try Signer().signStandaloneBundleAdHoc(at: bundleURL, options: options)) { error in
             XCTAssertTrue(error.localizedDescription.contains("is not NSData"))
         }
+    }
+}
+
+/// Captures Objective-C facade log messages through the logger protocol.
+private final class ObjCFacadeSigningLogger: NSObject, SigningLoggerObjC {
+    var messages: [String] = []
+
+    func signingDidLogMessage(_ message: String, level: SigningDiagnosticLevelObjC) {
+        messages.append(message)
     }
 }
 
