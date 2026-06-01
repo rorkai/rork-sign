@@ -1004,6 +1004,13 @@ final class CLITests: XCTestCase {
         ])
 
         XCTAssertEqual(result.status, 0, result.output)
+        XCTAssertTrue(result.output.contains(">>> Signing: \t"), result.output)
+        XCTAssertTrue(result.output.contains(">>> AppName: \tHost"), result.output)
+        XCTAssertTrue(result.output.contains(">>> BundleId: \tcom.example.verbose"), result.output)
+        XCTAssertTrue(result.output.contains(">>> Version: \t-"), result.output)
+        XCTAssertTrue(result.output.contains(">>> TeamId: \tAdHoc"), result.output)
+        XCTAssertTrue(result.output.contains(">>> SubjectCN: \tAdHoc"), result.output)
+        XCTAssertTrue(result.output.contains(">>> ReadCache: \tYES"), result.output)
         XCTAssertTrue(result.output.contains("outputArchive=\(outputURL.path)"), result.output)
         XCTAssertTrue(result.output.contains("appBundle=Payload/Host.app"), result.output)
         XCTAssertTrue(result.output.contains("sealedBundle=Payload/Host.app"), result.output)

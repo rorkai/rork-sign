@@ -29,6 +29,32 @@ final class ObjCFacadeTests: XCTestCase {
         )
     }
 
+    /// Verifies Objective-C options can receive the same signing diagnostics as Swift options.
+    func testBundleOptionsCanReceiveDiagnosticLines() throws {
+        let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "app.rork.objc.diagnostics")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
+        }
+
+        let options = BundleSigningOptionsObjC()
+        var diagnosticLines: [String] = []
+        options.diagnosticHandler = { level, message in
+            guard level == .info else {
+                return
+            }
+            diagnosticLines.append(message)
+        }
+
+        _ = try Signer().signBundleAdHoc(at: bundleURL, options: options)
+
+        XCTAssertTrue(diagnosticLines.contains(">>> AppName: \tHost"), diagnosticLines.joined(separator: "\n"))
+        XCTAssertTrue(
+            diagnosticLines.contains(">>> BundleId: \tapp.rork.objc.diagnostics"),
+            diagnosticLines.joined(separator: "\n")
+        )
+        XCTAssertTrue(diagnosticLines.contains(">>> ReadCache: \tNO"), diagnosticLines.joined(separator: "\n"))
+    }
+
     /// Verifies profile/credential validation succeeds through the facade.
     func testValidatedTeamIdentifierAcceptsProfileCredentialPair() throws {
         let fixture = try OpenSSLFixture()

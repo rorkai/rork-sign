@@ -170,6 +170,7 @@ struct ZSignOptions: ParsableArguments {
         guard let inputPath else {
             throw ValidationError("Missing input file or folder. Run `rorksign --help` for usage.")
         }
+        RorkSignCLILogging.bootstrapIfNeeded()
         try ZSignCompatibleRunner(command: self).run(inputPath: inputPath)
     }
 }

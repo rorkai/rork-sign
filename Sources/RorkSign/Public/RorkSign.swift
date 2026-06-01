@@ -1340,6 +1340,13 @@ public struct BundleSigningOptions: Equatable {
     /// callers disable reads for force-rebuild workflows.
     public var signingCache: SigningCacheOptions?
 
+    /// Optional logger-backed diagnostics for bundle signing.
+    ///
+    /// Logging is intentionally opt-in. The signer never bootstraps SwiftLog or
+    /// prints directly, so callers can wire this to stdout, files, OSLog, or a
+    /// custom backend according to their environment.
+    public var diagnostics: SigningDiagnostics
+
     /// Creates explicit bundle-signing assets keyed by `CFBundleIdentifier`.
     ///
     /// `defaultEntitlementsXML` is used only for the root executable when no
@@ -1355,7 +1362,8 @@ public struct BundleSigningOptions: Equatable {
         codeDirectoryHashingMode: CodeDirectoryHashingMode = .compatible,
         dylibInjections: [BundleDylibInjection] = [],
         dylibLoadCommandsToRemove: [String] = [],
-        signingCache: SigningCacheOptions? = nil
+        signingCache: SigningCacheOptions? = nil,
+        diagnostics: SigningDiagnostics = .disabled
     ) {
         self.defaultEntitlementsXML = defaultEntitlementsXML
         self.rootProvisioningProfile = rootProvisioningProfile
@@ -1366,6 +1374,20 @@ public struct BundleSigningOptions: Equatable {
         self.dylibInjections = dylibInjections
         self.dylibLoadCommandsToRemove = dylibLoadCommandsToRemove
         self.signingCache = signingCache
+        self.diagnostics = diagnostics
+    }
+
+    /// Compares semantic signing inputs while ignoring the diagnostics sink.
+    public static func == (lhs: BundleSigningOptions, rhs: BundleSigningOptions) -> Bool {
+        lhs.defaultEntitlementsXML == rhs.defaultEntitlementsXML
+            && lhs.rootProvisioningProfile == rhs.rootProvisioningProfile
+            && lhs.entitlementsByBundleIdentifier == rhs.entitlementsByBundleIdentifier
+            && lhs.provisioningProfilesByBundleIdentifier == rhs.provisioningProfilesByBundleIdentifier
+            && lhs.embedProvisioningProfiles == rhs.embedProvisioningProfiles
+            && lhs.codeDirectoryHashingMode == rhs.codeDirectoryHashingMode
+            && lhs.dylibInjections == rhs.dylibInjections
+            && lhs.dylibLoadCommandsToRemove == rhs.dylibLoadCommandsToRemove
+            && lhs.signingCache == rhs.signingCache
     }
 }
 

@@ -104,6 +104,12 @@ enum BundleSigner {
         }
         if isRoot {
             try BundleDylibEditor.apply(to: bundle, options: options)
+            logSigningStart(
+                bundle: bundle,
+                signingMode: signingMode,
+                options: options,
+                context: context
+            )
         }
 
         for nestedBundleURL in try BundleCodeScanner.nestedBundles(in: bundle.url) {
@@ -144,6 +150,7 @@ enum BundleSigner {
                 let embeddedProfileURL = bundle.url.appendingPathComponent("embedded.mobileprovision")
                 try provisioningProfile.write(to: embeddedProfileURL, options: .atomic)
                 context.embeddedProvisioningProfiles.append(embeddedProfileURL)
+                context.diagnostics.debug("embeddedProfile=\(embeddedProfileURL.path)")
             }
         }
         if !options.embedProvisioningProfiles {
@@ -152,6 +159,7 @@ enum BundleSigner {
 
         let codeResourcesURL = try CodeResourcesBuilder.write(bundleURL: bundle.url)
         context.sealedBundles.append(bundle.url)
+        context.diagnostics.debug("sealedBundle=\(bundle.url.path)")
 
         guard let executableURL = bundle.executableURL else {
             return
@@ -197,6 +205,7 @@ enum BundleSigner {
             try writeSignedCode(cached, to: url, originalAttributes: attributes)
             context.signedCode.append(url)
             context.cachedCode.append(url)
+            context.diagnostics.debug("cachedCode=\(url.path)")
             return
         }
 
@@ -227,6 +236,23 @@ enum BundleSigner {
             context.signatureCache?.store(signed, for: cacheKey)
         }
         context.signedCode.append(url)
+        context.diagnostics.debug("signedCode=\(url.path)")
+    }
+
+    /// Emits a ZSign-shaped root bundle preflight header through SwiftLog.
+    private static func logSigningStart(
+        bundle: SigningBundle,
+        signingMode: BundleCodeSigningMode,
+        options: BundleSigningOptions,
+        context: BundleSigningContext
+    ) {
+        context.diagnostics.info(">>> Signing: \t\(bundle.url.path) ...")
+        context.diagnostics.info(">>> AppName: \t\(bundle.displayName)")
+        context.diagnostics.info(">>> BundleId: \t\(bundle.identifier ?? "-")")
+        context.diagnostics.info(">>> Version: \t\(bundle.version)")
+        context.diagnostics.info(">>> TeamId: \t\(signingMode.diagnosticsTeamIdentifier)")
+        context.diagnostics.info(">>> SubjectCN: \t\(signingMode.diagnosticsSubjectCommonName)")
+        context.diagnostics.info(">>> ReadCache: \t\(options.signingCache?.readExistingEntries == true ? "YES" : "NO")")
     }
 
     /// Writes signed bytes while preserving the original executable mode.
@@ -485,6 +511,7 @@ private struct BundleSigningContext {
     var codeDirectoryHashingMode: CodeDirectoryHashingMode = .compatible
     var profileValidationPolicy: ProvisioningProfileValidationPolicy = .strictBundleIdentifier
     var signatureCache: BundleSignatureCache?
+    var diagnostics: SigningDiagnostics = .disabled
 
     init(
         options: BundleSigningOptions,
@@ -493,6 +520,7 @@ private struct BundleSigningContext {
         self.codeDirectoryHashingMode = options.codeDirectoryHashingMode
         self.profileValidationPolicy = profileValidationPolicy
         self.signatureCache = options.signingCache.map { BundleSignatureCache(options: $0) }
+        self.diagnostics = options.diagnostics
     }
 }
 
@@ -504,6 +532,28 @@ private enum ProvisioningProfileValidationPolicy {
 enum BundleCodeSigningMode {
     case adHoc
     case identity(SigningIdentity)
+
+    /// Team identifier reported in signing diagnostics.
+    var diagnosticsTeamIdentifier: String {
+        switch self {
+        case .adHoc:
+            return "AdHoc"
+        case .identity(let identity):
+            let teamIdentifier = identity.teamIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            return teamIdentifier.isEmpty ? "-" : teamIdentifier
+        }
+    }
+
+    /// Certificate common name reported in signing diagnostics.
+    var diagnosticsSubjectCommonName: String {
+        switch self {
+        case .adHoc:
+            return "AdHoc"
+        case .identity(let identity):
+            let subjectCommonName = identity.subjectCommonName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return subjectCommonName.isEmpty ? "-" : subjectCommonName
+        }
+    }
 
     /// Validates profile/identity compatibility before embedding a profile.
     ///
@@ -593,6 +643,8 @@ private struct SigningBundle {
     let url: URL
     let identifier: String?
     let executableURL: URL?
+    let displayName: String
+    let version: String
 
     init(url: URL) throws {
         var isDirectory: ObjCBool = false
@@ -603,6 +655,12 @@ private struct SigningBundle {
         let info = try Self.readInfoPlist(bundleURL: url)
         self.url = url
         self.identifier = Self.nonEmptyString(info?["CFBundleIdentifier"])
+        self.displayName = Self.nonEmptyString(info?["CFBundleDisplayName"])
+            ?? Self.nonEmptyString(info?["CFBundleName"])
+            ?? url.deletingPathExtension().lastPathComponent
+        self.version = Self.nonEmptyString(info?["CFBundleShortVersionString"])
+            ?? Self.nonEmptyString(info?["CFBundleVersion"])
+            ?? "-"
 
         if let executableName = Self.nonEmptyString(info?["CFBundleExecutable"]) {
             guard Self.isSafeExecutableName(executableName) else {
