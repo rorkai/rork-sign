@@ -4,6 +4,85 @@ import RorkSign
 import XCTest
 
 final class BundleSigningTests: XCTestCase {
+    func testSignFrameworkAdHocSignsFrameworkDirectly() throws {
+        let frameworkURL = try makeFrameworkFixture()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: frameworkURL.deletingLastPathComponent())
+        }
+
+        let report = try RorkSigner.signFrameworkAdHoc(at: frameworkURL)
+
+        XCTAssertEqual(report.sealedBundles, [frameworkURL])
+        XCTAssertEqual(report.embeddedProvisioningProfiles, [])
+        XCTAssertEqual(report.signedCode, [frameworkURL.appendingPathComponent("TestFramework")])
+
+        let codeResourcesURL = frameworkURL.appendingPathComponent("_CodeSignature/CodeResources")
+        let codeResources = try Data(contentsOf: codeResourcesURL)
+        let executable = try Data(contentsOf: frameworkURL.appendingPathComponent("TestFramework"))
+        XCTAssertEqual(try resourceDirectoryHash(inSignedMachO: executable), Data(SHA256.hash(data: codeResources)))
+        XCTAssertEqual(
+            try infoPlistHash(inSignedMachO: executable),
+            Data(SHA256.hash(data: try Data(contentsOf: frameworkURL.appendingPathComponent("Info.plist"))))
+        )
+    }
+
+    func testSignFrameworkWithCredentialDoesNotEmbedProfileOrDeriveEntitlements() throws {
+        let fixture = try OpenSSLFixture()
+        defer {
+            fixture.remove()
+        }
+        let frameworkURL = try makeFrameworkFixture(bundleIdentifier: "app.rork.framework.identity")
+        let profile = try rawProvisioningProfile(
+            bundleIdentifier: "app.rork.host",
+            developerCertificates: [fixture.identity.certificateDER]
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: frameworkURL.deletingLastPathComponent())
+        }
+
+        let report = try RorkSigner.signFrameworkWithCredential(
+            at: frameworkURL,
+            provisioningProfileData: profile,
+            credentialData: Data(fixture.privateKeyPEM.utf8),
+            options: FrameworkSigningOptions(codeDirectoryHashingMode: .sha256Only)
+        )
+
+        XCTAssertEqual(report.sealedBundles, [frameworkURL])
+        XCTAssertEqual(report.embeddedProvisioningProfiles, [])
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: frameworkURL.appendingPathComponent("embedded.mobileprovision").path
+            )
+        )
+
+        let executableURL = frameworkURL.appendingPathComponent("TestFramework")
+        let executable = try Data(contentsOf: executableURL)
+        let blobs = try signatureBlobs(in: executable)
+        XCTAssertNil(blobs[5])
+        XCTAssertNil(blobs[7])
+        XCTAssertEqual(
+            try RorkSigner.checkMachOCodeSignatures(at: executableURL)
+                .first?
+                .codeDirectories
+                .map(\.hashAlgorithm),
+            [.sha256]
+        )
+    }
+
+    func testSignFrameworkRejectsNonFrameworkBundle() throws {
+        let bundleURL = try makeNestedBundleFixture()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
+        }
+
+        XCTAssertThrowsError(try RorkSigner.signFrameworkAdHoc(at: bundleURL)) { error in
+            XCTAssertEqual(
+                error as? RorkSignError,
+                .invalidBundle("Expected a .framework bundle: \(bundleURL.path).")
+            )
+        }
+    }
+
     func testSignBundleAdHocSignsNestedBundlesBeforeParentExecutable() throws {
         let bundleURL = try makeNestedBundleFixture()
         addTeardownBlock {
@@ -654,6 +733,24 @@ private func makeNestedBundleFixture(
     return bundleURL
 }
 
+private func makeFrameworkFixture(
+    bundleIdentifier: String = "app.rork.framework",
+    executable: Data = Fixtures.machO64DylibWithCodeSignature()
+) throws -> URL {
+    let rootURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let frameworkURL = rootURL.appendingPathComponent("TestFramework.framework", isDirectory: true)
+    try FileManager.default.createDirectory(at: frameworkURL, withIntermediateDirectories: true)
+    try writeInfoPlist(
+        bundleIdentifier: bundleIdentifier,
+        executableName: "TestFramework",
+        to: frameworkURL.appendingPathComponent("Info.plist")
+    )
+    try executable.write(to: frameworkURL.appendingPathComponent("TestFramework"))
+    try Data("framework asset".utf8).write(to: frameworkURL.appendingPathComponent("asset.txt"))
+    return frameworkURL
+}
+
 private func writeInfoPlist(bundleIdentifier: String, executableName: String, to url: URL) throws {
     let plist = """
     <?xml version="1.0" encoding="UTF-8"?>
@@ -713,12 +810,13 @@ private func entitlementsXML(applicationIdentifier: String) -> String {
 
 private func rawProvisioningProfile(
     bundleIdentifier: String,
-    applicationIdentifier: String? = nil
+    applicationIdentifier: String? = nil,
+    developerCertificates: [Data] = [Data([0x01])]
 ) throws -> Data {
     let plist: [String: Any] = [
         "TeamIdentifier": ["TEAMID1234"],
         "ExpirationDate": Date(timeIntervalSince1970: 1_900_000_000),
-        "DeveloperCertificates": [Data([0x01])],
+        "DeveloperCertificates": developerCertificates,
         "Entitlements": [
             "application-identifier": applicationIdentifier ?? "TEAMID1234.\(bundleIdentifier)",
             "com.apple.developer.team-identifier": "TEAMID1234",
