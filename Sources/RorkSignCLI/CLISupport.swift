@@ -28,6 +28,43 @@ enum CLISupport {
             .filter { !$0.isEmpty }
     }
 
+    /// Reads a JSON object mapping final bundle identifiers to provisioning
+    /// profile paths. Relative paths are resolved from the JSON file directory.
+    static func readProvisioningProfileMap(path: String) throws -> [String: Data] {
+        let mapURL = URL(fileURLWithPath: path)
+        let rawMap = try Data(contentsOf: mapURL)
+        let parsed = try JSONSerialization.jsonObject(with: rawMap, options: [])
+        guard let pathsByBundleIdentifier = parsed as? [String: String] else {
+            throw ValidationError(
+                "Provisioning profile map must be a JSON object from bundle identifier to profile path."
+            )
+        }
+        guard !pathsByBundleIdentifier.isEmpty else {
+            throw ValidationError("Provisioning profile map must not be empty.")
+        }
+
+        let baseURL = mapURL.deletingLastPathComponent()
+        var profilesByBundleIdentifier: [String: Data] = [:]
+        for (rawBundleIdentifier, rawProfilePath) in pathsByBundleIdentifier {
+            let bundleIdentifier = rawBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !bundleIdentifier.isEmpty else {
+                throw ValidationError("Provisioning profile map contains an empty bundle identifier.")
+            }
+
+            let profilePath = rawProfilePath.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !profilePath.isEmpty else {
+                throw ValidationError("Provisioning profile map contains an empty profile path for \(bundleIdentifier).")
+            }
+
+            let profileURL = profilePath.hasPrefix("/")
+                ? URL(fileURLWithPath: profilePath)
+                : baseURL.appendingPathComponent(profilePath)
+            profilesByBundleIdentifier[bundleIdentifier] = try Data(contentsOf: profileURL)
+        }
+
+        return profilesByBundleIdentifier
+    }
+
     /// Loads a PEM certificate/private-key pair into a signing identity.
     static func readIdentity(
         certificatePath: String,
