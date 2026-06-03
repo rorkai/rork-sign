@@ -858,6 +858,72 @@ final class CLITests: XCTestCase {
         )
     }
 
+    func testStandaloneProfileMapCommandAppliesBundleName() throws {
+        let signing = try OpenSSLFixture()
+        defer {
+            signing.remove()
+        }
+        let fixture = try makeCLIFixture()
+        let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
+        let appURL = archiveRootURL.appendingPathComponent("Payload/Host.app", isDirectory: true)
+        let inputURL = fixture.directory.appendingPathComponent("Input.ipa")
+        let outputURL = fixture.directory.appendingPathComponent("Signed.ipa")
+        let profileURL = fixture.directory.appendingPathComponent("Root.mobileprovision")
+        let profileMapURL = fixture.directory.appendingPathComponent("profiles.json")
+        let extractedURL = fixture.directory.appendingPathComponent("Extracted", isDirectory: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+
+        try FileManager.default.createDirectory(at: appURL, withIntermediateDirectories: true)
+        try writeCLIInfoPlist(
+            [
+                "CFBundleIdentifier": "com.example.original",
+                "CFBundleExecutable": "Host",
+                "CFBundleName": "Original",
+                "CFBundleDisplayName": "Original",
+            ],
+            to: appURL.appendingPathComponent("Info.plist")
+        )
+        try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
+
+        let profile = try cliProvisioningProfile(
+            bundleIdentifier: "com.example.rewritten",
+            certificateDER: signing.identity.certificateDER
+        )
+        try profile.write(to: profileURL)
+        try JSONSerialization.data(
+            withJSONObject: [
+                "com.example.rewritten": profileURL.lastPathComponent,
+            ],
+            options: [.sortedKeys]
+        )
+        .write(to: profileMapURL)
+        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+
+        let result = try runRorkSign([
+            "standalone-sign-ipa-profile-map",
+            inputURL.path,
+            outputURL.path,
+            "com.example.rewritten",
+            profileMapURL.path,
+            signing.privateKeyURL.path,
+            "--bundle-name", "Renamed App",
+        ])
+
+        XCTAssertEqual(result.status, 0, result.output)
+        guard result.status == 0 else {
+            return
+        }
+        try FileManager.default.createDirectory(at: extractedURL, withIntermediateDirectories: true)
+        try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
+        let info = try cliPlistDictionary(
+            at: extractedURL.appendingPathComponent("Payload/Host.app/Info.plist")
+        )
+        XCTAssertEqual(info["CFBundleName"] as? String, "Renamed App")
+        XCTAssertEqual(info["CFBundleDisplayName"] as? String, "Renamed App")
+    }
+
     func testDefaultCommandAppliesStandaloneRootEntitlementsFile() throws {
         let fixture = try makeCLIFixture()
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)

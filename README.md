@@ -649,7 +649,7 @@ rorksign identity-sign-ipa-profile-key <input-ipa> <output-ipa> <profile-path> <
 rorksign standalone-sign-ipa-adhoc <input-ipa> <output-ipa> <bundle-id> <profile-path>
 rorksign standalone-sign-ipa-p12 <input-ipa> <output-ipa> <bundle-id> <profile-path> <p12-path> <password>
 rorksign standalone-sign-ipa-profile-key <input-ipa> <output-ipa> <bundle-id> <profile-path> <credential-path> <password>
-rorksign standalone-sign-ipa-profile-map <input-ipa> <output-ipa> <bundle-id> <profile-map-json> <credential-path> [--password <password>] [--app-groups <group,...>]
+rorksign standalone-sign-ipa-profile-map <input-ipa> <output-ipa> <bundle-id> <profile-map-json> <credential-path> [--password <password>] [--app-groups <group,...>] [--bundle-name <name>]
 rorksign seal-resources <bundle-path>
 rorksign verify-resources <bundle-path>
 rorksign team-id <profile-path> <credential-path> <password>
