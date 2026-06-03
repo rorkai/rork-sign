@@ -720,6 +720,144 @@ final class CLITests: XCTestCase {
         XCTAssertTrue(try RorkSigner.inspectMachO(Data(contentsOf: signedAppURL.appendingPathComponent("Host"))).hasCodeSignature)
     }
 
+    func testStandaloneProfileMapCommandSignsNestedProfilesFromJSONMap() throws {
+        let signing = try OpenSSLFixture()
+        defer {
+            signing.remove()
+        }
+        let fixture = try makeCLIFixture()
+        let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
+        let appURL = archiveRootURL.appendingPathComponent("Payload/Host.app", isDirectory: true)
+        let extensionURL = appURL.appendingPathComponent("PlugIns/Widget.appex", isDirectory: true)
+        let inputURL = fixture.directory.appendingPathComponent("Input.ipa")
+        let outputURL = fixture.directory.appendingPathComponent("Signed.ipa")
+        let rootProfileURL = fixture.directory.appendingPathComponent("Root.mobileprovision")
+        let extensionProfileURL = fixture.directory.appendingPathComponent("Widget.mobileprovision")
+        let profileMapURL = fixture.directory.appendingPathComponent("profiles.json")
+        let extractedURL = fixture.directory.appendingPathComponent("Extracted", isDirectory: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+
+        try FileManager.default.createDirectory(at: extensionURL, withIntermediateDirectories: true)
+        try writeCLIInfoPlist(
+            [
+                "CFBundleIdentifier": "com.example.original",
+                "CFBundleExecutable": "Host",
+            ],
+            to: appURL.appendingPathComponent("Info.plist")
+        )
+        try writeCLIInfoPlist(
+            [
+                "CFBundleIdentifier": "com.example.original.Widget",
+                "CFBundleExecutable": "Widget",
+                "NSExtension": [
+                    "NSExtensionPointIdentifier": "com.apple.widgetkit-extension",
+                ],
+            ],
+            to: extensionURL.appendingPathComponent("Info.plist")
+        )
+        try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
+        try Fixtures.machO64WithCodeSignature().write(to: extensionURL.appendingPathComponent("Widget"))
+
+        let rootProfile = try cliProvisioningProfile(
+            bundleIdentifier: "com.example.rewritten",
+            certificateDER: signing.identity.certificateDER
+        )
+        let extensionProfile = try cliProvisioningProfile(
+            bundleIdentifier: "com.example.rewritten.Widget",
+            certificateDER: signing.identity.certificateDER
+        )
+        try rootProfile.write(to: rootProfileURL)
+        try extensionProfile.write(to: extensionProfileURL)
+        try JSONSerialization.data(
+            withJSONObject: [
+                "com.example.rewritten": rootProfileURL.lastPathComponent,
+                "com.example.rewritten.Widget": extensionProfileURL.lastPathComponent,
+            ],
+            options: [.sortedKeys]
+        )
+        .write(to: profileMapURL)
+        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+
+        let result = try runRorkSign([
+            "standalone-sign-ipa-profile-map",
+            inputURL.path,
+            outputURL.path,
+            "com.example.rewritten",
+            profileMapURL.path,
+            signing.privateKeyURL.path,
+        ])
+
+        XCTAssertEqual(result.status, 0, result.output)
+        guard result.status == 0 else {
+            return
+        }
+        try FileManager.default.createDirectory(at: extractedURL, withIntermediateDirectories: true)
+        try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
+        let signedAppURL = extractedURL.appendingPathComponent("Payload/Host.app")
+        let signedExtensionURL = signedAppURL.appendingPathComponent("PlugIns/Widget.appex")
+        XCTAssertEqual(
+            try cliPlistDictionary(at: signedAppURL.appendingPathComponent("Info.plist"))["CFBundleIdentifier"] as? String,
+            "com.example.rewritten"
+        )
+        XCTAssertEqual(
+            try cliPlistDictionary(at: signedExtensionURL.appendingPathComponent("Info.plist"))["CFBundleIdentifier"] as? String,
+            "com.example.rewritten.Widget"
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: signedAppURL.appendingPathComponent("embedded.mobileprovision")),
+            rootProfile
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: signedExtensionURL.appendingPathComponent("embedded.mobileprovision")),
+            extensionProfile
+        )
+        XCTAssertEqual(
+            try cliEntitlementDictionary(inSignedMachOAt: signedAppURL.appendingPathComponent("Host"))["application-identifier"] as? String,
+            "TEAMID1234.com.example.rewritten"
+        )
+        XCTAssertEqual(
+            try cliEntitlementDictionary(inSignedMachOAt: signedExtensionURL.appendingPathComponent("Widget"))["application-identifier"] as? String,
+            "TEAMID1234.com.example.rewritten.Widget"
+        )
+    }
+
+    func testStandaloneProfileMapCommandRejectsMissingRootBundleIdentifier() throws {
+        let fixture = try makeCLIFixture()
+        let profileURL = fixture.directory.appendingPathComponent("Other.mobileprovision")
+        let profileMapURL = fixture.directory.appendingPathComponent("profiles.json")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+
+        try Data("profile".utf8).write(to: profileURL)
+        try JSONSerialization.data(
+            withJSONObject: [
+                "com.example.other": profileURL.lastPathComponent,
+            ],
+            options: [.sortedKeys]
+        )
+        .write(to: profileMapURL)
+
+        let result = try runRorkSign([
+            "standalone-sign-ipa-profile-map",
+            fixture.directory.appendingPathComponent("Input.ipa").path,
+            fixture.directory.appendingPathComponent("Signed.ipa").path,
+            "com.example.rewritten",
+            profileMapURL.path,
+            fixture.directory.appendingPathComponent("key.pem").path,
+        ])
+
+        XCTAssertNotEqual(result.status, 0)
+        XCTAssertTrue(
+            result.output.contains(
+                "Provisioning profile map must include a profile for root bundle identifier com.example.rewritten."
+            ),
+            result.output
+        )
+    }
+
     func testDefaultCommandAppliesStandaloneRootEntitlementsFile() throws {
         let fixture = try makeCLIFixture()
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)

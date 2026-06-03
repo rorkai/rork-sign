@@ -649,6 +649,7 @@ rorksign identity-sign-ipa-profile-key <input-ipa> <output-ipa> <profile-path> <
 rorksign standalone-sign-ipa-adhoc <input-ipa> <output-ipa> <bundle-id> <profile-path>
 rorksign standalone-sign-ipa-p12 <input-ipa> <output-ipa> <bundle-id> <profile-path> <p12-path> <password>
 rorksign standalone-sign-ipa-profile-key <input-ipa> <output-ipa> <bundle-id> <profile-path> <credential-path> <password>
+rorksign standalone-sign-ipa-profile-map <input-ipa> <output-ipa> <bundle-id> <profile-map-json> <credential-path> [--password <password>] [--app-groups <group,...>]
 rorksign seal-resources <bundle-path>
 rorksign verify-resources <bundle-path>
 rorksign team-id <profile-path> <credential-path> <password>
@@ -658,6 +659,17 @@ For `*-profile-key` commands, `credential-path` can point to a PEM/DER private
 key or a PKCS#12 container. The password unlocks PKCS#12, encrypted PKCS#8, and
 traditional encrypted RSA PEM credentials. Pass an empty password for
 unencrypted PEM/DER credentials.
+
+`standalone-sign-ipa-profile-map` reads a JSON object keyed by the final bundle
+identifiers. The root bundle id must be present, and relative profile paths are
+resolved from the JSON file directory:
+
+```json
+{
+  "com.example.app": "profiles/App.mobileprovision",
+  "com.example.app.LiveProcess": "profiles/LiveProcess.mobileprovision"
+}
+```
 
 ## Limitations
 
