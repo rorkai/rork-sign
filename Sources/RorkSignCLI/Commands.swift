@@ -722,6 +722,8 @@ struct StandaloneSignIPAProfileMap: ParsableCommand {
     var password = ""
     @Option(name: [.customLong("app-groups")], help: "Comma-separated app-group identifiers.")
     var appGroups: String?
+    @Option(name: [.customShort("n"), .customLong("bundle-name")], help: "Replacement root display name.")
+    var bundleName: String?
 
     func run() throws {
         let rootBundleIdentifier = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -744,7 +746,8 @@ struct StandaloneSignIPAProfileMap: ParsableCommand {
             password: password,
             bundleIdentifier: rootBundleIdentifier,
             provisioningProfilesByBundleIdentifier: profiles,
-            appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups)
+            appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups),
+            displayName: bundleName
         )
         print("app=\(report.appBundlePath) sealed=\(report.sealedBundlePaths.count) signed=\(report.signedCodePaths.count)")
     }
