@@ -720,7 +720,7 @@ final class CLITests: XCTestCase {
         XCTAssertTrue(try RorkSigner.inspectMachO(Data(contentsOf: signedAppURL.appendingPathComponent("Host"))).hasCodeSignature)
     }
 
-    func testStandaloneProfileMapCommandSignsNestedProfilesFromJSONMap() throws {
+    func testSignIPACommandSignsNestedProfilesFromJSONMap() throws {
         let signing = try OpenSSLFixture()
         defer {
             signing.remove()
@@ -781,12 +781,13 @@ final class CLITests: XCTestCase {
         try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
 
         let result = try runRorkSign([
-            "standalone-sign-ipa-profile-map",
-            inputURL.path,
-            outputURL.path,
-            "com.example.rewritten",
-            profileMapURL.path,
-            signing.privateKeyURL.path,
+            "sign", "ipa",
+            "--input", inputURL.path,
+            "--output", outputURL.path,
+            "--bundle-id", "com.example.rewritten",
+            "--profile-map", profileMapURL.path,
+            "--certificate", signing.certificateURL.path,
+            "--key", signing.privateKeyURL.path,
         ])
 
         XCTAssertEqual(result.status, 0, result.output)
@@ -823,7 +824,7 @@ final class CLITests: XCTestCase {
         )
     }
 
-    func testStandaloneProfileMapCommandRejectsMissingRootBundleIdentifier() throws {
+    func testSignIPACommandRejectsMissingRootBundleIdentifier() throws {
         let fixture = try makeCLIFixture()
         let profileURL = fixture.directory.appendingPathComponent("Other.mobileprovision")
         let profileMapURL = fixture.directory.appendingPathComponent("profiles.json")
@@ -841,12 +842,13 @@ final class CLITests: XCTestCase {
         .write(to: profileMapURL)
 
         let result = try runRorkSign([
-            "standalone-sign-ipa-profile-map",
-            fixture.directory.appendingPathComponent("Input.ipa").path,
-            fixture.directory.appendingPathComponent("Signed.ipa").path,
-            "com.example.rewritten",
-            profileMapURL.path,
-            fixture.directory.appendingPathComponent("key.pem").path,
+            "sign", "ipa",
+            "--input", fixture.directory.appendingPathComponent("Input.ipa").path,
+            "--output", fixture.directory.appendingPathComponent("Signed.ipa").path,
+            "--bundle-id", "com.example.rewritten",
+            "--profile-map", profileMapURL.path,
+            "--certificate", fixture.directory.appendingPathComponent("cert.der").path,
+            "--key", fixture.directory.appendingPathComponent("key.pem").path,
         ])
 
         XCTAssertNotEqual(result.status, 0)
@@ -858,7 +860,7 @@ final class CLITests: XCTestCase {
         )
     }
 
-    func testStandaloneProfileMapCommandAppliesBundleName() throws {
+    func testSignIPACommandAppliesBundleName() throws {
         let signing = try OpenSSLFixture()
         defer {
             signing.remove()
@@ -902,12 +904,13 @@ final class CLITests: XCTestCase {
         try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
 
         let result = try runRorkSign([
-            "standalone-sign-ipa-profile-map",
-            inputURL.path,
-            outputURL.path,
-            "com.example.rewritten",
-            profileMapURL.path,
-            signing.privateKeyURL.path,
+            "sign", "ipa",
+            "--input", inputURL.path,
+            "--output", outputURL.path,
+            "--bundle-id", "com.example.rewritten",
+            "--profile-map", profileMapURL.path,
+            "--certificate", signing.certificateURL.path,
+            "--key", signing.privateKeyURL.path,
             "--bundle-name", "Renamed App",
         ])
 

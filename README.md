@@ -322,7 +322,7 @@ Add the package to your SwiftPM project:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/rorkai/rork-sign.git", from: "0.2.16"),
+    .package(url: "https://github.com/rorkai/rork-sign.git", from: "0.2.17"),
 ]
 ```
 
@@ -646,10 +646,10 @@ rorksign identity-sign-bundle-profile-key <bundle-path> <profile-path> <credenti
 rorksign identity-sign-ipa <input-ipa> <output-ipa> <cert-pem> <private-key-pem> [--password <password>]
 rorksign identity-sign-ipa-p12 <input-ipa> <output-ipa> <p12-path> <password>
 rorksign identity-sign-ipa-profile-key <input-ipa> <output-ipa> <profile-path> <credential-path> <password>
+rorksign sign ipa --input <input-ipa> --output <output-ipa> --bundle-id <bundle-id> --profile-map <profile-map-json> --certificate <cert-path> --key <credential-path> [--password <password>] [--app-groups <group,...>] [--bundle-name <name>]
 rorksign standalone-sign-ipa-adhoc <input-ipa> <output-ipa> <bundle-id> <profile-path>
 rorksign standalone-sign-ipa-p12 <input-ipa> <output-ipa> <bundle-id> <profile-path> <p12-path> <password>
 rorksign standalone-sign-ipa-profile-key <input-ipa> <output-ipa> <bundle-id> <profile-path> <credential-path> <password>
-rorksign standalone-sign-ipa-profile-map <input-ipa> <output-ipa> <bundle-id> <profile-map-json> <credential-path> [--password <password>] [--app-groups <group,...>] [--bundle-name <name>]
 rorksign seal-resources <bundle-path>
 rorksign verify-resources <bundle-path>
 rorksign team-id <profile-path> <credential-path> <password>
@@ -660,9 +660,11 @@ key or a PKCS#12 container. The password unlocks PKCS#12, encrypted PKCS#8, and
 traditional encrypted RSA PEM credentials. Pass an empty password for
 unencrypted PEM/DER credentials.
 
-`standalone-sign-ipa-profile-map` reads a JSON object keyed by the final bundle
+`sign ipa --profile-map` reads a JSON object keyed by the final bundle
 identifiers. The root bundle id must be present, and relative profile paths are
-resolved from the JSON file directory:
+resolved from the JSON file directory. The explicit `--certificate` and `--key`
+inputs define the signing identity, and every selected provisioning profile must
+authorize that certificate:
 
 ```json
 {
