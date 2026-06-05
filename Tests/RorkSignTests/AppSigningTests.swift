@@ -2,15 +2,15 @@ import Foundation
 import RorkSign
 import XCTest
 
-final class StandaloneBundleSigningTests: XCTestCase {
-    /// Verifies standalone inspection previews rewritten identifiers without touching Info.plists.
-    func testStandaloneInspectionReportsRewrittenProvisioningRequirementsWithoutMutatingBundle() throws {
-        let fixture = try makeStandaloneBundleFixture(includeWatchApp: true)
+final class AppSigningTests: XCTestCase {
+    /// Verifies app inspection previews rewritten identifiers without touching Info.plists.
+    func testAppSigningInspectionReportsRewrittenProvisioningRequirementsWithoutMutatingBundle() throws {
+        let fixture = try makeAppSigningFixture(includeWatchApp: true)
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
         }
 
-        let report = try RorkSigner.inspectStandaloneBundle(
+        let report = try RorkSigner.inspectApp(
             at: fixture.bundleURL,
             replacementBundleIdentifier: " app.rork.inspect "
         )
@@ -66,8 +66,8 @@ final class StandaloneBundleSigningTests: XCTestCase {
     }
 
     /// Verifies Watch extensions keep their extension role and Watch marker separately.
-    func testStandaloneInspectionClassifiesWatchAppExtensionsAsExtensions() throws {
-        let fixture = try makeStandaloneBundleFixture()
+    func testAppSigningInspectionClassifiesWatchAppExtensionsAsExtensions() throws {
+        let fixture = try makeAppSigningFixture()
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
         }
@@ -89,7 +89,7 @@ final class StandaloneBundleSigningTests: XCTestCase {
             to: watchExtensionURL.appendingPathComponent("Info.plist")
         )
 
-        let report = try RorkSigner.inspectStandaloneBundle(
+        let report = try RorkSigner.inspectApp(
             at: fixture.bundleURL,
             replacementBundleIdentifier: "app.rork.inspect"
         )
@@ -104,8 +104,8 @@ final class StandaloneBundleSigningTests: XCTestCase {
         XCTAssertEqual(requirement.associatedBundleIdentifier, "app.rork.inspect.watchkitapp")
     }
 
-    func testStandaloneAdHocRewritesIdentifiersEmbedsProfilesAndExpandsEntitlements() throws {
-        let fixture = try makeStandaloneBundleFixture()
+    func testAppSigningAdHocRewritesIdentifiersEmbedsProfilesAndExpandsEntitlements() throws {
+        let fixture = try makeAppSigningFixture()
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
         }
@@ -130,13 +130,13 @@ final class StandaloneBundleSigningTests: XCTestCase {
             ]
         )
 
-        let report = try RorkSigner.signStandaloneBundleAdHoc(
+        let report = try RorkSigner.signBundle(
             at: fixture.bundleURL,
-            options: StandaloneBundleSigningOptions(
-                bundleIdentifier: "app.rork.standalone",
+            options: AppSigningOptions(
+                bundleIdentifier: "app.rork.signed",
                 rootProvisioningProfile: rootProfile,
                 provisioningProfilesByBundleIdentifier: [
-                    "app.rork.standalone.ShareExtension": extensionProfile,
+                    "app.rork.signed.ShareExtension": extensionProfile,
                 ],
                 appGroupIdentifiers: [" group.rork.shared ", "group.rork.shared", "group.rork.extra"]
             )
@@ -157,17 +157,17 @@ final class StandaloneBundleSigningTests: XCTestCase {
 
         let rootInfo = try infoPlist(at: fixture.bundleURL)
         let extensionInfo = try infoPlist(at: fixture.extensionURL)
-        XCTAssertEqual(rootInfo["CFBundleIdentifier"] as? String, "app.rork.standalone")
-        XCTAssertEqual(extensionInfo["CFBundleIdentifier"] as? String, "app.rork.standalone.ShareExtension")
-        XCTAssertEqual(extensionInfo["WKCompanionAppBundleIdentifier"] as? String, "app.rork.standalone")
+        XCTAssertEqual(rootInfo["CFBundleIdentifier"] as? String, "app.rork.signed")
+        XCTAssertEqual(extensionInfo["CFBundleIdentifier"] as? String, "app.rork.signed.ShareExtension")
+        XCTAssertEqual(extensionInfo["WKCompanionAppBundleIdentifier"] as? String, "app.rork.signed")
         let extensionDictionary = try XCTUnwrap(extensionInfo["NSExtension"] as? [String: Any])
         let attributes = try XCTUnwrap(extensionDictionary["NSExtensionAttributes"] as? [String: Any])
-        XCTAssertEqual(attributes["WKAppBundleIdentifier"] as? String, "app.rork.standalone.watchkitapp")
+        XCTAssertEqual(attributes["WKAppBundleIdentifier"] as? String, "app.rork.signed.watchkitapp")
 
         let hostEntitlements = try entitlementDictionary(
             inSignedMachOAt: fixture.bundleURL.appendingPathComponent("Host")
         )
-        XCTAssertEqual(hostEntitlements["application-identifier"] as? String, "TEAMID1234.app.rork.standalone")
+        XCTAssertEqual(hostEntitlements["application-identifier"] as? String, "TEAMID1234.app.rork.signed")
         XCTAssertEqual(hostEntitlements["com.apple.developer.team-identifier"] as? String, "TEAMID1234")
         XCTAssertEqual(hostEntitlements["aps-environment"] as? String, "development")
         XCTAssertNil(hostEntitlements["com.apple.developer.associated-domains"])
@@ -185,11 +185,11 @@ final class StandaloneBundleSigningTests: XCTestCase {
         )
         XCTAssertEqual(
             extensionEntitlements["application-identifier"] as? String,
-            "TEAMID1234.app.rork.standalone.ShareExtension"
+            "TEAMID1234.app.rork.signed.ShareExtension"
         )
         XCTAssertEqual(
             extensionEntitlements["com.apple.developer.associated-application-identifier"] as? String,
-            "TEAMID1234.app.rork.standalone"
+            "TEAMID1234.app.rork.signed"
         )
 
         let hostBlobs = try signatureBlobs(
@@ -202,8 +202,8 @@ final class StandaloneBundleSigningTests: XCTestCase {
     }
 
     /// Verifies signing uses the same associated bundle identifier source as inspection.
-    func testStandaloneUsesExtensionAttributeAssociatedBundleIdentifierForEntitlements() throws {
-        let fixture = try makeStandaloneBundleFixture()
+    func testAppSigningUsesExtensionAttributeAssociatedBundleIdentifierForEntitlements() throws {
+        let fixture = try makeAppSigningFixture()
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
         }
@@ -239,9 +239,9 @@ final class StandaloneBundleSigningTests: XCTestCase {
             ]
         )
 
-        try RorkSigner.signStandaloneBundleAdHoc(
+        try RorkSigner.signBundle(
             at: fixture.bundleURL,
-            options: StandaloneBundleSigningOptions(
+            options: AppSigningOptions(
                 bundleIdentifier: "app.rork.associated",
                 rootProvisioningProfile: rootProfile,
                 provisioningProfilesByBundleIdentifier: [
@@ -265,8 +265,8 @@ final class StandaloneBundleSigningTests: XCTestCase {
         )
     }
 
-    func testStandaloneUsesBundleEntitlementsResourceWhenExecutableHasNoEntitlements() throws {
-        let fixture = try makeStandaloneBundleFixture()
+    func testAppSigningUsesBundleEntitlementsResourceWhenExecutableHasNoEntitlements() throws {
+        let fixture = try makeAppSigningFixture()
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
         }
@@ -321,9 +321,9 @@ final class StandaloneBundleSigningTests: XCTestCase {
             ]
         )
 
-        try RorkSigner.signStandaloneBundleAdHoc(
+        try RorkSigner.signBundle(
             at: fixture.bundleURL,
-            options: StandaloneBundleSigningOptions(
+            options: AppSigningOptions(
                 bundleIdentifier: "app.rork.tunnel",
                 rootProvisioningProfile: rootProfile,
                 provisioningProfilesByBundleIdentifier: [
@@ -354,8 +354,8 @@ final class StandaloneBundleSigningTests: XCTestCase {
         )
     }
 
-    func testStandaloneRootEntitlementsOverrideProfileExpansion() throws {
-        let fixture = try makeStandaloneBundleFixture()
+    func testAppSigningRootEntitlementsOverrideProfileExpansion() throws {
+        let fixture = try makeAppSigningFixture()
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
         }
@@ -378,9 +378,9 @@ final class StandaloneBundleSigningTests: XCTestCase {
             ]
         )
 
-        try RorkSigner.signStandaloneBundleAdHoc(
+        try RorkSigner.signBundle(
             at: fixture.bundleURL,
-            options: StandaloneBundleSigningOptions(
+            options: AppSigningOptions(
                 bundleIdentifier: "com.example.override",
                 rootProvisioningProfile: rootProfile,
                 rootEntitlementsXML: explicitRootEntitlements
@@ -400,17 +400,17 @@ final class StandaloneBundleSigningTests: XCTestCase {
         XCTAssertNil(rootEntitlements["aps-environment"])
     }
 
-    func testStandaloneRejectsProfilesFromDifferentTeamsBeforeRewritingBundleIdentifiers() throws {
-        let fixture = try makeStandaloneBundleFixture()
+    func testAppSigningRejectsProfilesFromDifferentTeamsBeforeRewritingBundleIdentifiers() throws {
+        let fixture = try makeAppSigningFixture()
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
         }
 
         XCTAssertThrowsError(
-            try RorkSigner.signStandaloneBundleAdHoc(
+            try RorkSigner.signBundle(
                 at: fixture.bundleURL,
-                options: StandaloneBundleSigningOptions(
-                    bundleIdentifier: "app.rork.standalone",
+                options: AppSigningOptions(
+                    bundleIdentifier: "app.rork.signed",
                     rootProvisioningProfile: try provisioningProfilePlist(
                         teamIdentifier: "TEAMID1234",
                         entitlements: [
@@ -419,7 +419,7 @@ final class StandaloneBundleSigningTests: XCTestCase {
                         ]
                     ),
                     provisioningProfilesByBundleIdentifier: [
-                        "app.rork.standalone.ShareExtension": try provisioningProfilePlist(
+                        "app.rork.signed.ShareExtension": try provisioningProfilePlist(
                             teamIdentifier: "OTHERTEAM",
                             entitlements: [
                                 "application-identifier": "OTHERTEAM.*",
@@ -432,7 +432,7 @@ final class StandaloneBundleSigningTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? RorkSignError,
-                .invalidProvisioningProfile("Standalone provisioning profiles must belong to the same Apple team.")
+                .invalidProvisioningProfile("App signing provisioning profiles must belong to the same Apple team.")
             )
         }
 
@@ -442,8 +442,8 @@ final class StandaloneBundleSigningTests: XCTestCase {
         )
     }
 
-    func testStandaloneCanUseProfileEntitlementsWithoutEmbeddingProfiles() throws {
-        let fixture = try makeStandaloneBundleFixture()
+    func testAppSigningCanUseProfileEntitlementsWithoutEmbeddingProfiles() throws {
+        let fixture = try makeAppSigningFixture()
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
         }
@@ -457,9 +457,9 @@ final class StandaloneBundleSigningTests: XCTestCase {
             ]
         )
 
-        let report = try RorkSigner.signStandaloneBundleAdHoc(
+        let report = try RorkSigner.signBundle(
             at: fixture.bundleURL,
-            options: StandaloneBundleSigningOptions(
+            options: AppSigningOptions(
                 bundleIdentifier: "app.rork.no-profile",
                 rootProvisioningProfile: rootProfile,
                 embedProvisioningProfiles: false
@@ -479,17 +479,17 @@ final class StandaloneBundleSigningTests: XCTestCase {
         XCTAssertEqual(hostEntitlements["application-identifier"] as? String, "TEAMID1234.app.rork.no-profile")
     }
 
-    func testStandaloneRejectsProfileThatDoesNotAuthorizeRewrittenIdentifier() throws {
-        let fixture = try makeStandaloneBundleFixture()
+    func testAppSigningRejectsProfileThatDoesNotAuthorizeRewrittenIdentifier() throws {
+        let fixture = try makeAppSigningFixture()
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
         }
 
         XCTAssertThrowsError(
-            try RorkSigner.signStandaloneBundleAdHoc(
+            try RorkSigner.signBundle(
                 at: fixture.bundleURL,
-                options: StandaloneBundleSigningOptions(
-                    bundleIdentifier: "app.rork.standalone",
+                options: AppSigningOptions(
+                    bundleIdentifier: "app.rork.signed",
                     rootProvisioningProfile: try provisioningProfilePlist(
                         teamIdentifier: "TEAMID1234",
                         entitlements: [
@@ -503,14 +503,14 @@ final class StandaloneBundleSigningTests: XCTestCase {
             XCTAssertEqual(
                 error as? RorkSignError,
                 .invalidProvisioningProfile(
-                    "Provisioning profile does not authorize bundle identifier app.rork.standalone."
+                    "Provisioning profile does not authorize bundle identifier app.rork.signed."
                 )
             )
         }
     }
 
-    func testStandaloneUsesWatchProvisioningProfileForEmbeddedWatchApps() throws {
-        let fixture = try makeStandaloneBundleFixture(includeWatchApp: true)
+    func testAppSigningUsesWatchProvisioningProfileForEmbeddedWatchApps() throws {
+        let fixture = try makeAppSigningFixture(includeWatchApp: true)
         let watchURL = try XCTUnwrap(fixture.watchURL)
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
@@ -534,10 +534,10 @@ final class StandaloneBundleSigningTests: XCTestCase {
             ]
         )
 
-        try RorkSigner.signStandaloneBundleAdHoc(
+        try RorkSigner.signBundle(
             at: fixture.bundleURL,
-            options: StandaloneBundleSigningOptions(
-                bundleIdentifier: "app.rork.standalone",
+            options: AppSigningOptions(
+                bundleIdentifier: "app.rork.signed",
                 rootProvisioningProfile: rootProfile,
                 watchProvisioningProfile: watchProfile,
                 appGroupIdentifiers: ["group.rork.shared"]
@@ -549,20 +549,20 @@ final class StandaloneBundleSigningTests: XCTestCase {
             watchProfile
         )
         let watchInfo = try infoPlist(at: watchURL)
-        XCTAssertEqual(watchInfo["CFBundleIdentifier"] as? String, "app.rork.standalone.watchkitapp")
+        XCTAssertEqual(watchInfo["CFBundleIdentifier"] as? String, "app.rork.signed.watchkitapp")
 
         let watchEntitlements = try entitlementDictionary(
             inSignedMachOAt: watchURL.appendingPathComponent("WatchApp")
         )
         XCTAssertEqual(
             watchEntitlements["application-identifier"] as? String,
-            "TEAMID1234.app.rork.standalone.watchkitapp"
+            "TEAMID1234.app.rork.signed.watchkitapp"
         )
         XCTAssertNil(watchEntitlements["com.apple.security.application-groups"])
     }
 
-    func testStandaloneOnlyRewritesNestedBundleIdentifierRootPrefix() throws {
-        let fixture = try makeStandaloneBundleFixture(includeWatchApp: true)
+    func testAppSigningOnlyRewritesNestedBundleIdentifierRootPrefix() throws {
+        let fixture = try makeAppSigningFixture(includeWatchApp: true)
         let watchURL = try XCTUnwrap(fixture.watchURL)
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
@@ -586,10 +586,10 @@ final class StandaloneBundleSigningTests: XCTestCase {
             ]
         )
 
-        try RorkSigner.signStandaloneBundleAdHoc(
+        try RorkSigner.signBundle(
             at: fixture.bundleURL,
-            options: StandaloneBundleSigningOptions(
-                bundleIdentifier: "app.rork.standalone",
+            options: AppSigningOptions(
+                bundleIdentifier: "app.rork.signed",
                 rootProvisioningProfile: wildcardProfile,
                 watchProvisioningProfile: wildcardProfile
             )
@@ -599,8 +599,8 @@ final class StandaloneBundleSigningTests: XCTestCase {
         XCTAssertEqual(watchInfo["CFBundleIdentifier"] as? String, "com.vendor.com.original.host.watchkitapp")
     }
 
-    func testStandaloneAppliesRootMetadataOptionsBeforeSigning() throws {
-        let fixture = try makeStandaloneBundleFixture()
+    func testAppSigningAppliesRootMetadataOptionsBeforeSigning() throws {
+        let fixture = try makeAppSigningFixture()
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
         }
@@ -614,9 +614,9 @@ final class StandaloneBundleSigningTests: XCTestCase {
             ]
         )
 
-        try RorkSigner.signStandaloneBundleAdHoc(
+        try RorkSigner.signBundle(
             at: fixture.bundleURL,
-            options: StandaloneBundleSigningOptions(
+            options: AppSigningOptions(
                 bundleIdentifier: "app.rork.metadata",
                 rootProvisioningProfile: rootProfile,
                 displayName: "Signed Fixture",
@@ -645,8 +645,8 @@ final class StandaloneBundleSigningTests: XCTestCase {
         XCTAssertEqual(localizedInfo["CFBundleDisplayName"] as? String, "Signed Fixture")
     }
 
-    func testStandaloneCanRemoveExtensionsAndWatchAppsBeforeSigning() throws {
-        let fixture = try makeStandaloneBundleFixture(includeWatchApp: true)
+    func testAppSigningCanRemoveExtensionsAndWatchAppsBeforeSigning() throws {
+        let fixture = try makeAppSigningFixture(includeWatchApp: true)
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
         }
@@ -660,9 +660,9 @@ final class StandaloneBundleSigningTests: XCTestCase {
             ]
         )
 
-        let report = try RorkSigner.signStandaloneBundleAdHoc(
+        let report = try RorkSigner.signBundle(
             at: fixture.bundleURL,
-            options: StandaloneBundleSigningOptions(
+            options: AppSigningOptions(
                 bundleIdentifier: "app.rork.pruned",
                 rootProvisioningProfile: rootProfile,
                 removeExtensions: true,
@@ -686,12 +686,12 @@ final class StandaloneBundleSigningTests: XCTestCase {
         )
     }
 
-    func testStandaloneCredentialSigningBuildsIdentityFromRootProfile() throws {
+    func testAppSigningCredentialSigningBuildsIdentityFromRootProfile() throws {
         let openssl = try OpenSSLFixture()
         defer {
             openssl.remove()
         }
-        let fixture = try makeStandaloneBundleFixture()
+        let fixture = try makeAppSigningFixture()
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
         }
@@ -705,11 +705,11 @@ final class StandaloneBundleSigningTests: XCTestCase {
             ]
         )
 
-        let report = try RorkSigner.signStandaloneBundleWithCredential(
+        let report = try RorkSigner.signBundle(
             at: fixture.bundleURL,
             provisioningProfileData: rootProfile,
             credentialData: Data(openssl.privateKeyPEM.utf8),
-            bundleIdentifier: "app.rork.standalone"
+            options: AppSigningOptions(bundleIdentifier: "app.rork.signed")
         )
 
         XCTAssertEqual(
@@ -730,13 +730,13 @@ final class StandaloneBundleSigningTests: XCTestCase {
     }
 }
 
-private struct StandaloneBundleFixture {
+private struct AppSigningFixture {
     let bundleURL: URL
     let extensionURL: URL
     let watchURL: URL?
 }
 
-private func makeStandaloneBundleFixture(includeWatchApp: Bool = false) throws -> StandaloneBundleFixture {
+private func makeAppSigningFixture(includeWatchApp: Bool = false) throws -> AppSigningFixture {
     let rootURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
     let bundleURL = rootURL.appendingPathComponent("Host.app", isDirectory: true)
@@ -811,7 +811,7 @@ private func makeStandaloneBundleFixture(includeWatchApp: Bool = false) throws -
     try share.write(to: extensionURL.appendingPathComponent("Share"))
 
     let watchURL = try includeWatchApp ? makeWatchAppFixture(in: bundleURL) : nil
-    return StandaloneBundleFixture(bundleURL: bundleURL, extensionURL: extensionURL, watchURL: watchURL)
+    return AppSigningFixture(bundleURL: bundleURL, extensionURL: extensionURL, watchURL: watchURL)
 }
 
 private func makeWatchAppFixture(in bundleURL: URL) throws -> URL {

@@ -265,9 +265,9 @@ public final class ProvisioningProfileObjC: NSObject {
     }
 }
 
-/// Role of a provisioned bundle found during standalone app inspection.
-@objc(RKStandaloneBundleProvisioningKind)
-public enum StandaloneBundleProvisioningKindObjC: Int {
+/// Role of a provisioned bundle found during app-signing inspection.
+@objc(RKAppProvisioningKind)
+public enum AppProvisioningKindObjC: Int {
     /// The root `.app` bundle passed to the inspector or signer.
     case rootApp
 
@@ -280,7 +280,7 @@ public enum StandaloneBundleProvisioningKindObjC: Int {
     /// Another embedded `.app` bundle that is not detected as a Watch app.
     case nestedApp
 
-    init(_ kind: RorkSign.StandaloneBundleProvisioningKind) {
+    init(_ kind: RorkSign.AppProvisioningKind) {
         switch kind {
         case .rootApp:
             self = .rootApp
@@ -294,9 +294,9 @@ public enum StandaloneBundleProvisioningKindObjC: Int {
     }
 }
 
-/// One provisioned bundle that standalone signing would rewrite.
-@objc(RKStandaloneBundleProvisioningRequirement)
-public final class StandaloneBundleProvisioningRequirementObjC: NSObject {
+/// One provisioned bundle that app signing would rewrite.
+@objc(RKAppProvisioningRequirement)
+public final class AppProvisioningRequirementObjC: NSObject {
     /// Bundle URL on disk.
     @objc public let url: URL
 
@@ -306,11 +306,11 @@ public final class StandaloneBundleProvisioningRequirementObjC: NSObject {
     /// Bundle identifier currently stored in `Info.plist`.
     @objc public let originalBundleIdentifier: String
 
-    /// Bundle identifier standalone signing would write before signing.
+    /// Bundle identifier app signing would write before signing.
     @objc public let rewrittenBundleIdentifier: String
 
     /// Provisioning role for this bundle.
-    @objc public let kind: StandaloneBundleProvisioningKindObjC
+    @objc public let kind: AppProvisioningKindObjC
 
     /// Whether this bundle is detected as an Apple Watch app.
     @objc public let isWatchBundle: Bool
@@ -321,12 +321,12 @@ public final class StandaloneBundleProvisioningRequirementObjC: NSObject {
     /// `CFBundleExecutable` value, when present.
     @objc public let executableName: String?
 
-    init(_ requirement: RorkSign.StandaloneBundleProvisioningRequirement) {
+    init(_ requirement: RorkSign.AppProvisioningRequirement) {
         url = requirement.url
         relativePath = requirement.relativePath
         originalBundleIdentifier = requirement.originalBundleIdentifier
         rewrittenBundleIdentifier = requirement.rewrittenBundleIdentifier
-        kind = StandaloneBundleProvisioningKindObjC(requirement.kind)
+        kind = AppProvisioningKindObjC(requirement.kind)
         isWatchBundle = requirement.isWatchBundle
         associatedBundleIdentifier = requirement.associatedBundleIdentifier
         executableName = requirement.executableName
@@ -334,9 +334,9 @@ public final class StandaloneBundleProvisioningRequirementObjC: NSObject {
     }
 }
 
-/// Read-only standalone app inspection report for Objective-C callers.
-@objc(RKStandaloneBundleInspectionReport)
-public final class StandaloneBundleInspectionReportObjC: NSObject {
+/// Read-only app-signing inspection report for Objective-C callers.
+@objc(RKAppInspectionReport)
+public final class AppInspectionReportObjC: NSObject {
     /// Root app bundle that was inspected.
     @objc public let rootBundleURL: URL
 
@@ -346,8 +346,8 @@ public final class StandaloneBundleInspectionReportObjC: NSObject {
     /// Replacement root bundle identifier used for the inspection.
     @objc public let replacementBundleIdentifier: String
 
-    /// Provisioned app-style bundles found in standalone signing order.
-    @objc public let provisioningRequirements: [StandaloneBundleProvisioningRequirementObjC]
+    /// Provisioned app-style bundles found in app-signing order.
+    @objc public let provisioningRequirements: [AppProvisioningRequirementObjC]
 
     /// Rewritten bundle identifiers that need root/per-bundle profile coverage.
     @objc public let rewrittenBundleIdentifiers: [String]
@@ -358,11 +358,11 @@ public final class StandaloneBundleInspectionReportObjC: NSObject {
     /// Rewritten non-Watch extension identifiers that may need per-bundle profiles.
     @objc public let appExtensionBundleIdentifiers: [String]
 
-    init(_ report: RorkSign.StandaloneBundleInspectionReport) {
+    init(_ report: RorkSign.AppInspectionReport) {
         rootBundleURL = report.rootBundleURL
         rootBundleIdentifier = report.rootBundleIdentifier
         replacementBundleIdentifier = report.replacementBundleIdentifier
-        provisioningRequirements = report.provisioningRequirements.map(StandaloneBundleProvisioningRequirementObjC.init)
+        provisioningRequirements = report.provisioningRequirements.map(AppProvisioningRequirementObjC.init)
         rewrittenBundleIdentifiers = report.rewrittenBundleIdentifiers
         watchBundleIdentifiers = report.watchBundleIdentifiers
         appExtensionBundleIdentifiers = report.appExtensionBundleIdentifiers
@@ -631,7 +631,7 @@ public final class MachOEmbeddedCodeSignatureObjC: NSObject {
 /// Options for ordinary bundle signing through the Objective-C facade.
 ///
 /// Ordinary bundle signing preserves the bundle identifiers that are already on
-/// disk. Use `StandaloneBundleSigningOptionsObjC` when an app must be rewritten
+/// disk. Use `AppSigningOptionsObjC` when an app must be rewritten
 /// under a new root bundle identifier before signing.
 @objc(RKBundleSigningOptions)
 public final class BundleSigningOptionsObjC: NSObject {
@@ -887,13 +887,13 @@ public final class HostedBundleSigningOptionsObjC: NSObject {
     }
 }
 
-/// Options for rewriting and signing a standalone app bundle.
+/// Options for rewriting and signing an app bundle for installation.
 ///
-/// Standalone signing re-homes the app under `bundleIdentifier`, rewrites nested
+/// App signing re-homes the app under `bundleIdentifier`, rewrites nested
 /// bundle identifiers, embeds the selected profiles, seals resources, and then
 /// signs code inside-out.
-@objc(RKStandaloneBundleSigningOptions)
-public final class StandaloneBundleSigningOptionsObjC: NSObject {
+@objc(RKAppSigningOptions)
+public final class AppSigningOptionsObjC: NSObject {
     /// Replacement bundle identifier for the root app.
     @objc public var bundleIdentifier: String
 
@@ -983,7 +983,7 @@ public final class StandaloneBundleSigningOptionsObjC: NSObject {
         }
     }
 
-    /// Creates standalone signing options for the required replacement bundle identifier.
+    /// Creates app-signing options for the required replacement bundle identifier.
     @objc(initWithBundleIdentifier:)
     public init(bundleIdentifier: String) {
         self.bundleIdentifier = bundleIdentifier
@@ -1010,9 +1010,9 @@ public final class StandaloneBundleSigningOptionsObjC: NSObject {
         super.init()
     }
 
-    /// Builds Swift standalone signing options after validating profile maps.
-    func coreValue(rootProvisioningProfile: Data? = nil) throws -> RorkSign.StandaloneBundleSigningOptions {
-        try RorkSign.StandaloneBundleSigningOptions(
+    /// Builds Swift app-signing options after validating profile maps.
+    func coreValue(rootProvisioningProfile: Data? = nil) throws -> RorkSign.AppSigningOptions {
+        try RorkSign.AppSigningOptions(
             bundleIdentifier: bundleIdentifier,
             rootProvisioningProfile: rootProvisioningProfile,
             watchProvisioningProfile: watchProvisioningProfileData,
@@ -1901,17 +1901,17 @@ public final class Signer: NSObject {
             .map(ReportBridge.dictionary(from:))
     }
 
-    /// Inspects a copied app bundle before standalone signing mutates it.
-    @objc(inspectStandaloneBundleAtURL:replacementBundleIdentifier:error:)
-    public func inspectStandaloneBundle(
+    /// Inspects a copied app bundle before app signing mutates it.
+    @objc(inspectAppAtURL:replacementBundleIdentifier:error:)
+    public func inspectApp(
         at bundleURL: URL,
         replacementBundleIdentifier: String
-    ) throws -> StandaloneBundleInspectionReportObjC {
-        let report = try RorkSigner.inspectStandaloneBundle(
+    ) throws -> AppInspectionReportObjC {
+        let report = try RorkSigner.inspectApp(
             at: bundleURL,
             replacementBundleIdentifier: replacementBundleIdentifier
         )
-        return StandaloneBundleInspectionReportObjC(report)
+        return AppInspectionReportObjC(report)
     }
 
     /// Signs an app-style bundle inside-out with ad-hoc signatures.
@@ -2065,27 +2065,27 @@ public final class Signer: NSObject {
         return BundleSigningReportObjC(report)
     }
 
-    /// Rewrites and signs a copied app as a standalone ad-hoc bundle.
-    @objc(signStandaloneBundleAdHocAtURL:options:error:)
-    public func signStandaloneBundleAdHoc(
+    /// Rewrites and signs a copied app bundle with ad-hoc signatures.
+    @objc(signAppBundleAdHocAtURL:options:error:)
+    public func signAppBundleAdHoc(
         at bundleURL: URL,
-        options: StandaloneBundleSigningOptionsObjC
+        options: AppSigningOptionsObjC
     ) throws -> BundleSigningReportObjC {
-        let report = try RorkSigner.signStandaloneBundleAdHoc(
+        let report = try RorkSigner.signBundle(
             at: bundleURL,
             options: try options.coreValue()
         )
         return BundleSigningReportObjC(report)
     }
 
-    /// Rewrites and signs a copied app as a standalone CMS-signed bundle.
-    @objc(signStandaloneBundleWithIdentityAtURL:identity:options:error:)
-    public func signStandaloneBundleWithIdentity(
+    /// Rewrites and signs a copied app bundle with identity-backed CMS signatures.
+    @objc(signAppBundleAtURL:identity:options:error:)
+    public func signAppBundle(
         at bundleURL: URL,
         identity: SigningIdentityObjC,
-        options: StandaloneBundleSigningOptionsObjC
+        options: AppSigningOptionsObjC
     ) throws -> BundleSigningReportObjC {
-        let report = try RorkSigner.signStandaloneBundleWithIdentity(
+        let report = try RorkSigner.signBundle(
             at: bundleURL,
             identity: identity.coreValue,
             options: try options.coreValue()
@@ -2093,25 +2093,25 @@ public final class Signer: NSObject {
         return BundleSigningReportObjC(report)
     }
 
-    /// Rewrites and signs a copied app as a standalone bundle.
+    /// Rewrites and signs a copied app bundle with a profile/credential pair.
     ///
     /// The root profile and credential create the signing identity. Optional
     /// per-bundle profiles on `options` cover app extensions or embedded apps,
     /// and `options.watchProvisioningProfileData` supplies a Watch fallback.
-    @objc(signStandaloneBundleWithCredentialAtURL:provisioningProfileData:credentialData:password:options:error:)
-    public func signStandaloneBundleWithCredential(
+    @objc(signAppBundleAtURL:provisioningProfileData:credentialData:password:options:error:)
+    public func signAppBundle(
         at bundleURL: URL,
         provisioningProfileData: Data,
         credentialData: Data,
         password: String?,
-        options: StandaloneBundleSigningOptionsObjC
+        options: AppSigningOptionsObjC
     ) throws -> BundleSigningReportObjC {
         let identity = try RorkSign.SigningIdentity(
             provisioningProfileData: provisioningProfileData,
             credentialData: credentialData,
             password: password ?? ""
         )
-        let report = try RorkSigner.signStandaloneBundleWithIdentity(
+        let report = try RorkSigner.signBundle(
             at: bundleURL,
             identity: identity,
             options: try options.coreValue(rootProvisioningProfile: provisioningProfileData)
@@ -2161,16 +2161,16 @@ public final class Signer: NSObject {
         return IPAArchiveSigningReportObjC(report)
     }
 
-    /// Rewrites and signs the app inside an IPA as a standalone ad-hoc app.
-    @objc(signStandaloneIPAAdHocAtURL:outputURL:options:compressionMode:temporaryDirectoryURL:error:)
-    public func signStandaloneIPAAdHoc(
+    /// Rewrites and signs the app inside an IPA with ad-hoc signatures.
+    @objc(signAppIPAAdHocAtURL:outputURL:options:compressionMode:temporaryDirectoryURL:error:)
+    public func signAppIPAAdHoc(
         at archiveURL: URL,
         outputURL: URL,
-        options: StandaloneBundleSigningOptionsObjC,
+        options: AppSigningOptionsObjC,
         compressionMode: ArchiveCompressionModeObjC,
         temporaryDirectoryURL: URL?
     ) throws -> IPAArchiveSigningReportObjC {
-        let report = try RorkSigner.signStandaloneIPAAdHoc(
+        let report = try RorkSigner.signIPA(
             at: archiveURL,
             outputURL: outputURL,
             options: try options.coreValue(),
@@ -2180,17 +2180,17 @@ public final class Signer: NSObject {
         return IPAArchiveSigningReportObjC(report)
     }
 
-    /// Rewrites and signs the app inside an IPA as a standalone CMS-signed app.
-    @objc(signStandaloneIPAWithIdentityAtURL:outputURL:identity:options:compressionMode:temporaryDirectoryURL:error:)
-    public func signStandaloneIPAWithIdentity(
+    /// Rewrites and signs the app inside an IPA with identity-backed CMS signatures.
+    @objc(signAppIPAAtURL:outputURL:identity:options:compressionMode:temporaryDirectoryURL:error:)
+    public func signAppIPA(
         at archiveURL: URL,
         outputURL: URL,
         identity: SigningIdentityObjC,
-        options: StandaloneBundleSigningOptionsObjC,
+        options: AppSigningOptionsObjC,
         compressionMode: ArchiveCompressionModeObjC,
         temporaryDirectoryURL: URL?
     ) throws -> IPAArchiveSigningReportObjC {
-        let report = try RorkSigner.signStandaloneIPAWithIdentity(
+        let report = try RorkSigner.signIPA(
             at: archiveURL,
             outputURL: outputURL,
             identity: identity.coreValue,
@@ -2201,15 +2201,15 @@ public final class Signer: NSObject {
         return IPAArchiveSigningReportObjC(report)
     }
 
-    /// Rewrites and signs the app inside an IPA as a standalone app.
-    @objc(signStandaloneIPAWithCredentialAtURL:outputURL:provisioningProfileData:credentialData:password:options:compressionMode:temporaryDirectoryURL:error:)
-    public func signStandaloneIPAWithCredential(
+    /// Rewrites and signs the app inside an IPA with a profile/credential pair.
+    @objc(signAppIPAAtURL:outputURL:provisioningProfileData:credentialData:password:options:compressionMode:temporaryDirectoryURL:error:)
+    public func signAppIPA(
         at archiveURL: URL,
         outputURL: URL,
         provisioningProfileData: Data,
         credentialData: Data,
         password: String?,
-        options: StandaloneBundleSigningOptionsObjC,
+        options: AppSigningOptionsObjC,
         compressionMode: ArchiveCompressionModeObjC,
         temporaryDirectoryURL: URL?
     ) throws -> IPAArchiveSigningReportObjC {
@@ -2218,7 +2218,7 @@ public final class Signer: NSObject {
             credentialData: credentialData,
             password: password ?? ""
         )
-        let report = try RorkSigner.signStandaloneIPAWithIdentity(
+        let report = try RorkSigner.signIPA(
             at: archiveURL,
             outputURL: outputURL,
             identity: identity,

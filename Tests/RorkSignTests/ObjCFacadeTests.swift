@@ -433,14 +433,14 @@ final class ObjCFacadeTests: XCTestCase {
         )
     }
 
-    /// Verifies Objective-C callers can inspect standalone bundle profile requirements.
-    func testInspectStandaloneBundleReturnsTypedObjectiveCReport() throws {
-        let fixture = try makeObjCFacadeStandaloneBundleFixture()
+    /// Verifies Objective-C callers can inspect app bundle profile requirements.
+    func testInspectAppReturnsTypedObjectiveCReport() throws {
+        let fixture = try makeObjCFacadeAppBundleFixture()
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
         }
 
-        let report = try Signer().inspectStandaloneBundle(
+        let report = try Signer().inspectApp(
             at: fixture.bundleURL,
             replacementBundleIdentifier: "app.rork.objc.inspect"
         )
@@ -477,17 +477,17 @@ final class ObjCFacadeTests: XCTestCase {
     }
 
     /// Verifies dictionary-backed option validation rejects non-data values.
-    func testStandaloneOptionsRejectInvalidProfileMapValues() throws {
+    func testAppSigningOptionsRejectInvalidProfileMapValues() throws {
         let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "app.rork.objc.invalid")
         addTeardownBlock {
             try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
         }
-        let options = StandaloneBundleSigningOptionsObjC(bundleIdentifier: "app.rork.objc.invalid")
+        let options = AppSigningOptionsObjC(bundleIdentifier: "app.rork.objc.invalid")
         options.provisioningProfilesByBundleIdentifier = [
             "app.rork.objc.invalid.widget": "not data",
         ]
 
-        XCTAssertThrowsError(try Signer().signStandaloneBundleAdHoc(at: bundleURL, options: options)) { error in
+        XCTAssertThrowsError(try Signer().signAppBundleAdHoc(at: bundleURL, options: options)) { error in
             XCTAssertTrue(error.localizedDescription.contains("is not NSData"))
         }
     }
@@ -502,7 +502,7 @@ private final class ObjCFacadeSigningLogger: NSObject, SigningLoggerObjC {
     }
 }
 
-private struct ObjCFacadeStandaloneBundleFixture {
+private struct ObjCFacadeAppBundleFixture {
     let bundleURL: URL
     let extensionURL: URL
 }
@@ -525,8 +525,8 @@ private func makeObjCFacadeBundleFixture(
     return bundleURL
 }
 
-/// Creates a standalone app fixture with one extension for read-only inspection tests.
-private func makeObjCFacadeStandaloneBundleFixture() throws -> ObjCFacadeStandaloneBundleFixture {
+/// Creates an app fixture with one extension for read-only inspection tests.
+private func makeObjCFacadeAppBundleFixture() throws -> ObjCFacadeAppBundleFixture {
     let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "com.original.host")
     let extensionURL = bundleURL.appendingPathComponent("PlugIns/Share.appex", isDirectory: true)
     try FileManager.default.createDirectory(at: extensionURL, withIntermediateDirectories: true)
@@ -542,7 +542,7 @@ private func makeObjCFacadeStandaloneBundleFixture() throws -> ObjCFacadeStandal
     )
     try extensionInfoData.write(to: extensionURL.appendingPathComponent("Info.plist"))
     try Fixtures.machO64WithCodeSignature().write(to: extensionURL.appendingPathComponent("Share"))
-    return ObjCFacadeStandaloneBundleFixture(bundleURL: bundleURL, extensionURL: extensionURL)
+    return ObjCFacadeAppBundleFixture(bundleURL: bundleURL, extensionURL: extensionURL)
 }
 
 /// Creates a minimal framework fixture for Objective-C facade tests.

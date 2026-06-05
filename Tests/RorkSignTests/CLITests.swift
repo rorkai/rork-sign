@@ -650,7 +650,7 @@ final class CLITests: XCTestCase {
         )
     }
 
-    func testDefaultCommandAppliesStandaloneMetadataRewriteFlags() throws {
+    func testDefaultCommandAppliesAppSigningMetadataRewriteFlags() throws {
         let fixture = try makeCLIFixture()
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
         let appURL = archiveRootURL.appendingPathComponent("Payload/Host.app", isDirectory: true)
@@ -882,7 +882,7 @@ final class CLITests: XCTestCase {
         )
     }
 
-    func testDefaultCommandEntitlementsResourceUsesStandaloneSigning() throws {
+    func testDefaultCommandEntitlementsResourceUsesAppSigning() throws {
         let signing = try OpenSSLFixture()
         defer {
             signing.remove()
@@ -1053,7 +1053,7 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(info["CFBundleDisplayName"] as? String, "Renamed App")
     }
 
-    func testDefaultCommandAppliesStandaloneRootEntitlementsFile() throws {
+    func testDefaultCommandAppliesAppSigningRootEntitlementsFile() throws {
         let fixture = try makeCLIFixture()
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
         let appURL = archiveRootURL.appendingPathComponent("Payload/Host.app", isDirectory: true)
@@ -1112,7 +1112,7 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(entitlements["get-task-allow"] as? Bool, false)
     }
 
-    func testDefaultCommandPreservesIPAIdentifierForStandaloneRewriteWithoutBundleID() throws {
+    func testDefaultCommandPreservesIPAIdentifierForAppSigningWithoutBundleID() throws {
         let fixture = try makeCLIFixture()
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
         let appURL = archiveRootURL.appendingPathComponent("Payload/Host.app", isDirectory: true)

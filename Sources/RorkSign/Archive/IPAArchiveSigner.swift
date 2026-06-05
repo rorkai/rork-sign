@@ -50,11 +50,11 @@ enum IPAArchiveSigner {
         }
     }
 
-    /// Rewrites and ad-hoc signs the IPA's app bundle as a standalone app.
-    static func signStandaloneAdHoc(
+    /// Rewrites and ad-hoc signs the IPA's app bundle as an installable app.
+    static func signAppAdHoc(
         archiveURL: URL,
         outputURL: URL,
-        options: StandaloneBundleSigningOptions,
+        options: AppSigningOptions,
         archiveCompressionMode: ArchiveCompressionMode,
         temporaryDirectory: URL?
     ) throws -> IPAArchiveSigningReport {
@@ -64,16 +64,16 @@ enum IPAArchiveSigner {
             archiveCompressionMode: archiveCompressionMode,
             temporaryDirectory: temporaryDirectory
         ) { appURL in
-            try StandaloneBundleSigner.signAdHoc(bundleURL: appURL, options: options)
+            try AppBundleSigner.signAdHoc(bundleURL: appURL, options: options)
         }
     }
 
-    /// Rewrites and CMS-signs the IPA's app bundle as a standalone app.
-    static func signStandaloneWithIdentity(
+    /// Rewrites and CMS-signs the IPA's app bundle as an installable app.
+    static func signAppWithIdentity(
         archiveURL: URL,
         outputURL: URL,
         identity: SigningIdentity,
-        options: StandaloneBundleSigningOptions,
+        options: AppSigningOptions,
         archiveCompressionMode: ArchiveCompressionMode,
         temporaryDirectory: URL?
     ) throws -> IPAArchiveSigningReport {
@@ -83,7 +83,7 @@ enum IPAArchiveSigner {
             archiveCompressionMode: archiveCompressionMode,
             temporaryDirectory: temporaryDirectory
         ) { appURL in
-            try StandaloneBundleSigner.signWithIdentity(
+            try AppBundleSigner.signWithIdentity(
                 bundleURL: appURL,
                 identity: identity,
                 options: options

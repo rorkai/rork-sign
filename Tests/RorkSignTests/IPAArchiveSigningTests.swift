@@ -72,7 +72,7 @@ final class IPAArchiveSigningTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: tempURL.path), [])
     }
 
-    func testStandaloneIPARewritesPayloadAppBeforeSigning() throws {
+    func testAppSigningIPARewritesPayloadAppBeforeSigning() throws {
         let fixture = try makeIPAArchiveFixture(bundleIdentifier: "com.original.host")
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.rootURL)
@@ -86,12 +86,12 @@ final class IPAArchiveSigningTests: XCTestCase {
                 "get-task-allow": true,
             ]
         )
-        let outputURL = fixture.rootURL.appendingPathComponent("Standalone.ipa")
-        let report = try RorkSigner.signStandaloneIPAAdHoc(
+        let outputURL = fixture.rootURL.appendingPathComponent("AppSigned.ipa")
+        let report = try RorkSigner.signIPA(
             at: fixture.archiveURL,
             outputURL: outputURL,
-            options: StandaloneBundleSigningOptions(
-                bundleIdentifier: "app.rork.standalone.archive",
+            options: AppSigningOptions(
+                bundleIdentifier: "app.rork.signed.archive",
                 rootProvisioningProfile: profile
             )
         )
@@ -103,7 +103,7 @@ final class IPAArchiveSigningTests: XCTestCase {
         let appURL = extractedURL.appendingPathComponent("Payload/Host.app")
         XCTAssertEqual(
             try infoPlist(at: appURL)["CFBundleIdentifier"] as? String,
-            "app.rork.standalone.archive"
+            "app.rork.signed.archive"
         )
         XCTAssertEqual(
             try Data(contentsOf: appURL.appendingPathComponent("embedded.mobileprovision")),
@@ -113,11 +113,11 @@ final class IPAArchiveSigningTests: XCTestCase {
         let entitlements = try entitlementDictionary(inSignedMachOAt: appURL.appendingPathComponent("Host"))
         XCTAssertEqual(
             entitlements["application-identifier"] as? String,
-            "TEAMID1234.app.rork.standalone.archive"
+            "TEAMID1234.app.rork.signed.archive"
         )
         XCTAssertEqual(
             entitlements["keychain-access-groups"] as? [String],
-            ["TEAMID1234.app.rork.standalone.archive"]
+            ["TEAMID1234.app.rork.signed.archive"]
         )
     }
 
