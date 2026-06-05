@@ -19,6 +19,29 @@ final class IdentitySigningTests: XCTestCase {
         )
     }
 
+    func testSigningIdentityCanBeBoundToTeamIdentifier() throws {
+        let fixture = try OpenSSLFixture()
+        defer {
+            fixture.remove()
+        }
+
+        let identity = try fixture.identity.withTeamIdentifier(" TEAMID1234\n")
+
+        XCTAssertEqual(identity.teamIdentifier, "TEAMID1234")
+        XCTAssertEqual(identity.certificateDER, fixture.identity.certificateDER)
+        XCTAssertEqual(identity.subjectCommonName, fixture.identity.subjectCommonName)
+        XCTAssertEqual(try identity.withTeamIdentifier("TEAMID1234").teamIdentifier, "TEAMID1234")
+        XCTAssertEqual(try identity.withTeamIdentifier(" ").teamIdentifier, "TEAMID1234")
+        XCTAssertThrowsError(try identity.withTeamIdentifier("OTHERTEAM")) { error in
+            XCTAssertEqual(
+                error as? RorkSignError,
+                .invalidSigningIdentity(
+                    "Signing identity team identifier TEAMID1234 does not match provisioning profile team OTHERTEAM."
+                )
+            )
+        }
+    }
+
     func testCertificateCheckReportsCertificateMetadata() throws {
         let fixture = try OpenSSLFixture()
         defer {

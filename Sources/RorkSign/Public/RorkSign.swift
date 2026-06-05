@@ -1058,7 +1058,7 @@ public struct SigningIdentity {
     }
 
     /// Returns an equivalent identity that carries the supplied Apple team identifier.
-    func withTeamIdentifier(_ teamIdentifier: String) throws -> SigningIdentity {
+    public func withTeamIdentifier(_ teamIdentifier: String) throws -> SigningIdentity {
         let normalizedTeamIdentifier = teamIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedTeamIdentifier.isEmpty else {
             return self
