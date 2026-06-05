@@ -270,7 +270,7 @@ final class StandaloneBundleSigningTests: XCTestCase {
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
         }
-        let entitlementRequestResourceName = "FixtureEntitlements.plist"
+        let entitlementsResourceName = "FixtureEntitlements.plist"
         try Fixtures.machO64WithCodeSignature().write(to: fixture.bundleURL.appendingPathComponent("Host"))
         try entitlementsXML(
             [
@@ -279,7 +279,7 @@ final class StandaloneBundleSigningTests: XCTestCase {
             ]
         )
         .write(
-            to: fixture.bundleURL.appendingPathComponent(entitlementRequestResourceName),
+            to: fixture.bundleURL.appendingPathComponent(entitlementsResourceName),
             atomically: true,
             encoding: .utf8
         )
@@ -290,7 +290,7 @@ final class StandaloneBundleSigningTests: XCTestCase {
             ]
         )
         .write(
-            to: fixture.extensionURL.appendingPathComponent(entitlementRequestResourceName),
+            to: fixture.extensionURL.appendingPathComponent(entitlementsResourceName),
             atomically: true,
             encoding: .utf8
         )
@@ -329,7 +329,7 @@ final class StandaloneBundleSigningTests: XCTestCase {
                 provisioningProfilesByBundleIdentifier: [
                     "app.rork.tunnel.ShareExtension": extensionProfile,
                 ],
-                entitlementRequestResourceName: entitlementRequestResourceName
+                entitlementsResourceName: entitlementsResourceName
             )
         )
 

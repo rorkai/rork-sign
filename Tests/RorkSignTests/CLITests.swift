@@ -769,18 +769,18 @@ final class CLITests: XCTestCase {
         try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
         try Fixtures.machO64WithCodeSignature().write(to: extensionURL.appendingPathComponent("Widget"))
         try Fixtures.machO64DylibWithCodeSignature().write(to: frameworkURL.appendingPathComponent("Nested"))
-        let entitlementRequestResourceName = "FixtureEntitlements.plist"
+        let entitlementsResourceName = "FixtureEntitlements.plist"
         try writeCLIInfoPlist(
             [
                 "com.apple.developer.networking.networkextension": ["packet-tunnel-provider"],
             ],
-            to: appURL.appendingPathComponent(entitlementRequestResourceName)
+            to: appURL.appendingPathComponent(entitlementsResourceName)
         )
         try writeCLIInfoPlist(
             [
                 "com.apple.developer.networking.networkextension": ["packet-tunnel-provider"],
             ],
-            to: extensionURL.appendingPathComponent(entitlementRequestResourceName)
+            to: extensionURL.appendingPathComponent(entitlementsResourceName)
         )
 
         let rootProfile = try cliProvisioningProfile(
@@ -823,7 +823,7 @@ final class CLITests: XCTestCase {
             "--profile-map", profileMapURL.path,
             "--certificate", signing.certificateURL.path,
             "--key", signing.privateKeyURL.path,
-            "--entitlements-resource", entitlementRequestResourceName,
+            "--entitlements-resource", entitlementsResourceName,
         ])
 
         XCTAssertEqual(result.status, 0, result.output)
@@ -894,7 +894,7 @@ final class CLITests: XCTestCase {
         let outputURL = fixture.directory.appendingPathComponent("Signed.ipa")
         let profileURL = fixture.directory.appendingPathComponent("Root.mobileprovision")
         let extractedURL = fixture.directory.appendingPathComponent("Extracted", isDirectory: true)
-        let entitlementRequestResourceName = "FixtureEntitlements.plist"
+        let entitlementsResourceName = "FixtureEntitlements.plist"
         addTeardownBlock {
             try? FileManager.default.removeItem(at: fixture.directory)
         }
@@ -911,7 +911,7 @@ final class CLITests: XCTestCase {
             [
                 "com.apple.developer.networking.networkextension": ["packet-tunnel-provider"],
             ],
-            to: appURL.appendingPathComponent(entitlementRequestResourceName)
+            to: appURL.appendingPathComponent(entitlementsResourceName)
         )
         try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
 
@@ -931,7 +931,7 @@ final class CLITests: XCTestCase {
         let result = try runRorkSign([
             "-m", profileURL.path,
             "-o", outputURL.path,
-            "--entitlements-resource", entitlementRequestResourceName,
+            "--entitlements-resource", entitlementsResourceName,
             inputURL.path,
         ])
 

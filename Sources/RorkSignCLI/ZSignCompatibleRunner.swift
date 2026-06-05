@@ -85,16 +85,16 @@ struct ZSignCompatibleRunner {
             || command.removeProvisioningProfiles
             || command.enableDocuments
             || command.minimumOSVersion != nil
-            || hasEntitlementRequestResource
+            || requestsBundledEntitlementsResource
             || command.removeExtensions
             || command.removeWatchApps
             || command.removeUISupportedDevices
             || command.install
     }
 
-    /// Returns true when unsigned standalone artifacts should read bundled entitlement requests.
-    private var hasEntitlementRequestResource: Bool {
-        guard let resourceName = command.entitlementRequestResourceName else {
+    /// Returns true when the command requests a bundle-local entitlements resource.
+    private var requestsBundledEntitlementsResource: Bool {
+        guard let resourceName = command.entitlementsResourceName else {
             return false
         }
         return !resourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -319,7 +319,7 @@ struct ZSignCompatibleRunner {
             rootProvisioningProfile: profiles.first,
             provisioningProfilesByBundleIdentifier: try provisioningProfilesByIdentifier(profiles),
             rootEntitlementsXML: try entitlementsXML(),
-            entitlementRequestResourceName: command.entitlementRequestResourceName,
+            entitlementsResourceName: command.entitlementsResourceName,
             displayName: command.displayName,
             bundleVersion: command.bundleVersion,
             minimumOSVersion: command.minimumOSVersion,
@@ -378,7 +378,7 @@ struct ZSignCompatibleRunner {
             || command.displayName != nil
             || command.bundleVersion != nil
             || command.minimumOSVersion != nil
-            || hasEntitlementRequestResource
+            || requestsBundledEntitlementsResource
             || command.enableDocuments
             || command.removeExtensions
             || command.removeWatchApps

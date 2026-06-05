@@ -45,13 +45,15 @@ public struct StandaloneBundleSigningOptions: Equatable {
     /// keys remain coherent.
     public var rootEntitlementsXML: String
 
-    /// Bundle-local entitlement request plist filename used when an executable
-    /// has no embedded entitlement slot.
+    /// Bundle-local entitlements plist filename used when an executable has no
+    /// embedded entitlement slot.
     ///
-    /// Leave this nil when unsigned artifacts do not carry entitlement request
-    /// resources. When set, the value must be a plain filename in each bundle
-    /// directory, such as `Entitlements.plist`.
-    public var entitlementRequestResourceName: String?
+    /// The file is treated as the executable's original entitlement request
+    /// before the selected provisioning profile constrains the final values.
+    /// Leave this nil when unsigned artifacts do not carry this resource. When
+    /// set, the value must be a plain filename in each bundle directory, such
+    /// as `Entitlements.plist`.
+    public var entitlementsResourceName: String?
 
     /// Replacement display name for the root app.
     ///
@@ -125,7 +127,7 @@ public struct StandaloneBundleSigningOptions: Equatable {
         provisioningProfilesByBundleIdentifier: [String: Data] = [:],
         appGroupIdentifiers: [String] = [],
         rootEntitlementsXML: String = "",
-        entitlementRequestResourceName: String? = nil,
+        entitlementsResourceName: String? = nil,
         displayName: String? = nil,
         bundleVersion: String? = nil,
         minimumOSVersion: String? = nil,
@@ -146,7 +148,7 @@ public struct StandaloneBundleSigningOptions: Equatable {
         self.provisioningProfilesByBundleIdentifier = provisioningProfilesByBundleIdentifier
         self.appGroupIdentifiers = appGroupIdentifiers
         self.rootEntitlementsXML = rootEntitlementsXML
-        self.entitlementRequestResourceName = entitlementRequestResourceName
+        self.entitlementsResourceName = entitlementsResourceName
         self.displayName = displayName
         self.bundleVersion = bundleVersion
         self.minimumOSVersion = minimumOSVersion
@@ -173,7 +175,7 @@ public struct StandaloneBundleSigningOptions: Equatable {
             && lhs.provisioningProfilesByBundleIdentifier == rhs.provisioningProfilesByBundleIdentifier
             && lhs.appGroupIdentifiers == rhs.appGroupIdentifiers
             && lhs.rootEntitlementsXML == rhs.rootEntitlementsXML
-            && lhs.entitlementRequestResourceName == rhs.entitlementRequestResourceName
+            && lhs.entitlementsResourceName == rhs.entitlementsResourceName
             && lhs.displayName == rhs.displayName
             && lhs.bundleVersion == rhs.bundleVersion
             && lhs.minimumOSVersion == rhs.minimumOSVersion
@@ -570,7 +572,7 @@ private enum StandaloneBundleIdentityRewriter {
         }
         return try bundledEntitlementsXML(
             bundleURL: bundleURL,
-            resourceName: options.entitlementRequestResourceName
+            resourceName: options.entitlementsResourceName
         )
     }
 
