@@ -219,6 +219,7 @@ final class StandaloneBundleSigningTests: XCTestCase {
             ],
             to: fixture.extensionURL.appendingPathComponent("Info.plist")
         )
+        try Fixtures.machO64WithCodeSignature().write(to: fixture.extensionURL.appendingPathComponent("Share"))
 
         let rootProfile = try provisioningProfilePlist(
             teamIdentifier: "TEAMID1234",

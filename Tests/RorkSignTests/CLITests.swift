@@ -882,6 +882,74 @@ final class CLITests: XCTestCase {
         )
     }
 
+    func testDefaultCommandEntitlementsResourceUsesStandaloneSigning() throws {
+        let signing = try OpenSSLFixture()
+        defer {
+            signing.remove()
+        }
+        let fixture = try makeCLIFixture()
+        let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
+        let appURL = archiveRootURL.appendingPathComponent("Payload/Host.app", isDirectory: true)
+        let inputURL = fixture.directory.appendingPathComponent("Input.ipa")
+        let outputURL = fixture.directory.appendingPathComponent("Signed.ipa")
+        let profileURL = fixture.directory.appendingPathComponent("Root.mobileprovision")
+        let extractedURL = fixture.directory.appendingPathComponent("Extracted", isDirectory: true)
+        let entitlementRequestResourceName = "FixtureEntitlements.plist"
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+
+        try FileManager.default.createDirectory(at: appURL, withIntermediateDirectories: true)
+        try writeCLIInfoPlist(
+            [
+                "CFBundleIdentifier": "com.example.resource",
+                "CFBundleExecutable": "Host",
+            ],
+            to: appURL.appendingPathComponent("Info.plist")
+        )
+        try writeCLIInfoPlist(
+            [
+                "com.apple.developer.networking.networkextension": ["packet-tunnel-provider"],
+            ],
+            to: appURL.appendingPathComponent(entitlementRequestResourceName)
+        )
+        try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
+
+        let profile = try cliProvisioningProfile(
+            bundleIdentifier: "com.example.resource",
+            certificateDER: signing.identity.certificateDER,
+            entitlements: [
+                "com.apple.developer.networking.networkextension": [
+                    "app-proxy-provider",
+                    "packet-tunnel-provider",
+                ],
+            ]
+        )
+        try profile.write(to: profileURL)
+        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+
+        let result = try runRorkSign([
+            "-m", profileURL.path,
+            "-o", outputURL.path,
+            "--entitlements-resource", entitlementRequestResourceName,
+            inputURL.path,
+        ])
+
+        XCTAssertEqual(result.status, 0, result.output)
+        guard result.status == 0 else {
+            return
+        }
+        try FileManager.default.createDirectory(at: extractedURL, withIntermediateDirectories: true)
+        try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
+        let entitlements = try cliEntitlementDictionary(
+            inSignedMachOAt: extractedURL.appendingPathComponent("Payload/Host.app/Host")
+        )
+        XCTAssertEqual(
+            entitlements["com.apple.developer.networking.networkextension"] as? [String],
+            ["packet-tunnel-provider"]
+        )
+    }
+
     func testSignIPACommandRejectsMissingRootBundleIdentifier() throws {
         let fixture = try makeCLIFixture()
         let profileURL = fixture.directory.appendingPathComponent("Other.mobileprovision")

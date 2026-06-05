@@ -9,12 +9,20 @@ import Foundation
 /// while keeping optional capabilities limited to those the original executable
 /// already requested.
 enum BundleEntitlements {
-    private static let generatedEntitlementKeys: Set<String> = [
-        "application-identifier",
+    private static let associatedApplicationIdentifierKeys: Set<String> = [
+        "associated-application-identifier",
         "com.apple.developer.associated-application-identifier",
+    ]
+
+    private static let generatedEntitlementKeys = Set([
+        "application-identifier",
         "com.apple.developer.team-identifier",
         "keychain-access-groups",
-    ]
+    ]).union(associatedApplicationIdentifierKeys)
+
+    private static let alwaysKeptEntitlementKeys: Set<String> = generatedEntitlementKeys.union([
+        "get-task-allow",
+    ])
 
     /// Expands profile entitlements for one bundle identifier.
     ///
@@ -59,11 +67,10 @@ enum BundleEntitlements {
         )
         entitlements["keychain-access-groups"] = keychainGroups
 
-        if let associatedBundleIdentifier,
-           !associatedBundleIdentifier.isEmpty,
-           entitlements["com.apple.developer.associated-application-identifier"] != nil {
-            entitlements["com.apple.developer.associated-application-identifier"] =
-                "\(profile.teamIdentifier).\(associatedBundleIdentifier)"
+        if let associatedBundleIdentifier, !associatedBundleIdentifier.isEmpty {
+            for key in associatedApplicationIdentifierKeys where entitlements[key] != nil {
+                entitlements[key] = "\(profile.teamIdentifier).\(associatedBundleIdentifier)"
+            }
         }
 
         if !appGroups.isEmpty {
@@ -79,13 +86,7 @@ enum BundleEntitlements {
         original: [String: Any],
         appGroupIdentifiers: [String]
     ) -> Bool {
-        let alwaysKept: Set<String> = [
-            "application-identifier",
-            "com.apple.developer.team-identifier",
-            "get-task-allow",
-            "keychain-access-groups",
-        ]
-        if alwaysKept.contains(key) {
+        if alwaysKeptEntitlementKeys.contains(key) {
             return true
         }
         if key == "com.apple.security.application-groups" {
