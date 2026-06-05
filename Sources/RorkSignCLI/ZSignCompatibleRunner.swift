@@ -85,19 +85,11 @@ struct ZSignCompatibleRunner {
             || command.removeProvisioningProfiles
             || command.enableDocuments
             || command.minimumOSVersion != nil
-            || requestsBundledEntitlementsResource
+            || command.hasBundledEntitlementsResource
             || command.removeExtensions
             || command.removeWatchApps
             || command.removeUISupportedDevices
             || command.install
-    }
-
-    /// Returns true when the command requests a bundle-local entitlements resource.
-    private var requestsBundledEntitlementsResource: Bool {
-        guard let resourceName = command.entitlementsResourceName else {
-            return false
-        }
-        return !resourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Signs an IPA and optionally writes post-sign metadata.
@@ -378,7 +370,7 @@ struct ZSignCompatibleRunner {
             || command.displayName != nil
             || command.bundleVersion != nil
             || command.minimumOSVersion != nil
-            || requestsBundledEntitlementsResource
+            || command.hasBundledEntitlementsResource
             || command.enableDocuments
             || command.removeExtensions
             || command.removeWatchApps

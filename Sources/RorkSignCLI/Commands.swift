@@ -166,6 +166,13 @@ struct ZSignOptions: ParsableArguments {
     @Argument(help: "Input Mach-O file, app bundle, extracted archive folder, or IPA.")
     var inputPath: String?
 
+    var hasBundledEntitlementsResource: Bool {
+        guard let resourceName = entitlementsResourceName else {
+            return false
+        }
+        return !resourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     func run() throws {
         if shortVersion {
             print("version: \(RorkSigner.version)")
