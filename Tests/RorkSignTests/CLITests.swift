@@ -650,7 +650,7 @@ final class CLITests: XCTestCase {
         )
     }
 
-    func testDefaultCommandAppliesStandaloneMetadataRewriteFlags() throws {
+    func testDefaultCommandAppliesAppSigningMetadataRewriteFlags() throws {
         let fixture = try makeCLIFixture()
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
         let appURL = archiveRootURL.appendingPathComponent("Payload/Host.app", isDirectory: true)
@@ -769,14 +769,39 @@ final class CLITests: XCTestCase {
         try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
         try Fixtures.machO64WithCodeSignature().write(to: extensionURL.appendingPathComponent("Widget"))
         try Fixtures.machO64DylibWithCodeSignature().write(to: frameworkURL.appendingPathComponent("Nested"))
+        let entitlementsResourceName = "FixtureEntitlements.plist"
+        try writeCLIInfoPlist(
+            [
+                "com.apple.developer.networking.networkextension": ["packet-tunnel-provider"],
+            ],
+            to: appURL.appendingPathComponent(entitlementsResourceName)
+        )
+        try writeCLIInfoPlist(
+            [
+                "com.apple.developer.networking.networkextension": ["packet-tunnel-provider"],
+            ],
+            to: extensionURL.appendingPathComponent(entitlementsResourceName)
+        )
 
         let rootProfile = try cliProvisioningProfile(
             bundleIdentifier: "com.example.rewritten",
-            certificateDER: signing.identity.certificateDER
+            certificateDER: signing.identity.certificateDER,
+            entitlements: [
+                "com.apple.developer.networking.networkextension": [
+                    "app-proxy-provider",
+                    "packet-tunnel-provider",
+                ],
+            ]
         )
         let extensionProfile = try cliProvisioningProfile(
             bundleIdentifier: "com.example.rewritten.Widget",
-            certificateDER: signing.identity.certificateDER
+            certificateDER: signing.identity.certificateDER,
+            entitlements: [
+                "com.apple.developer.networking.networkextension": [
+                    "app-proxy-provider",
+                    "packet-tunnel-provider",
+                ],
+            ]
         )
         try rootProfile.write(to: rootProfileURL)
         try extensionProfile.write(to: extensionProfileURL)
@@ -798,6 +823,7 @@ final class CLITests: XCTestCase {
             "--profile-map", profileMapURL.path,
             "--certificate", signing.certificateURL.path,
             "--key", signing.privateKeyURL.path,
+            "--entitlements-resource", entitlementsResourceName,
         ])
 
         XCTAssertEqual(result.status, 0, result.output)
@@ -830,8 +856,20 @@ final class CLITests: XCTestCase {
             "TEAMID1234.com.example.rewritten"
         )
         XCTAssertEqual(
+            try cliEntitlementDictionary(inSignedMachOAt: signedAppURL.appendingPathComponent("Host"))[
+                "com.apple.developer.networking.networkextension"
+            ] as? [String],
+            ["packet-tunnel-provider"]
+        )
+        XCTAssertEqual(
             try cliEntitlementDictionary(inSignedMachOAt: signedExtensionURL.appendingPathComponent("Widget"))["application-identifier"] as? String,
             "TEAMID1234.com.example.rewritten.Widget"
+        )
+        XCTAssertEqual(
+            try cliEntitlementDictionary(inSignedMachOAt: signedExtensionURL.appendingPathComponent("Widget"))[
+                "com.apple.developer.networking.networkextension"
+            ] as? [String],
+            ["packet-tunnel-provider"]
         )
         let frameworkCodeDirectory = try XCTUnwrap(
             signatureBlobs(in: try Data(contentsOf: signedFrameworkExecutableURL))[0]
@@ -841,6 +879,74 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(
             nullTerminatedString(in: frameworkCodeDirectory, offset: frameworkTeamOffset),
             "TEAMID1234"
+        )
+    }
+
+    func testDefaultCommandEntitlementsResourceUsesAppSigning() throws {
+        let signing = try OpenSSLFixture()
+        defer {
+            signing.remove()
+        }
+        let fixture = try makeCLIFixture()
+        let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
+        let appURL = archiveRootURL.appendingPathComponent("Payload/Host.app", isDirectory: true)
+        let inputURL = fixture.directory.appendingPathComponent("Input.ipa")
+        let outputURL = fixture.directory.appendingPathComponent("Signed.ipa")
+        let profileURL = fixture.directory.appendingPathComponent("Root.mobileprovision")
+        let extractedURL = fixture.directory.appendingPathComponent("Extracted", isDirectory: true)
+        let entitlementsResourceName = "FixtureEntitlements.plist"
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+
+        try FileManager.default.createDirectory(at: appURL, withIntermediateDirectories: true)
+        try writeCLIInfoPlist(
+            [
+                "CFBundleIdentifier": "com.example.resource",
+                "CFBundleExecutable": "Host",
+            ],
+            to: appURL.appendingPathComponent("Info.plist")
+        )
+        try writeCLIInfoPlist(
+            [
+                "com.apple.developer.networking.networkextension": ["packet-tunnel-provider"],
+            ],
+            to: appURL.appendingPathComponent(entitlementsResourceName)
+        )
+        try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
+
+        let profile = try cliProvisioningProfile(
+            bundleIdentifier: "com.example.resource",
+            certificateDER: signing.identity.certificateDER,
+            entitlements: [
+                "com.apple.developer.networking.networkextension": [
+                    "app-proxy-provider",
+                    "packet-tunnel-provider",
+                ],
+            ]
+        )
+        try profile.write(to: profileURL)
+        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+
+        let result = try runRorkSign([
+            "-m", profileURL.path,
+            "-o", outputURL.path,
+            "--entitlements-resource", entitlementsResourceName,
+            inputURL.path,
+        ])
+
+        XCTAssertEqual(result.status, 0, result.output)
+        guard result.status == 0 else {
+            return
+        }
+        try FileManager.default.createDirectory(at: extractedURL, withIntermediateDirectories: true)
+        try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
+        let entitlements = try cliEntitlementDictionary(
+            inSignedMachOAt: extractedURL.appendingPathComponent("Payload/Host.app/Host")
+        )
+        XCTAssertEqual(
+            entitlements["com.apple.developer.networking.networkextension"] as? [String],
+            ["packet-tunnel-provider"]
         )
     }
 
@@ -947,7 +1053,7 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(info["CFBundleDisplayName"] as? String, "Renamed App")
     }
 
-    func testDefaultCommandAppliesStandaloneRootEntitlementsFile() throws {
+    func testDefaultCommandAppliesAppSigningRootEntitlementsFile() throws {
         let fixture = try makeCLIFixture()
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
         let appURL = archiveRootURL.appendingPathComponent("Payload/Host.app", isDirectory: true)
@@ -1006,7 +1112,7 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(entitlements["get-task-allow"] as? Bool, false)
     }
 
-    func testDefaultCommandPreservesIPAIdentifierForStandaloneRewriteWithoutBundleID() throws {
+    func testDefaultCommandPreservesIPAIdentifierForAppSigningWithoutBundleID() throws {
         let fixture = try makeCLIFixture()
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
         let appURL = archiveRootURL.appendingPathComponent("Payload/Host.app", isDirectory: true)
@@ -1947,16 +2053,18 @@ private func writeFakeInstaller(to url: URL, logURL: URL) throws {
 private func cliProvisioningProfile(
     bundleIdentifier: String,
     certificateDER: Data,
-    applicationIdentifier: String? = nil
+    applicationIdentifier: String? = nil,
+    entitlements additionalEntitlements: [String: Any] = [:]
 ) throws -> Data {
+    let entitlements = [
+        "application-identifier": applicationIdentifier ?? "TEAMID1234.\(bundleIdentifier)",
+        "com.apple.developer.team-identifier": "TEAMID1234",
+    ].merging(additionalEntitlements) { _, additional in additional }
     let plist: [String: Any] = [
         "TeamIdentifier": ["TEAMID1234"],
         "ExpirationDate": Date(timeIntervalSince1970: 1_900_000_000),
         "DeveloperCertificates": [certificateDER],
-        "Entitlements": [
-            "application-identifier": applicationIdentifier ?? "TEAMID1234.\(bundleIdentifier)",
-            "com.apple.developer.team-identifier": "TEAMID1234",
-        ],
+        "Entitlements": entitlements,
     ]
     return try PropertyListSerialization.data(
         fromPropertyList: plist,

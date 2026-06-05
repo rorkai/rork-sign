@@ -85,6 +85,7 @@ struct ZSignCompatibleRunner {
             || command.removeProvisioningProfiles
             || command.enableDocuments
             || command.minimumOSVersion != nil
+            || command.hasBundledEntitlementsResource
             || command.removeExtensions
             || command.removeWatchApps
             || command.removeUISupportedDevices
@@ -101,8 +102,8 @@ struct ZSignCompatibleRunner {
         }
 
         let report: IPAArchiveSigningReport
-        if try shouldUseStandaloneSigning(for: inputURL) {
-            report = try signStandaloneIPA(inputURL: inputURL, outputURL: output.url)
+        if try shouldUseAppSigning(for: inputURL) {
+            report = try signAppIPA(inputURL: inputURL, outputURL: output.url)
         } else if let identity = try signingIdentity() {
             report = try RorkSigner.signIPAWithIdentity(
                 at: inputURL,
@@ -134,8 +135,8 @@ struct ZSignCompatibleRunner {
         let directoryInput = try resolveDirectoryInput(inputURL)
 
         let report: BundleSigningReport
-        if try shouldUseStandaloneSigning(for: directoryInput.bundleURL) {
-            report = try signStandaloneBundle(bundleURL: directoryInput.bundleURL)
+        if try shouldUseAppSigning(for: directoryInput.bundleURL) {
+            report = try signAppBundle(bundleURL: directoryInput.bundleURL)
         } else if let identity = try signingIdentity() {
             report = try RorkSigner.signBundleWithIdentity(
                 at: directoryInput.bundleURL,
@@ -253,14 +254,14 @@ struct ZSignCompatibleRunner {
             || command.sha256Only
     }
 
-    /// Signs an IPA through the standalone rewrite pipeline.
-    private func signStandaloneIPA(inputURL: URL, outputURL: URL) throws -> IPAArchiveSigningReport {
-        let options = try standaloneOptions(
+    /// Signs an IPA through the app-signing pipeline.
+    private func signAppIPA(inputURL: URL, outputURL: URL) throws -> IPAArchiveSigningReport {
+        let options = try appSigningOptions(
             for: nil,
             fallbackBundleIdentifier: try inferredArchiveBundleIdentifierIfNeeded(inputURL)
         )
         if let identity = try signingIdentity() {
-            return try RorkSigner.signStandaloneIPAWithIdentity(
+            return try RorkSigner.signIPA(
                 at: inputURL,
                 outputURL: outputURL,
                 identity: identity,
@@ -269,7 +270,7 @@ struct ZSignCompatibleRunner {
                 temporaryDirectory: try temporaryDirectory()
             )
         }
-        return try RorkSigner.signStandaloneIPAAdHoc(
+        return try RorkSigner.signIPA(
             at: inputURL,
             outputURL: outputURL,
             options: options,
@@ -278,38 +279,39 @@ struct ZSignCompatibleRunner {
         )
     }
 
-    /// Signs an app bundle through the standalone rewrite pipeline.
-    private func signStandaloneBundle(bundleURL: URL) throws -> BundleSigningReport {
-        let options = try standaloneOptions(for: bundleURL)
+    /// Signs an app bundle through the app-signing pipeline.
+    private func signAppBundle(bundleURL: URL) throws -> BundleSigningReport {
+        let options = try appSigningOptions(for: bundleURL)
         if let identity = try signingIdentity() {
-            return try RorkSigner.signStandaloneBundleWithIdentity(
+            return try RorkSigner.signBundle(
                 at: bundleURL,
                 identity: identity,
                 options: options
             )
         }
-        return try RorkSigner.signStandaloneBundleAdHoc(
+        return try RorkSigner.signBundle(
             at: bundleURL,
             options: options
         )
     }
 
-    /// Returns standalone options for ZSign-style bundle mutation flags.
-    private func standaloneOptions(
+    /// Returns app-signing options for ZSign-style bundle mutation flags.
+    private func appSigningOptions(
         for bundleURL: URL?,
         fallbackBundleIdentifier: String? = nil
-    ) throws -> StandaloneBundleSigningOptions {
+    ) throws -> AppSigningOptions {
         let profiles = try provisioningProfileData()
         let replacementIdentifier = try explicitBundleIdentifier
             ?? bundleURL.map { try CLISupport.readBundleIdentifier(at: $0) }
             ?? fallbackBundleIdentifier
             ?? requiredBundleIdentifier()
 
-        return StandaloneBundleSigningOptions(
+        return AppSigningOptions(
             bundleIdentifier: replacementIdentifier,
             rootProvisioningProfile: profiles.first,
             provisioningProfilesByBundleIdentifier: try provisioningProfilesByIdentifier(profiles),
             rootEntitlementsXML: try entitlementsXML(),
+            entitlementsResourceName: command.entitlementsResourceName,
             displayName: command.displayName,
             bundleVersion: command.bundleVersion,
             minimumOSVersion: command.minimumOSVersion,
@@ -363,11 +365,12 @@ struct ZSignCompatibleRunner {
     }
 
     /// Returns true when options require root bundle rewriting.
-    private func shouldUseStandaloneSigning(for inputURL: URL) throws -> Bool {
+    private func shouldUseAppSigning(for inputURL: URL) throws -> Bool {
         command.bundleIdentifier != nil
             || command.displayName != nil
             || command.bundleVersion != nil
             || command.minimumOSVersion != nil
+            || command.hasBundledEntitlementsResource
             || command.enableDocuments
             || command.removeExtensions
             || command.removeWatchApps

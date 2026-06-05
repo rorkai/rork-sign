@@ -129,6 +129,9 @@ OPTIONS:
                           Replacement root bundle version.
   -e, --entitlements <entitlements>
                           Path to an entitlements plist.
+  --entitlements-resource <entitlements-resource>
+                          Bundle-local entitlements plist filename for unsigned
+                          app artifacts.
   -o, --output <output>   Path to the output IPA or Mach-O.
   -z, --zip_level <zip_level>
                           ZIP compression level. Level 0 stores files; levels
@@ -186,6 +189,18 @@ rorksign -a -o output.ipa Demo.ipa
 ```bash
 rorksign -k dev.p12 -p password -m app.mobileprovision -o output.ipa Demo.ipa
 ```
+
+**Read bundle-local entitlements for unsigned app artifacts**
+
+```bash
+rorksign -k dev.p12 -p password -m app.mobileprovision \
+  --entitlements-resource Entitlements.plist -o output.ipa Demo.ipa
+```
+
+`--entitlements-resource` names a plist file inside each bundle. It is used as
+the executable's entitlement request when the executable has no embedded
+entitlements, and the selected provisioning profile still constrains the final
+signed values.
 
 **Sign an app bundle with a private key and certificate**
 
@@ -400,7 +415,7 @@ try RorkSigner.signHostedBundleWithCredential(
 
 Hosted signing temporarily signs a copied host executable as the root
 executable, signs the original executable as loose code, then restores the
-guest `Info.plist` and removes the temporary stub. Use standalone signing
+guest `Info.plist` and removes the temporary stub. Use app signing
 instead when the output must be installed and launched directly.
 
 Read a team id from a provisioning profile:
@@ -414,10 +429,10 @@ print(profile.authorizedBundleIdentifier ?? "unknown")
 print(profile.usesWildcardBundleIdentifier)
 ```
 
-Preview the provisioning profiles needed for standalone app signing:
+Preview the provisioning profiles needed for app signing:
 
 ```swift
-let inspection = try RorkSigner.inspectStandaloneBundle(
+let inspection = try RorkSigner.inspectApp(
     at: URL(fileURLWithPath: "Demo.app"),
     replacementBundleIdentifier: "com.example.demo"
 )
@@ -425,6 +440,28 @@ let inspection = try RorkSigner.inspectStandaloneBundle(
 for requirement in inspection.provisioningRequirements {
     print("\(requirement.relativePath): \(requirement.rewrittenBundleIdentifier)")
 }
+```
+
+Sign an IPA and read bundle-local entitlements when unsigned
+executables have no embedded entitlement slot:
+
+```swift
+let profileData = try Data(contentsOf: URL(fileURLWithPath: "app.mobileprovision"))
+let identity = try SigningIdentity(
+    pkcs12Data: Data(contentsOf: URL(fileURLWithPath: "dev.p12")),
+    password: "password"
+)
+
+try RorkSigner.signIPA(
+    at: URL(fileURLWithPath: "Demo.ipa"),
+    outputURL: URL(fileURLWithPath: "output.ipa"),
+    identity: identity,
+    options: AppSigningOptions(
+        bundleIdentifier: "com.example.demo",
+        rootProvisioningProfile: profileData,
+        entitlementsResourceName: "Entitlements.plist"
+    )
+)
 ```
 
 Validate a profile/private-key pair before signing:
@@ -505,15 +542,15 @@ RKBundleSigningReport *frameworkReport =
                                        error:&error];
 ```
 
-Inspect a standalone app before signing:
+Inspect an app before signing:
 
 ```objc
-RKStandaloneBundleInspectionReport *inspection =
-    [signer inspectStandaloneBundleAtURL:bundleURL
-             replacementBundleIdentifier:@"com.example.demo"
-                                   error:&error];
+RKAppInspectionReport *inspection =
+    [signer inspectAppAtURL:bundleURL
+replacementBundleIdentifier:@"com.example.demo"
+                      error:&error];
 
-for (RKStandaloneBundleProvisioningRequirement *requirement
+for (RKAppProvisioningRequirement *requirement
         in inspection.provisioningRequirements) {
     NSLog(@"%@: %@", requirement.relativePath, requirement.rewrittenBundleIdentifier);
 }
@@ -550,7 +587,7 @@ The compatibility command implements the ZSign public CLI flag set:
 | Signing mode | `-a/--adhoc`, `-2/--sha256_only` |
 | Output | `-o/--output`, `-z/--zip_level`, `-t/--temp_folder`, `-i/--install` |
 | Bundle edits | `-b/--bundle_id`, `-n/--bundle_name`, `-r/--bundle_version`, `-M/--min_version`, `-S/--enable_docs` |
-| Entitlements/profile handling | `-e/--entitlements`, `-R/--rm_provision` |
+| Entitlements/profile handling | `-e/--entitlements`, `--entitlements-resource`, `-R/--rm_provision` |
 | Dylib edits | `-l/--dylib`, `-D/--rm_dylib`, `-w/--weak` |
 | Cleanup | `-E/--rm_extensions`, `-W/--rm_watch`, `-U/--rm_uisd` |
 | Inspection/debugging | `-C/--check`, `-x/--metadata`, `-d/--debug`, `-f/--force`, `-V/--verbose`, `-q/--quiet`, `-v/--version`, `-h/--help` |
@@ -587,7 +624,7 @@ sealed, and archived paths.
 
 The library is silent by default. Swift callers can pass `SigningDiagnostics`
 with a SwiftLog `Logger` through `BundleSigningOptions` or
-`StandaloneBundleSigningOptions`:
+`AppSigningOptions`:
 
 ```swift
 import Foundation
@@ -646,10 +683,7 @@ rorksign identity-sign-bundle-profile-key <bundle-path> <profile-path> <credenti
 rorksign identity-sign-ipa <input-ipa> <output-ipa> <cert-pem> <private-key-pem> [--password <password>]
 rorksign identity-sign-ipa-p12 <input-ipa> <output-ipa> <p12-path> <password>
 rorksign identity-sign-ipa-profile-key <input-ipa> <output-ipa> <profile-path> <credential-path> <password>
-rorksign sign ipa --input <input-ipa> --output <output-ipa> --bundle-id <bundle-id> --profile-map <profile-map-json> --certificate <cert-path> --key <credential-path> [--password <password>] [--app-groups <group,...>] [--bundle-name <name>]
-rorksign standalone-sign-ipa-adhoc <input-ipa> <output-ipa> <bundle-id> <profile-path>
-rorksign standalone-sign-ipa-p12 <input-ipa> <output-ipa> <bundle-id> <profile-path> <p12-path> <password>
-rorksign standalone-sign-ipa-profile-key <input-ipa> <output-ipa> <bundle-id> <profile-path> <credential-path> <password>
+rorksign sign ipa --input <input-ipa> --output <output-ipa> --bundle-id <bundle-id> --profile-map <profile-map-json> --certificate <cert-path> --key <credential-path> [--password <password>] [--app-groups <group,...>] [--bundle-name <name>] [--entitlements-resource <name>]
 rorksign seal-resources <bundle-path>
 rorksign verify-resources <bundle-path>
 rorksign team-id <profile-path> <credential-path> <password>
@@ -695,7 +729,7 @@ swift build -c release
 The test suite uses synthetic Mach-O fixtures and temporary app/IPA bundles. It
 asserts load-command mutations, SuperBlob indexes, CodeDirectory hash families,
 entitlement slots, resource-directory hashes, CMS embedding, universal slice
-rewrites, bundle signing order, standalone bundle rewriting, CodeResources
+rewrites, bundle signing order, app signing, CodeResources
 verification, PKCS#12 import, OCSP parsing, and CLI behavior.
 
 Some identity and CMS tests call OpenSSL as an external compatibility oracle

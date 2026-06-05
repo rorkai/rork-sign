@@ -126,7 +126,7 @@ public struct MachOCMSCodeDirectory: Equatable {
 /// Apple signatures can carry multiple CodeDirectories. The default signing
 /// mode keeps the broad compatibility shape used by existing signers: a
 /// SHA-1 primary CodeDirectory plus a SHA-256 alternate CodeDirectory. Some
-/// standalone install flows intentionally use a single SHA-256 primary
+/// independent app-signing flows intentionally use a single SHA-256 primary
 /// CodeDirectory so the signed app does not depend on a legacy SHA-1 cdhash.
 public enum CodeDirectoryHashingMode: Equatable {
     /// Emit a SHA-1 primary CodeDirectory and a SHA-256 alternate CodeDirectory.
@@ -139,7 +139,7 @@ public enum CodeDirectoryHashingMode: Equatable {
 
     /// Emit one SHA-256 primary CodeDirectory and no alternate CodeDirectory.
     ///
-    /// This is the default for standalone app rewriting/signing when callers
+    /// This is the default for app rewriting/signing when callers
     /// want independently installable apps to avoid a legacy SHA-1 cdhash.
     /// Identity-backed CMS signatures sign the SHA-256 primary directory and
     /// record that same cdhash as the sole Apple-private cdhash.
@@ -1309,8 +1309,8 @@ public struct IPAArchiveSigningReport: Equatable {
     public let cachedCodePaths: [String]
 }
 
-/// Role of a provisioned bundle found during standalone app inspection.
-public enum StandaloneBundleProvisioningKind: String, Equatable {
+/// Role of a provisioned bundle found during app-signing inspection.
+public enum AppProvisioningKind: String, Equatable {
     /// The root `.app` bundle passed to the inspector or signer.
     case rootApp
 
@@ -1326,11 +1326,11 @@ public enum StandaloneBundleProvisioningKind: String, Equatable {
 
 /// One app-style bundle that may need a provisioning profile after rewriting.
 ///
-/// Standalone signing can re-home an app under a new root bundle identifier.
+/// App signing can re-home an app under a new root bundle identifier.
 /// This value describes the identifier that is currently on disk and the
-/// identifier that standalone signing would write before selecting profiles and
+/// identifier that app signing would write before selecting profiles and
 /// entitlements.
-public struct StandaloneBundleProvisioningRequirement: Equatable {
+public struct AppProvisioningRequirement: Equatable {
     /// Bundle URL on disk.
     public let url: URL
 
@@ -1340,11 +1340,11 @@ public struct StandaloneBundleProvisioningRequirement: Equatable {
     /// Bundle identifier currently stored in `Info.plist`.
     public let originalBundleIdentifier: String
 
-    /// Bundle identifier standalone signing would write before signing.
+    /// Bundle identifier app signing would write before signing.
     public let rewrittenBundleIdentifier: String
 
     /// Provisioning role for this bundle.
-    public let kind: StandaloneBundleProvisioningKind
+    public let kind: AppProvisioningKind
 
     /// Whether this bundle is detected as an Apple Watch app.
     public let isWatchBundle: Bool
@@ -1361,7 +1361,7 @@ public struct StandaloneBundleProvisioningRequirement: Equatable {
         relativePath: String,
         originalBundleIdentifier: String,
         rewrittenBundleIdentifier: String,
-        kind: StandaloneBundleProvisioningKind,
+        kind: AppProvisioningKind,
         isWatchBundle: Bool,
         associatedBundleIdentifier: String?,
         executableName: String?
@@ -1377,12 +1377,11 @@ public struct StandaloneBundleProvisioningRequirement: Equatable {
     }
 }
 
-/// Read-only standalone app inspection report.
+/// Read-only app-signing inspection report.
 ///
 /// The report does not mutate the bundle. It lets callers preview which bundle
-/// identifiers will need provisioning profiles before calling
-/// `signStandaloneBundle*` or `signStandaloneIPA*`.
-public struct StandaloneBundleInspectionReport: Equatable {
+/// identifiers will need provisioning profiles before app signing.
+public struct AppInspectionReport: Equatable {
     /// Root app bundle that was inspected.
     public let rootBundleURL: URL
 
@@ -1392,8 +1391,8 @@ public struct StandaloneBundleInspectionReport: Equatable {
     /// Replacement root bundle identifier used for the inspection.
     public let replacementBundleIdentifier: String
 
-    /// Provisioned app-style bundles found in standalone signing order.
-    public let provisioningRequirements: [StandaloneBundleProvisioningRequirement]
+    /// Provisioned app-style bundles found in app-signing order.
+    public let provisioningRequirements: [AppProvisioningRequirement]
 
     /// Rewritten bundle identifiers that need root/per-bundle profile coverage.
     public var rewrittenBundleIdentifiers: [String] {
@@ -1414,12 +1413,12 @@ public struct StandaloneBundleInspectionReport: Equatable {
             .map(\.rewrittenBundleIdentifier)
     }
 
-    /// Creates a standalone inspection report.
+    /// Creates an app inspection report.
     public init(
         rootBundleURL: URL,
         rootBundleIdentifier: String,
         replacementBundleIdentifier: String,
-        provisioningRequirements: [StandaloneBundleProvisioningRequirement]
+        provisioningRequirements: [AppProvisioningRequirement]
     ) {
         self.rootBundleURL = rootBundleURL
         self.rootBundleIdentifier = rootBundleIdentifier
@@ -1482,7 +1481,7 @@ public struct BundleSigningOptions: Equatable {
     /// Whether profiles in `provisioningProfilesByBundleIdentifier` are written
     /// as `embedded.mobileprovision` before resource sealing.
     ///
-    /// Standalone app signing needs this enabled because the resulting app must
+    /// App signing needs this enabled because the resulting app must
     /// be independently installable. Preserve-identifier signing can leave this
     /// disabled while still using the profile for entitlements and certificate
     /// authorization. When disabled, any existing `embedded.mobileprovision`
@@ -1493,7 +1492,7 @@ public struct BundleSigningOptions: Equatable {
     /// CodeDirectory digest layout used for every Mach-O signed in this bundle.
     ///
     /// Regular bundle signing defaults to `.compatible` so ordinary re-signing
-    /// keeps the broadest validation shape. Standalone signing constructs these
+    /// keeps the broadest validation shape. App signing constructs these
     /// options with `.sha256Only` unless the caller overrides it there.
     public var codeDirectoryHashingMode: CodeDirectoryHashingMode
 
@@ -1637,14 +1636,14 @@ public struct FrameworkSigningOptions: Equatable {
 ///
 /// Hosted signing is for specialized runtimes that copy a guest bundle but load
 /// its code from an already-installed host app or extension instead of
-/// installing the copied bundle as a standalone app. The signer temporarily
+/// installing the copied bundle as an independent app. The signer temporarily
 /// points `CFBundleExecutable` and `CFBundleIdentifier` at the host executable
 /// and host bundle identifier for the signing pass, then restores the original
 /// `Info.plist` and removes the copied host stub.
 ///
-/// The final bundle is intentionally not standalone-installable: its restored
+/// The final bundle is intentionally not directly installable: its restored
 /// `Info.plist` no longer matches the temporary root executable signature.
-/// Use `signStandaloneBundle*` APIs when the output must be installed and
+/// Use `signBundle` with `AppSigningOptions` when the output must be installed and
 /// launched directly by iOS.
 public struct HostedBundleSigningOptions: Equatable {
     /// Executable from the host app or extension used as the temporary signing stub.
@@ -2486,16 +2485,16 @@ public enum RorkSigner {
         provisioningProfile.explicitAuthorizedBundleIdentifier
     }
 
-    /// Inspects a copied app bundle before standalone signing mutates it.
+    /// Inspects a copied app bundle before app signing mutates it.
     ///
     /// The report previews the root and nested bundle identifiers that
-    /// standalone signing would write for `replacementBundleIdentifier`. It does
+    /// app signing would write for `replacementBundleIdentifier`. It does
     /// not validate provisioning profiles and does not change files on disk.
-    public static func inspectStandaloneBundle(
+    public static func inspectApp(
         at bundleURL: URL,
         replacementBundleIdentifier: String
-    ) throws -> StandaloneBundleInspectionReport {
-        try StandaloneBundleInspector.inspect(
+    ) throws -> AppInspectionReport {
+        try AppBundleInspector.inspect(
             rootBundleURL: bundleURL,
             replacementBundleIdentifier: replacementBundleIdentifier
         )
@@ -2637,7 +2636,7 @@ public enum RorkSigner {
     ///
     /// By default the profile is used for entitlements and certificate
     /// authorization but is not embedded into the bundle, matching the existing
-    /// non-standalone signer behavior. Profile entitlements are expanded to the
+    /// preserve-identifier signer behavior. Profile entitlements are expanded to the
     /// bundle identifiers on disk so wildcard or host-profile App IDs do not
     /// leak into the signed executable. Set `embedProvisioningProfile` when the
     /// output bundle should carry `embedded.mobileprovision`; embedded profiles
@@ -2816,7 +2815,7 @@ public enum RorkSigner {
         )
     }
 
-    /// Rewrites and signs an app as a standalone bundle with ad-hoc signatures.
+    /// Rewrites and signs an app bundle with ad-hoc signatures.
     ///
     /// This is the app-level flow used when a copied app must become its own
     /// installable app under a new root bundle identifier. The method rewrites
@@ -2826,17 +2825,17 @@ public enum RorkSigner {
     /// fallback for embedded Watch apps, and then performs the regular
     /// inside-out signing pass.
     @discardableResult
-    public static func signStandaloneBundleAdHoc(
+    public static func signBundle(
         at bundleURL: URL,
-        options: StandaloneBundleSigningOptions
+        options: AppSigningOptions
     ) throws -> BundleSigningReport {
-        try StandaloneBundleSigner.signAdHoc(
+        try AppBundleSigner.signAdHoc(
             bundleURL: bundleURL,
             options: options
         )
     }
 
-    /// Rewrites and signs an app as a standalone bundle with CMS signatures.
+    /// Rewrites and signs an app bundle with CMS signatures.
     ///
     /// The supplied `identity` must be authorized by every provisioning profile
     /// in `options`, including the optional Watch fallback profile. The returned
@@ -2844,78 +2843,49 @@ public enum RorkSigner {
     /// rewrites happen before that pass and are visible on disk immediately when
     /// the method succeeds.
     @discardableResult
-    public static func signStandaloneBundleWithIdentity(
+    public static func signBundle(
         at bundleURL: URL,
         identity: SigningIdentity,
-        options: StandaloneBundleSigningOptions
+        options: AppSigningOptions
     ) throws -> BundleSigningReport {
-        try StandaloneBundleSigner.signWithIdentity(
+        try AppBundleSigner.signWithIdentity(
             bundleURL: bundleURL,
             identity: identity,
             options: options
         )
     }
 
-    /// Rewrites and signs a standalone bundle with a profile/credential pair.
+    /// Rewrites and signs an app bundle with a profile/credential pair.
     ///
     /// The root profile and credential create the signing identity, optional
     /// per-bundle profiles cover app extensions or embedded apps, and
     /// `watchProvisioningProfileData` supplies a Watch fallback profile used for
-    /// embedded Watch apps. Metadata and cleanup options mirror the standalone
-    /// options type. The standalone pass always embeds the selected profiles
-    /// before sealing resources. When `rootEntitlementsXML` is non-empty, it
+    /// embedded Watch apps. Metadata and cleanup options come from
+    /// `options`. The app-signing pass always embeds the selected profiles
+    /// before sealing resources. When `options.rootEntitlementsXML` is non-empty, it
     /// is embedded into the rewritten root executable instead of the root
     /// profile's entitlement dictionary.
     @discardableResult
-    public static func signStandaloneBundleWithCredential(
+    public static func signBundle(
         at bundleURL: URL,
         provisioningProfileData: Data,
         credentialData: Data,
         password: String = "",
-        bundleIdentifier: String,
-        provisioningProfilesByBundleIdentifier: [String: Data] = [:],
-        watchProvisioningProfileData: Data? = nil,
-        appGroupIdentifiers: [String] = [],
-        rootEntitlementsXML: String = "",
-        displayName: String? = nil,
-        bundleVersion: String? = nil,
-        minimumOSVersion: String? = nil,
-        enableDocuments: Bool = false,
-        removeExtensions: Bool = false,
-        removeWatchApps: Bool = false,
-        removeUISupportedDevices: Bool = false,
-        embedProvisioningProfiles: Bool = true,
-        dylibInjections: [BundleDylibInjection] = [],
-        dylibLoadCommandsToRemove: [String] = [],
-        codeDirectoryHashingMode: CodeDirectoryHashingMode = .sha256Only
+        options: AppSigningOptions
     ) throws -> BundleSigningReport {
         let identity = try SigningIdentity(
             provisioningProfileData: provisioningProfileData,
             credentialData: credentialData,
             password: password
         )
-        return try signStandaloneBundleWithIdentity(
+        var resolvedOptions = options
+        if resolvedOptions.rootProvisioningProfile == nil {
+            resolvedOptions.rootProvisioningProfile = provisioningProfileData
+        }
+        return try signBundle(
             at: bundleURL,
             identity: identity,
-            options: StandaloneBundleSigningOptions(
-                bundleIdentifier: bundleIdentifier,
-                rootProvisioningProfile: provisioningProfileData,
-                watchProvisioningProfile: watchProvisioningProfileData,
-                provisioningProfilesByBundleIdentifier: provisioningProfilesByBundleIdentifier,
-                appGroupIdentifiers: appGroupIdentifiers,
-                rootEntitlementsXML: rootEntitlementsXML,
-                displayName: displayName,
-                bundleVersion: bundleVersion,
-                minimumOSVersion: minimumOSVersion,
-                enableDocuments: enableDocuments,
-                removeExtensions: removeExtensions,
-                removeWatchApps: removeWatchApps,
-                removeUISupportedDevices: removeUISupportedDevices,
-                embedProvisioningProfiles: embedProvisioningProfiles,
-                dylibInjections: dylibInjections,
-                dylibLoadCommandsToRemove: dylibLoadCommandsToRemove,
-                codeDirectoryHashingMode: codeDirectoryHashingMode
-            )
+            options: resolvedOptions
         )
     }
 
@@ -2960,16 +2930,16 @@ public enum RorkSigner {
         )
     }
 
-    /// Rewrites and signs the app inside an IPA as a standalone ad-hoc app.
+    /// Rewrites and signs the app inside an IPA with ad-hoc signatures.
     @discardableResult
-    public static func signStandaloneIPAAdHoc(
+    public static func signIPA(
         at archiveURL: URL,
         outputURL: URL,
-        options: StandaloneBundleSigningOptions,
+        options: AppSigningOptions,
         archiveCompressionMode: ArchiveCompressionMode = .stored,
         temporaryDirectory: URL? = nil
     ) throws -> IPAArchiveSigningReport {
-        try IPAArchiveSigner.signStandaloneAdHoc(
+        try IPAArchiveSigner.signAppAdHoc(
             archiveURL: archiveURL,
             outputURL: outputURL,
             options: options,
@@ -2978,17 +2948,17 @@ public enum RorkSigner {
         )
     }
 
-    /// Rewrites and signs the app inside an IPA as a standalone CMS-signed app.
+    /// Rewrites and signs the app inside an IPA with CMS signatures.
     @discardableResult
-    public static func signStandaloneIPAWithIdentity(
+    public static func signIPA(
         at archiveURL: URL,
         outputURL: URL,
         identity: SigningIdentity,
-        options: StandaloneBundleSigningOptions,
+        options: AppSigningOptions,
         archiveCompressionMode: ArchiveCompressionMode = .stored,
         temporaryDirectory: URL? = nil
     ) throws -> IPAArchiveSigningReport {
-        try IPAArchiveSigner.signStandaloneWithIdentity(
+        try IPAArchiveSigner.signAppWithIdentity(
             archiveURL: archiveURL,
             outputURL: outputURL,
             identity: identity,
@@ -3001,35 +2971,18 @@ public enum RorkSigner {
     /// Rewrites and signs the app inside an IPA with a profile/credential pair.
     ///
     /// This is the archive equivalent of
-    /// `signStandaloneBundleWithCredential(...)`:
-    /// the archive is unpacked, the payload app is rewritten under
-    /// `bundleIdentifier`, selected profiles are embedded and sealed, and the
-    /// app is repacked into `outputURL`. When `rootEntitlementsXML` is
-    /// non-empty, it is embedded into the rewritten root executable instead of
-    /// the root profile's entitlement dictionary.
+    /// `signBundle(at:provisioningProfileData:credentialData:password:options:)`:
+    /// the archive is unpacked, the payload app is rewritten using `options`,
+    /// selected profiles are embedded and sealed, and the app is repacked into
+    /// `outputURL`.
     @discardableResult
-    public static func signStandaloneIPAWithCredential(
+    public static func signIPA(
         at archiveURL: URL,
         outputURL: URL,
         provisioningProfileData: Data,
         credentialData: Data,
         password: String = "",
-        bundleIdentifier: String,
-        provisioningProfilesByBundleIdentifier: [String: Data] = [:],
-        watchProvisioningProfileData: Data? = nil,
-        appGroupIdentifiers: [String] = [],
-        rootEntitlementsXML: String = "",
-        displayName: String? = nil,
-        bundleVersion: String? = nil,
-        minimumOSVersion: String? = nil,
-        enableDocuments: Bool = false,
-        removeExtensions: Bool = false,
-        removeWatchApps: Bool = false,
-        removeUISupportedDevices: Bool = false,
-        embedProvisioningProfiles: Bool = true,
-        dylibInjections: [BundleDylibInjection] = [],
-        dylibLoadCommandsToRemove: [String] = [],
-        codeDirectoryHashingMode: CodeDirectoryHashingMode = .sha256Only,
+        options: AppSigningOptions,
         archiveCompressionMode: ArchiveCompressionMode = .stored,
         temporaryDirectory: URL? = nil
     ) throws -> IPAArchiveSigningReport {
@@ -3038,29 +2991,15 @@ public enum RorkSigner {
             credentialData: credentialData,
             password: password
         )
-        return try signStandaloneIPAWithIdentity(
+        var resolvedOptions = options
+        if resolvedOptions.rootProvisioningProfile == nil {
+            resolvedOptions.rootProvisioningProfile = provisioningProfileData
+        }
+        return try signIPA(
             at: archiveURL,
             outputURL: outputURL,
             identity: identity,
-            options: StandaloneBundleSigningOptions(
-                bundleIdentifier: bundleIdentifier,
-                rootProvisioningProfile: provisioningProfileData,
-                watchProvisioningProfile: watchProvisioningProfileData,
-                provisioningProfilesByBundleIdentifier: provisioningProfilesByBundleIdentifier,
-                appGroupIdentifiers: appGroupIdentifiers,
-                rootEntitlementsXML: rootEntitlementsXML,
-                displayName: displayName,
-                bundleVersion: bundleVersion,
-                minimumOSVersion: minimumOSVersion,
-                enableDocuments: enableDocuments,
-                removeExtensions: removeExtensions,
-                removeWatchApps: removeWatchApps,
-                removeUISupportedDevices: removeUISupportedDevices,
-                embedProvisioningProfiles: embedProvisioningProfiles,
-                dylibInjections: dylibInjections,
-                dylibLoadCommandsToRemove: dylibLoadCommandsToRemove,
-                codeDirectoryHashingMode: codeDirectoryHashingMode
-            ),
+            options: resolvedOptions,
             archiveCompressionMode: archiveCompressionMode,
             temporaryDirectory: temporaryDirectory
         )

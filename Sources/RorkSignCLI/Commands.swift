@@ -5,7 +5,7 @@ import RorkSign
 /// Root `rorksign` command.
 ///
 /// The library remains the primary product. The CLI exists for fixtures,
-/// debugging, and CI scripts that need a standalone signing subprocess.
+/// debugging, and CI scripts that need a signing subprocess.
 struct RorkSignCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "rorksign",
@@ -30,9 +30,6 @@ struct RorkSignCommand: ParsableCommand {
             IdentitySignIPA.self,
             IdentitySignIPAP12.self,
             IdentitySignIPAProfileKey.self,
-            StandaloneSignIPAAdhoc.self,
-            StandaloneSignIPAP12.self,
-            StandaloneSignIPAProfileKey.self,
             SealResources.self,
             VerifyResources.self,
             TeamID.self,
@@ -93,6 +90,9 @@ struct ZSignOptions: ParsableArguments {
 
     @Option(name: [.customShort("e"), .customLong("entitlements")], help: "Path to an entitlements plist.")
     var entitlementsPath: String?
+
+    @Option(name: [.customLong("entitlements-resource")], help: "Bundle-local entitlements plist filename for unsigned app artifacts.")
+    var entitlementsResourceName: String?
 
     @Option(name: [.customShort("o"), .customLong("output")], help: "Path to the output IPA or Mach-O.")
     var outputPath: String?
@@ -162,6 +162,13 @@ struct ZSignOptions: ParsableArguments {
 
     @Argument(help: "Input Mach-O file, app bundle, extracted archive folder, or IPA.")
     var inputPath: String?
+
+    var hasBundledEntitlementsResource: Bool {
+        guard let resourceName = entitlementsResourceName else {
+            return false
+        }
+        return !resourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     func run() throws {
         if shortVersion {
@@ -320,6 +327,9 @@ struct SignIPA: ParsableCommand {
     @Option(name: [.customLong("bundle-name")], help: "Replacement root display name.")
     var bundleName: String?
 
+    @Option(name: [.customLong("entitlements-resource")], help: "Bundle-local entitlements plist filename for unsigned app artifacts.")
+    var entitlementsResourceName: String?
+
     func run() throws {
         let rootBundleIdentifier = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rootBundleIdentifier.isEmpty else {
@@ -338,15 +348,16 @@ struct SignIPA: ParsableCommand {
             credentialPath: credentialPath,
             password: password
         )
-        let report = try RorkSigner.signStandaloneIPAWithIdentity(
+        let report = try RorkSigner.signIPA(
             at: fileURL(input),
             outputURL: fileURL(output),
             identity: identity,
-            options: StandaloneBundleSigningOptions(
+            options: AppSigningOptions(
                 bundleIdentifier: rootBundleIdentifier,
                 rootProvisioningProfile: rootProfile,
                 provisioningProfilesByBundleIdentifier: profiles,
                 appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups),
+                entitlementsResourceName: entitlementsResourceName,
                 displayName: bundleName
             )
         )
@@ -685,101 +696,6 @@ struct IdentitySignIPAProfileKey: ParsableCommand {
                 provisioningProfilesByBundleIdentifier: [
                     bundleIdentifier: profile,
                 ]
-            )
-        )
-        print("app=\(report.appBundlePath) sealed=\(report.sealedBundlePaths.count) signed=\(report.signedCodePaths.count)")
-    }
-}
-
-// MARK: - Standalone IPA signing
-
-struct StandaloneSignIPAAdhoc: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "standalone-sign-ipa-adhoc",
-        abstract: "Ad-hoc sign an IPA as a standalone, rebased app."
-    )
-
-    @Argument(transform: fileURL) var input: URL
-    @Argument(transform: fileURL) var output: URL
-    @Argument var bundleIdentifier: String
-    @Argument var profilePath: String
-    @Argument var appGroups: String?
-
-    func run() throws {
-        let profile = try Data(contentsOf: fileURL(profilePath))
-        let report = try RorkSigner.signStandaloneIPAAdHoc(
-            at: input,
-            outputURL: output,
-            options: StandaloneBundleSigningOptions(
-                bundleIdentifier: bundleIdentifier,
-                rootProvisioningProfile: profile,
-                appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups)
-            )
-        )
-        print("app=\(report.appBundlePath) sealed=\(report.sealedBundlePaths.count) signed=\(report.signedCodePaths.count)")
-    }
-}
-
-struct StandaloneSignIPAP12: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "standalone-sign-ipa-p12",
-        abstract: "Sign an IPA as a standalone, rebased app with a PKCS#12 identity."
-    )
-
-    @Argument(transform: fileURL) var input: URL
-    @Argument(transform: fileURL) var output: URL
-    @Argument var bundleIdentifier: String
-    @Argument var profilePath: String
-    @Argument var pkcs12Path: String
-    @Argument var password: String
-    @Argument var appGroups: String?
-
-    func run() throws {
-        let profile = try Data(contentsOf: fileURL(profilePath))
-        let identity = try CLISupport.readPKCS12Identity(pkcs12Path: pkcs12Path, password: password)
-        let report = try RorkSigner.signStandaloneIPAWithIdentity(
-            at: input,
-            outputURL: output,
-            identity: identity,
-            options: StandaloneBundleSigningOptions(
-                bundleIdentifier: bundleIdentifier,
-                rootProvisioningProfile: profile,
-                appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups)
-            )
-        )
-        print("app=\(report.appBundlePath) sealed=\(report.sealedBundlePaths.count) signed=\(report.signedCodePaths.count)")
-    }
-}
-
-struct StandaloneSignIPAProfileKey: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "standalone-sign-ipa-profile-key",
-        abstract: "Sign an IPA as a standalone, rebased app with a profile and credential key."
-    )
-
-    @Argument(transform: fileURL) var input: URL
-    @Argument(transform: fileURL) var output: URL
-    @Argument var bundleIdentifier: String
-    @Argument var profilePath: String
-    @Argument var credentialPath: String
-    @Argument var password: String
-    @Argument var appGroups: String?
-
-    func run() throws {
-        let profile = try Data(contentsOf: fileURL(profilePath))
-        let identity = try CLISupport.readProfileIdentity(
-            profilePath: profilePath,
-            credentialPath: credentialPath,
-            password: password
-        )
-        let report = try RorkSigner.signStandaloneIPAWithIdentity(
-            at: input,
-            outputURL: output,
-            identity: identity,
-            options: StandaloneBundleSigningOptions(
-                bundleIdentifier: bundleIdentifier,
-                rootProvisioningProfile: profile,
-                appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups)
             )
         )
         print("app=\(report.appBundlePath) sealed=\(report.sealedBundlePaths.count) signed=\(report.signedCodePaths.count)")

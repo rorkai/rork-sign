@@ -1,13 +1,13 @@
 import Foundation
 
-/// Configuration for turning a copied app bundle into a standalone app.
+/// Configuration for rewriting and signing a copied app bundle.
 ///
-/// Standalone signing is stricter than generic bundle signing because the app is
-/// being re-homed under a new bundle identifier. The signer rewrites
+/// App signing is stricter than generic bundle signing because the app is being
+/// re-homed under a new bundle identifier. The signer rewrites
 /// `CFBundleIdentifier` values first, derives entitlements from the selected
 /// provisioning profiles, embeds those profiles, seals resources, and finally
 /// signs the executables.
-public struct StandaloneBundleSigningOptions: Equatable {
+public struct AppSigningOptions: Equatable {
     /// Replacement bundle identifier for the root app.
     public var bundleIdentifier: String
 
@@ -45,6 +45,16 @@ public struct StandaloneBundleSigningOptions: Equatable {
     /// keys remain coherent.
     public var rootEntitlementsXML: String
 
+    /// Bundle-local entitlements plist filename used when an executable has no
+    /// embedded entitlement slot.
+    ///
+    /// The file is treated as the executable's original entitlement request
+    /// before the selected provisioning profile constrains the final values.
+    /// Leave this nil when unsigned artifacts do not carry this resource. When
+    /// set, the value must be a plain filename in each bundle directory, such
+    /// as `Entitlements.plist`.
+    public var entitlementsResourceName: String?
+
     /// Replacement display name for the root app.
     ///
     /// When set, the signer writes both `CFBundleName` and
@@ -78,7 +88,7 @@ public struct StandaloneBundleSigningOptions: Equatable {
 
     /// Whether selected provisioning profiles are embedded before resource sealing.
     ///
-    /// This defaults to `true` because standalone app outputs normally need an
+    /// This defaults to `true` because installable app outputs normally need an
     /// embedded provisioning profile. Compatibility workflows can disable it to
     /// mirror `--rm_provision`, in which case profile-derived entitlements are
     /// still used for signing but no `embedded.mobileprovision` file is sealed
@@ -94,7 +104,7 @@ public struct StandaloneBundleSigningOptions: Equatable {
 
     /// CodeDirectory digest layout used for every Mach-O in the rewritten app.
     ///
-    /// Standalone apps default to `.sha256Only` so independently installable
+    /// App signing defaults to `.sha256Only` so independently installable
     /// apps avoid a legacy SHA-1 cdhash. Override this only when a caller needs
     /// the broader SHA-1-primary compatibility shape for a fixture or
     /// diagnostic artifact.
@@ -105,11 +115,11 @@ public struct StandaloneBundleSigningOptions: Equatable {
 
     /// Optional logger-backed diagnostics for the rewrite and signing pass.
     ///
-    /// Diagnostics are forwarded to the underlying bundle signer after
-    /// standalone metadata, profiles, and entitlements have been prepared.
+    /// Diagnostics are forwarded to the underlying bundle signer after app
+    /// metadata, profiles, and entitlements have been prepared.
     public var diagnostics: SigningDiagnostics
 
-    /// Creates standalone signing options.
+    /// Creates app signing options.
     public init(
         bundleIdentifier: String,
         rootProvisioningProfile: Data? = nil,
@@ -117,6 +127,7 @@ public struct StandaloneBundleSigningOptions: Equatable {
         provisioningProfilesByBundleIdentifier: [String: Data] = [:],
         appGroupIdentifiers: [String] = [],
         rootEntitlementsXML: String = "",
+        entitlementsResourceName: String? = nil,
         displayName: String? = nil,
         bundleVersion: String? = nil,
         minimumOSVersion: String? = nil,
@@ -137,6 +148,7 @@ public struct StandaloneBundleSigningOptions: Equatable {
         self.provisioningProfilesByBundleIdentifier = provisioningProfilesByBundleIdentifier
         self.appGroupIdentifiers = appGroupIdentifiers
         self.rootEntitlementsXML = rootEntitlementsXML
+        self.entitlementsResourceName = entitlementsResourceName
         self.displayName = displayName
         self.bundleVersion = bundleVersion
         self.minimumOSVersion = minimumOSVersion
@@ -154,8 +166,8 @@ public struct StandaloneBundleSigningOptions: Equatable {
 
     /// Compares semantic signing inputs while ignoring the diagnostics sink.
     public static func == (
-        lhs: StandaloneBundleSigningOptions,
-        rhs: StandaloneBundleSigningOptions
+        lhs: AppSigningOptions,
+        rhs: AppSigningOptions
     ) -> Bool {
         lhs.bundleIdentifier == rhs.bundleIdentifier
             && lhs.rootProvisioningProfile == rhs.rootProvisioningProfile
@@ -163,6 +175,7 @@ public struct StandaloneBundleSigningOptions: Equatable {
             && lhs.provisioningProfilesByBundleIdentifier == rhs.provisioningProfilesByBundleIdentifier
             && lhs.appGroupIdentifiers == rhs.appGroupIdentifiers
             && lhs.rootEntitlementsXML == rhs.rootEntitlementsXML
+            && lhs.entitlementsResourceName == rhs.entitlementsResourceName
             && lhs.displayName == rhs.displayName
             && lhs.bundleVersion == rhs.bundleVersion
             && lhs.minimumOSVersion == rhs.minimumOSVersion
@@ -179,11 +192,11 @@ public struct StandaloneBundleSigningOptions: Equatable {
 }
 
 /// Rewrites bundle identity and delegates the final inside-out signing pass.
-enum StandaloneBundleSigner {
+enum AppBundleSigner {
     /// Rewrites `bundleURL` and applies ad-hoc signatures.
     static func signAdHoc(
         bundleURL: URL,
-        options: StandaloneBundleSigningOptions
+        options: AppSigningOptions
     ) throws -> BundleSigningReport {
         let profiles = try provisioningAssets(options: options, identity: nil)
         let bundleSigningOptions = try prepareBundleSigningOptions(
@@ -198,7 +211,7 @@ enum StandaloneBundleSigner {
     static func signWithIdentity(
         bundleURL: URL,
         identity: SigningIdentity,
-        options: StandaloneBundleSigningOptions
+        options: AppSigningOptions
     ) throws -> BundleSigningReport {
         let profiles = try provisioningAssets(options: options, identity: identity)
         let effectiveIdentity = try profiles.signingIdentity(for: identity)
@@ -215,10 +228,10 @@ enum StandaloneBundleSigner {
     }
 
     private static func provisioningAssets(
-        options: StandaloneBundleSigningOptions,
+        options: AppSigningOptions,
         identity: SigningIdentity?
-    ) throws -> StandaloneProvisioningAssets {
-        try StandaloneProvisioningAssets(
+    ) throws -> AppProvisioningAssets {
+        try AppProvisioningAssets(
             rootProvisioningProfile: options.rootProvisioningProfile,
             watchProvisioningProfile: options.watchProvisioningProfile,
             provisioningProfilesByBundleIdentifier: options.provisioningProfilesByBundleIdentifier,
@@ -229,11 +242,11 @@ enum StandaloneBundleSigner {
     /// Performs the mutation-only phase and returns assets for `BundleSigner`.
     private static func prepareBundleSigningOptions(
         bundleURL: URL,
-        options: StandaloneBundleSigningOptions,
-        profiles: StandaloneProvisioningAssets
+        options: AppSigningOptions,
+        profiles: AppProvisioningAssets
     ) throws -> BundleSigningOptions {
         let replacementIdentifier = try BundleIdentifier.normalize(options.bundleIdentifier)
-        let rewrittenBundles = try StandaloneBundleIdentityRewriter.rewrite(
+        let rewrittenBundles = try AppBundleIdentityRewriter.rewrite(
             rootBundleURL: bundleURL,
             replacementBundleIdentifier: replacementIdentifier,
             options: options
@@ -288,14 +301,14 @@ enum StandaloneBundleSigner {
     }
 }
 
-/// Read-only standalone bundle inspection entry point.
-enum StandaloneBundleInspector {
+/// Read-only app bundle inspection entry point.
+enum AppBundleInspector {
     /// Returns the identifier rewrite plan for `rootBundleURL` without changing files.
     static func inspect(
         rootBundleURL: URL,
         replacementBundleIdentifier: String
-    ) throws -> StandaloneBundleInspectionReport {
-        try StandaloneBundleIdentityRewriter.inspect(
+    ) throws -> AppInspectionReport {
+        try AppBundleIdentityRewriter.inspect(
             rootBundleURL: rootBundleURL,
             replacementBundleIdentifier: replacementBundleIdentifier
         )
@@ -303,7 +316,7 @@ enum StandaloneBundleInspector {
 }
 
 /// One provisioned bundle after identifier rewriting.
-private struct StandaloneBundleDescriptor: Equatable {
+private struct AppBundleDescriptor: Equatable {
     let url: URL
     let originalIdentifier: String
     let rewrittenIdentifier: String
@@ -314,17 +327,17 @@ private struct StandaloneBundleDescriptor: Equatable {
 }
 
 /// Rewrites app and extension identifiers before resources are sealed.
-private enum StandaloneBundleIdentityRewriter {
+private enum AppBundleIdentityRewriter {
     /// Reads root and nested bundle metadata without changing files on disk.
     static func inspect(
         rootBundleURL: URL,
         replacementBundleIdentifier: String
-    ) throws -> StandaloneBundleInspectionReport {
+    ) throws -> AppInspectionReport {
         let replacementIdentifier = try BundleIdentifier.normalize(replacementBundleIdentifier)
         let rootInfo = try MutableInfoPlist(url: rootBundleURL.appendingPathComponent("Info.plist"))
         let originalRootIdentifier = try rootInfo.requireBundleIdentifier(bundleURL: rootBundleURL)
 
-        var requirements: [StandaloneBundleProvisioningRequirement] = [
+        var requirements: [AppProvisioningRequirement] = [
             try inspectOneBundle(
                 bundleURL: rootBundleURL,
                 originalRootIdentifier: originalRootIdentifier,
@@ -346,7 +359,7 @@ private enum StandaloneBundleIdentityRewriter {
             )
         }
 
-        return StandaloneBundleInspectionReport(
+        return AppInspectionReport(
             rootBundleURL: rootBundleURL,
             rootBundleIdentifier: originalRootIdentifier,
             replacementBundleIdentifier: replacementIdentifier,
@@ -362,15 +375,15 @@ private enum StandaloneBundleIdentityRewriter {
     static func rewrite(
         rootBundleURL: URL,
         replacementBundleIdentifier: String,
-        options: StandaloneBundleSigningOptions
-    ) throws -> [StandaloneBundleDescriptor] {
-        try StandaloneBundleContentPruner.apply(options: options, rootBundleURL: rootBundleURL)
+        options: AppSigningOptions
+    ) throws -> [AppBundleDescriptor] {
+        try AppBundleContentPruner.apply(options: options, rootBundleURL: rootBundleURL)
 
         let rootInfoURL = rootBundleURL.appendingPathComponent("Info.plist")
         let rootInfo = try MutableInfoPlist(url: rootInfoURL)
         let originalRootIdentifier = try rootInfo.requireBundleIdentifier(bundleURL: rootBundleURL)
 
-        var descriptors: [StandaloneBundleDescriptor] = []
+        var descriptors: [AppBundleDescriptor] = []
         descriptors.append(
             try rewriteOneBundle(
                 bundleURL: rootBundleURL,
@@ -403,7 +416,7 @@ private enum StandaloneBundleIdentityRewriter {
         replacementRootIdentifier: String,
         isRoot: Bool,
         rootBundleURL: URL
-    ) throws -> StandaloneBundleProvisioningRequirement {
+    ) throws -> AppProvisioningRequirement {
         let info = try MutableInfoPlist(url: bundleURL.appendingPathComponent("Info.plist"))
         let originalIdentifier = try info.requireBundleIdentifier(bundleURL: bundleURL)
         let rewrittenIdentifier: String
@@ -428,7 +441,7 @@ private enum StandaloneBundleIdentityRewriter {
         let reportURL = isRoot
             ? rootBundleURL
             : rootBundleURL.appendingPathComponent(bundleRelativePath, isDirectory: true)
-        return StandaloneBundleProvisioningRequirement(
+        return AppProvisioningRequirement(
             url: reportURL,
             relativePath: bundleRelativePath,
             originalBundleIdentifier: originalIdentifier,
@@ -450,8 +463,8 @@ private enum StandaloneBundleIdentityRewriter {
         originalRootIdentifier: String,
         replacementRootIdentifier: String,
         isRoot: Bool,
-        options: StandaloneBundleSigningOptions
-    ) throws -> StandaloneBundleDescriptor {
+        options: AppSigningOptions
+    ) throws -> AppBundleDescriptor {
         var info = try MutableInfoPlist(url: bundleURL.appendingPathComponent("Info.plist"))
         let originalIdentifier = try info.requireBundleIdentifier(bundleURL: bundleURL)
         let rewrittenIdentifier: String
@@ -483,15 +496,15 @@ private enum StandaloneBundleIdentityRewriter {
             with: replacementRootIdentifier
         )
         if isRoot {
-            try StandaloneRootInfoRewriter.apply(options: options, info: &info)
-            try StandaloneLocalizedNameRewriter.apply(
+            try AppRootInfoRewriter.apply(options: options, info: &info)
+            try AppLocalizedNameRewriter.apply(
                 displayName: options.displayName,
                 rootBundleURL: bundleURL
             )
         }
         try info.write()
 
-        return StandaloneBundleDescriptor(
+        return AppBundleDescriptor(
             url: bundleURL,
             originalIdentifier: originalIdentifier,
             rewrittenIdentifier: rewrittenIdentifier,
@@ -500,7 +513,7 @@ private enum StandaloneBundleIdentityRewriter {
                 originalRootIdentifier: originalRootIdentifier,
                 replacementRootIdentifier: replacementRootIdentifier
             ),
-            originalEntitlementsXML: try originalEntitlementsXML(bundleURL: bundleURL, info: info),
+            originalEntitlementsXML: try originalEntitlementsXML(bundleURL: bundleURL, info: info, options: options),
             isProvisionedBundle: isProvisionedBundle(bundleURL),
             isWatchBundle: isWatchBundle(info: info.dictionary, bundleURL: bundleURL)
         )
@@ -537,7 +550,11 @@ private enum StandaloneBundleIdentityRewriter {
 
     /// Reads the executable's current entitlement slot before the final signer
     /// overwrites it.
-    private static func originalEntitlementsXML(bundleURL: URL, info: MutableInfoPlist) throws -> String {
+    private static func originalEntitlementsXML(
+        bundleURL: URL,
+        info: MutableInfoPlist,
+        options: AppSigningOptions
+    ) throws -> String {
         guard let executableName = info.trimmedString(forKey: "CFBundleExecutable") else {
             return ""
         }
@@ -549,7 +566,39 @@ private enum StandaloneBundleIdentityRewriter {
         guard FileManager.default.fileExists(atPath: executableURL.path) else {
             return ""
         }
-        return try MachOSigner.readEntitlementsXML(Data(contentsOf: executableURL))
+        let executableEntitlementsXML = try MachOSigner.readEntitlementsXML(Data(contentsOf: executableURL))
+        if !executableEntitlementsXML.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return executableEntitlementsXML
+        }
+        return try bundledEntitlementsXML(
+            bundleURL: bundleURL,
+            resourceName: options.entitlementsResourceName
+        )
+    }
+
+    /// Reads the entitlement request bundled with unsigned host artifacts.
+    private static func bundledEntitlementsXML(bundleURL: URL, resourceName: String?) throws -> String {
+        guard let rawResourceName = resourceName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawResourceName.isEmpty else {
+            return ""
+        }
+        guard !rawResourceName.contains("/"), !rawResourceName.contains("\\") else {
+            throw RorkSignError.invalidEntitlements(
+                "Entitlement request resource name must be a plain filename: \(rawResourceName)."
+            )
+        }
+
+        let entitlementsURL = bundleURL.appendingPathComponent(rawResourceName)
+        guard FileManager.default.fileExists(atPath: entitlementsURL.path) else {
+            return ""
+        }
+
+        let data = try Data(contentsOf: entitlementsURL)
+        let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+        guard let dictionary = plist as? [String: Any] else {
+            throw RorkSignError.invalidEntitlements("\(rawResourceName) must contain a dictionary.")
+        }
+        return try EntitlementPlist.xml(from: dictionary)
     }
 
     /// Returns whether a bundle can carry an embedded provisioning profile.
@@ -579,7 +628,7 @@ private enum StandaloneBundleIdentityRewriter {
         isRoot: Bool,
         bundleURL: URL,
         isWatchBundle: Bool
-    ) -> StandaloneBundleProvisioningKind {
+    ) -> AppProvisioningKind {
         if isRoot {
             return .rootApp
         }
@@ -612,9 +661,9 @@ private enum StandaloneBundleIdentityRewriter {
 }
 
 /// Removes optional bundle content before nested bundles are discovered.
-private enum StandaloneBundleContentPruner {
+private enum AppBundleContentPruner {
     /// Applies root app cleanup options before signing.
-    static func apply(options: StandaloneBundleSigningOptions, rootBundleURL: URL) throws {
+    static func apply(options: AppSigningOptions, rootBundleURL: URL) throws {
         let fileManager = FileManager.default
         if options.removeExtensions {
             try removeExistingDirectories(
@@ -652,8 +701,8 @@ private enum StandaloneBundleContentPruner {
 }
 
 /// Applies root-only `Info.plist` mutations before resources are sealed.
-private enum StandaloneRootInfoRewriter {
-    static func apply(options: StandaloneBundleSigningOptions, info: inout MutableInfoPlist) throws {
+private enum AppRootInfoRewriter {
+    static func apply(options: AppSigningOptions, info: inout MutableInfoPlist) throws {
         if let displayName = nonEmptyTrimmed(options.displayName) {
             info.setString(displayName, forKey: "CFBundleName")
             info.setString(displayName, forKey: "CFBundleDisplayName")
@@ -676,7 +725,7 @@ private enum StandaloneRootInfoRewriter {
 }
 
 /// Rewrites localized display-name strings when they are plist-backed files.
-private enum StandaloneLocalizedNameRewriter {
+private enum AppLocalizedNameRewriter {
     static func apply(displayName: String?, rootBundleURL: URL) throws {
         guard let displayName = nonEmptyTrimmed(displayName) else {
             return
@@ -733,16 +782,16 @@ private enum StandaloneLocalizedNameRewriter {
 }
 
 /// Decoded provisioning profile plus its original bytes.
-private struct StandaloneProvisioningAsset {
+private struct AppProvisioningAsset {
     let data: Data
     let profile: ProvisioningProfile
 }
 
 /// Resolves root, Watch, and per-bundle provisioning profiles.
-private struct StandaloneProvisioningAssets {
-    let rootAsset: StandaloneProvisioningAsset?
-    let watchAsset: StandaloneProvisioningAsset?
-    let assetsByBundleIdentifier: [String: StandaloneProvisioningAsset]
+private struct AppProvisioningAssets {
+    let rootAsset: AppProvisioningAsset?
+    let watchAsset: AppProvisioningAsset?
+    let assetsByBundleIdentifier: [String: AppProvisioningAsset]
     let teamIdentifier: String?
 
     init(
@@ -752,22 +801,22 @@ private struct StandaloneProvisioningAssets {
         identity: SigningIdentity?
     ) throws {
         rootAsset = try rootProvisioningProfile.map { data in
-            try StandaloneProvisioningAsset(
+            try AppProvisioningAsset(
                 data: data,
                 profile: RorkSigner.decodeProvisioningProfile(data)
             )
         }
         watchAsset = try watchProvisioningProfile.map { data in
-            try StandaloneProvisioningAsset(
+            try AppProvisioningAsset(
                 data: data,
                 profile: RorkSigner.decodeProvisioningProfile(data)
             )
         }
 
-        var decoded: [String: StandaloneProvisioningAsset] = [:]
+        var decoded: [String: AppProvisioningAsset] = [:]
         for (rawIdentifier, data) in provisioningProfilesByBundleIdentifier {
             let identifier = try BundleIdentifier.normalize(rawIdentifier)
-            decoded[identifier] = try StandaloneProvisioningAsset(
+            decoded[identifier] = try AppProvisioningAsset(
                 data: data,
                 profile: RorkSigner.decodeProvisioningProfile(data)
             )
@@ -794,7 +843,7 @@ private struct StandaloneProvisioningAssets {
     /// Profile selection happens after identifier rewriting, so this also
     /// verifies that the selected App ID authorizes the rewritten bundle
     /// identifier before the profile is embedded or used for entitlements.
-    func asset(for bundleIdentifier: String, isWatchBundle: Bool) throws -> StandaloneProvisioningAsset? {
+    func asset(for bundleIdentifier: String, isWatchBundle: Bool) throws -> AppProvisioningAsset? {
         if let exactAsset = assetsByBundleIdentifier[bundleIdentifier] {
             try validateAuthorization(exactAsset, bundleIdentifier: bundleIdentifier)
             return exactAsset
@@ -811,13 +860,13 @@ private struct StandaloneProvisioningAssets {
     }
 
     /// Rejects mixed-team profile sets before producing inconsistent output.
-    private static func validateTeams(_ assets: [StandaloneProvisioningAsset]) throws {
+    private static func validateTeams(_ assets: [AppProvisioningAsset]) throws {
         guard let team = assets.first?.profile.teamIdentifier else {
             return
         }
         for asset in assets where asset.profile.teamIdentifier != team {
             throw RorkSignError.invalidProvisioningProfile(
-                "Standalone provisioning profiles must belong to the same Apple team."
+                "App signing provisioning profiles must belong to the same Apple team."
             )
         }
     }
@@ -826,7 +875,7 @@ private struct StandaloneProvisioningAssets {
     /// selected profile.
     private static func validateIdentity(
         _ identity: SigningIdentity,
-        assets: [StandaloneProvisioningAsset]
+        assets: [AppProvisioningAsset]
     ) throws {
         for asset in assets where !asset.profile.containsDeveloperCertificate(for: identity) {
             throw RorkSignError.invalidSigningIdentity(
@@ -838,7 +887,7 @@ private struct StandaloneProvisioningAssets {
     /// Ensures the selected provisioning profile can legally cover the final
     /// bundle identifier written to `Info.plist`.
     private func validateAuthorization(
-        _ asset: StandaloneProvisioningAsset,
+        _ asset: AppProvisioningAsset,
         bundleIdentifier: String
     ) throws {
         guard asset.profile.supportsBundleIdentifier(bundleIdentifier) else {
