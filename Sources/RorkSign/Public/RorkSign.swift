@@ -1705,7 +1705,7 @@ public struct HostedBundleSigningOptions: Equatable {
 public enum RorkSigner {
     /// Package version for CLI diagnostics and consumers that expose signer info.
     public static var version: String {
-        "0.2.18"
+        "0.2.19"
     }
 
     /// Reads high-level Mach-O metadata needed by signing and diagnostics.
