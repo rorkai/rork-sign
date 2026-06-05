@@ -17,6 +17,7 @@ struct RorkSignCommand: ParsableCommand {
             Metadata.self,
             InjectDylib.self,
             RemoveDylib.self,
+            Sign.self,
             AdhocSign.self,
             AdhocSignBundle.self,
             AdhocSignIPA.self,
@@ -32,7 +33,6 @@ struct RorkSignCommand: ParsableCommand {
             StandaloneSignIPAAdhoc.self,
             StandaloneSignIPAP12.self,
             StandaloneSignIPAProfileKey.self,
-            StandaloneSignIPAProfileMap.self,
             SealResources.self,
             VerifyResources.self,
             TeamID.self,
@@ -272,6 +272,85 @@ struct RemoveDylib: ParsableCommand {
             matching: installNames
         )
         try rewritten.write(to: output)
+    }
+}
+
+// MARK: - Modern signing
+
+struct Sign: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "sign",
+        abstract: "Sign apps, bundles, and IPA archives.",
+        subcommands: [
+            SignIPA.self,
+        ]
+    )
+}
+
+struct SignIPA: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "ipa",
+        abstract: "Sign and optionally rebase an IPA archive."
+    )
+
+    @Option(name: .long, help: "Input IPA archive.")
+    var input: String
+
+    @Option(name: .long, help: "Output IPA archive.")
+    var output: String
+
+    @Option(name: [.customLong("bundle-id")], help: "Replacement root bundle identifier.")
+    var bundleIdentifier: String
+
+    @Option(name: [.customLong("profile-map")], help: "JSON map from final bundle identifier to provisioning profile path.")
+    var profileMapPath: String
+
+    @Option(name: [.customLong("certificate")], help: "Path to a PEM or DER certificate.")
+    var certificatePath: String
+
+    @Option(name: [.customLong("key")], help: "Path to a private key or PKCS#12 credential.")
+    var credentialPath: String
+
+    @Option(name: [.customShort("p"), .customLong("password")], help: "Password for the private key or PKCS#12 credential.")
+    var password = ""
+
+    @Option(name: [.customLong("app-groups")], help: "Comma-separated app-group identifiers.")
+    var appGroups: String?
+
+    @Option(name: [.customLong("bundle-name")], help: "Replacement root display name.")
+    var bundleName: String?
+
+    func run() throws {
+        let rootBundleIdentifier = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rootBundleIdentifier.isEmpty else {
+            throw ValidationError("Bundle identifier must not be empty.")
+        }
+
+        let profiles = try CLISupport.readProvisioningProfileMap(path: profileMapPath)
+        guard let rootProfile = profiles[rootBundleIdentifier] else {
+            throw ValidationError(
+                "Provisioning profile map must include a profile for root bundle identifier \(rootBundleIdentifier)."
+            )
+        }
+
+        let identity = try CLISupport.readIdentity(
+            certificatePath: certificatePath,
+            credentialPath: credentialPath,
+            password: password
+        )
+        let report = try RorkSigner.signStandaloneIPAWithIdentity(
+            at: fileURL(input),
+            outputURL: fileURL(output),
+            identity: identity,
+            options: StandaloneBundleSigningOptions(
+                bundleIdentifier: rootBundleIdentifier,
+                rootProvisioningProfile: rootProfile,
+                provisioningProfilesByBundleIdentifier: profiles,
+                appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups),
+                displayName: bundleName
+            )
+        )
+        print("app=\(report.appBundlePath) sealed=\(report.sealedBundlePaths.count) signed=\(report.signedCodePaths.count)")
     }
 }
 
@@ -702,52 +781,6 @@ struct StandaloneSignIPAProfileKey: ParsableCommand {
                 rootProvisioningProfile: profile,
                 appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups)
             )
-        )
-        print("app=\(report.appBundlePath) sealed=\(report.sealedBundlePaths.count) signed=\(report.signedCodePaths.count)")
-    }
-}
-
-struct StandaloneSignIPAProfileMap: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "standalone-sign-ipa-profile-map",
-        abstract: "Sign an IPA as a standalone, rebased app with an explicit provisioning profile map."
-    )
-
-    @Argument(transform: fileURL) var input: URL
-    @Argument(transform: fileURL) var output: URL
-    @Argument var bundleIdentifier: String
-    @Argument var profileMapPath: String
-    @Argument var credentialPath: String
-    @Option(name: [.customShort("p"), .customLong("password")], help: "Password for the private key or PKCS#12 credential.")
-    var password = ""
-    @Option(name: [.customLong("app-groups")], help: "Comma-separated app-group identifiers.")
-    var appGroups: String?
-    @Option(name: [.customShort("n"), .customLong("bundle-name")], help: "Replacement root display name.")
-    var bundleName: String?
-
-    func run() throws {
-        let rootBundleIdentifier = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !rootBundleIdentifier.isEmpty else {
-            throw ValidationError("Bundle identifier must not be empty.")
-        }
-
-        let profiles = try CLISupport.readProvisioningProfileMap(path: profileMapPath)
-        guard let rootProfile = profiles[rootBundleIdentifier] else {
-            throw ValidationError(
-                "Provisioning profile map must include a profile for root bundle identifier \(rootBundleIdentifier)."
-            )
-        }
-
-        let report = try RorkSigner.signStandaloneIPAWithCredential(
-            at: input,
-            outputURL: output,
-            provisioningProfileData: rootProfile,
-            credentialData: Data(contentsOf: fileURL(credentialPath)),
-            password: password,
-            bundleIdentifier: rootBundleIdentifier,
-            provisioningProfilesByBundleIdentifier: profiles,
-            appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups),
-            displayName: bundleName
         )
         print("app=\(report.appBundlePath) sealed=\(report.sealedBundlePaths.count) signed=\(report.signedCodePaths.count)")
     }
