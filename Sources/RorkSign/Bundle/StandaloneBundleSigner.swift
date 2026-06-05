@@ -45,6 +45,14 @@ public struct StandaloneBundleSigningOptions: Equatable {
     /// keys remain coherent.
     public var rootEntitlementsXML: String
 
+    /// Bundle-local entitlement request plist filename used when an executable
+    /// has no embedded entitlement slot.
+    ///
+    /// Leave this nil when unsigned artifacts do not carry entitlement request
+    /// resources. When set, the value must be a plain filename in each bundle
+    /// directory, such as `Entitlements.plist`.
+    public var entitlementRequestResourceName: String?
+
     /// Replacement display name for the root app.
     ///
     /// When set, the signer writes both `CFBundleName` and
@@ -117,6 +125,7 @@ public struct StandaloneBundleSigningOptions: Equatable {
         provisioningProfilesByBundleIdentifier: [String: Data] = [:],
         appGroupIdentifiers: [String] = [],
         rootEntitlementsXML: String = "",
+        entitlementRequestResourceName: String? = nil,
         displayName: String? = nil,
         bundleVersion: String? = nil,
         minimumOSVersion: String? = nil,
@@ -137,6 +146,7 @@ public struct StandaloneBundleSigningOptions: Equatable {
         self.provisioningProfilesByBundleIdentifier = provisioningProfilesByBundleIdentifier
         self.appGroupIdentifiers = appGroupIdentifiers
         self.rootEntitlementsXML = rootEntitlementsXML
+        self.entitlementRequestResourceName = entitlementRequestResourceName
         self.displayName = displayName
         self.bundleVersion = bundleVersion
         self.minimumOSVersion = minimumOSVersion
@@ -163,6 +173,7 @@ public struct StandaloneBundleSigningOptions: Equatable {
             && lhs.provisioningProfilesByBundleIdentifier == rhs.provisioningProfilesByBundleIdentifier
             && lhs.appGroupIdentifiers == rhs.appGroupIdentifiers
             && lhs.rootEntitlementsXML == rhs.rootEntitlementsXML
+            && lhs.entitlementRequestResourceName == rhs.entitlementRequestResourceName
             && lhs.displayName == rhs.displayName
             && lhs.bundleVersion == rhs.bundleVersion
             && lhs.minimumOSVersion == rhs.minimumOSVersion
@@ -500,7 +511,7 @@ private enum StandaloneBundleIdentityRewriter {
                 originalRootIdentifier: originalRootIdentifier,
                 replacementRootIdentifier: replacementRootIdentifier
             ),
-            originalEntitlementsXML: try originalEntitlementsXML(bundleURL: bundleURL, info: info),
+            originalEntitlementsXML: try originalEntitlementsXML(bundleURL: bundleURL, info: info, options: options),
             isProvisionedBundle: isProvisionedBundle(bundleURL),
             isWatchBundle: isWatchBundle(info: info.dictionary, bundleURL: bundleURL)
         )
@@ -537,7 +548,11 @@ private enum StandaloneBundleIdentityRewriter {
 
     /// Reads the executable's current entitlement slot before the final signer
     /// overwrites it.
-    private static func originalEntitlementsXML(bundleURL: URL, info: MutableInfoPlist) throws -> String {
+    private static func originalEntitlementsXML(
+        bundleURL: URL,
+        info: MutableInfoPlist,
+        options: StandaloneBundleSigningOptions
+    ) throws -> String {
         guard let executableName = info.trimmedString(forKey: "CFBundleExecutable") else {
             return ""
         }
@@ -549,7 +564,39 @@ private enum StandaloneBundleIdentityRewriter {
         guard FileManager.default.fileExists(atPath: executableURL.path) else {
             return ""
         }
-        return try MachOSigner.readEntitlementsXML(Data(contentsOf: executableURL))
+        let executableEntitlementsXML = try MachOSigner.readEntitlementsXML(Data(contentsOf: executableURL))
+        if !executableEntitlementsXML.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return executableEntitlementsXML
+        }
+        return try bundledEntitlementsXML(
+            bundleURL: bundleURL,
+            resourceName: options.entitlementRequestResourceName
+        )
+    }
+
+    /// Reads the entitlement request bundled with unsigned host artifacts.
+    private static func bundledEntitlementsXML(bundleURL: URL, resourceName: String?) throws -> String {
+        guard let rawResourceName = resourceName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawResourceName.isEmpty else {
+            return ""
+        }
+        guard !rawResourceName.contains("/"), !rawResourceName.contains("\\") else {
+            throw RorkSignError.invalidEntitlements(
+                "Entitlement request resource name must be a plain filename: \(rawResourceName)."
+            )
+        }
+
+        let entitlementsURL = bundleURL.appendingPathComponent(rawResourceName)
+        guard FileManager.default.fileExists(atPath: entitlementsURL.path) else {
+            return ""
+        }
+
+        let data = try Data(contentsOf: entitlementsURL)
+        let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+        guard let dictionary = plist as? [String: Any] else {
+            throw RorkSignError.invalidEntitlements("\(rawResourceName) must contain a dictionary.")
+        }
+        return try EntitlementPlist.xml(from: dictionary)
     }
 
     /// Returns whether a bundle can carry an embedded provisioning profile.

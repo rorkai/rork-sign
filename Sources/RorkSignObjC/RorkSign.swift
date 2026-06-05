@@ -913,6 +913,9 @@ public final class StandaloneBundleSigningOptionsObjC: NSObject {
     /// Explicit entitlement plist XML for the rewritten root executable.
     @objc public var rootEntitlementsXML: String
 
+    /// Bundle-local entitlement request plist filename for unsigned artifacts.
+    @objc public var entitlementRequestResourceName: String?
+
     /// Replacement display name for the root app.
     @objc public var displayName: String?
 
@@ -988,6 +991,7 @@ public final class StandaloneBundleSigningOptionsObjC: NSObject {
         watchProvisioningProfileData = nil
         appGroupIdentifiers = []
         rootEntitlementsXML = ""
+        entitlementRequestResourceName = nil
         displayName = nil
         bundleVersion = nil
         minimumOSVersion = nil
@@ -1018,6 +1022,7 @@ public final class StandaloneBundleSigningOptionsObjC: NSObject {
             ),
             appGroupIdentifiers: appGroupIdentifiers,
             rootEntitlementsXML: rootEntitlementsXML,
+            entitlementRequestResourceName: entitlementRequestResourceName,
             displayName: displayName,
             bundleVersion: bundleVersion,
             minimumOSVersion: minimumOSVersion,

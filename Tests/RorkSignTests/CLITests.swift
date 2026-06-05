@@ -769,14 +769,39 @@ final class CLITests: XCTestCase {
         try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
         try Fixtures.machO64WithCodeSignature().write(to: extensionURL.appendingPathComponent("Widget"))
         try Fixtures.machO64DylibWithCodeSignature().write(to: frameworkURL.appendingPathComponent("Nested"))
+        let entitlementRequestResourceName = "FixtureEntitlements.plist"
+        try writeCLIInfoPlist(
+            [
+                "com.apple.developer.networking.networkextension": ["packet-tunnel-provider"],
+            ],
+            to: appURL.appendingPathComponent(entitlementRequestResourceName)
+        )
+        try writeCLIInfoPlist(
+            [
+                "com.apple.developer.networking.networkextension": ["packet-tunnel-provider"],
+            ],
+            to: extensionURL.appendingPathComponent(entitlementRequestResourceName)
+        )
 
         let rootProfile = try cliProvisioningProfile(
             bundleIdentifier: "com.example.rewritten",
-            certificateDER: signing.identity.certificateDER
+            certificateDER: signing.identity.certificateDER,
+            entitlements: [
+                "com.apple.developer.networking.networkextension": [
+                    "app-proxy-provider",
+                    "packet-tunnel-provider",
+                ],
+            ]
         )
         let extensionProfile = try cliProvisioningProfile(
             bundleIdentifier: "com.example.rewritten.Widget",
-            certificateDER: signing.identity.certificateDER
+            certificateDER: signing.identity.certificateDER,
+            entitlements: [
+                "com.apple.developer.networking.networkextension": [
+                    "app-proxy-provider",
+                    "packet-tunnel-provider",
+                ],
+            ]
         )
         try rootProfile.write(to: rootProfileURL)
         try extensionProfile.write(to: extensionProfileURL)
@@ -798,6 +823,7 @@ final class CLITests: XCTestCase {
             "--profile-map", profileMapURL.path,
             "--certificate", signing.certificateURL.path,
             "--key", signing.privateKeyURL.path,
+            "--entitlements-resource", entitlementRequestResourceName,
         ])
 
         XCTAssertEqual(result.status, 0, result.output)
@@ -830,8 +856,20 @@ final class CLITests: XCTestCase {
             "TEAMID1234.com.example.rewritten"
         )
         XCTAssertEqual(
+            try cliEntitlementDictionary(inSignedMachOAt: signedAppURL.appendingPathComponent("Host"))[
+                "com.apple.developer.networking.networkextension"
+            ] as? [String],
+            ["packet-tunnel-provider"]
+        )
+        XCTAssertEqual(
             try cliEntitlementDictionary(inSignedMachOAt: signedExtensionURL.appendingPathComponent("Widget"))["application-identifier"] as? String,
             "TEAMID1234.com.example.rewritten.Widget"
+        )
+        XCTAssertEqual(
+            try cliEntitlementDictionary(inSignedMachOAt: signedExtensionURL.appendingPathComponent("Widget"))[
+                "com.apple.developer.networking.networkextension"
+            ] as? [String],
+            ["packet-tunnel-provider"]
         )
         let frameworkCodeDirectory = try XCTUnwrap(
             signatureBlobs(in: try Data(contentsOf: signedFrameworkExecutableURL))[0]
@@ -1947,16 +1985,18 @@ private func writeFakeInstaller(to url: URL, logURL: URL) throws {
 private func cliProvisioningProfile(
     bundleIdentifier: String,
     certificateDER: Data,
-    applicationIdentifier: String? = nil
+    applicationIdentifier: String? = nil,
+    entitlements additionalEntitlements: [String: Any] = [:]
 ) throws -> Data {
+    let entitlements = [
+        "application-identifier": applicationIdentifier ?? "TEAMID1234.\(bundleIdentifier)",
+        "com.apple.developer.team-identifier": "TEAMID1234",
+    ].merging(additionalEntitlements) { _, additional in additional }
     let plist: [String: Any] = [
         "TeamIdentifier": ["TEAMID1234"],
         "ExpirationDate": Date(timeIntervalSince1970: 1_900_000_000),
         "DeveloperCertificates": [certificateDER],
-        "Entitlements": [
-            "application-identifier": applicationIdentifier ?? "TEAMID1234.\(bundleIdentifier)",
-            "com.apple.developer.team-identifier": "TEAMID1234",
-        ],
+        "Entitlements": entitlements,
     ]
     return try PropertyListSerialization.data(
         fromPropertyList: plist,

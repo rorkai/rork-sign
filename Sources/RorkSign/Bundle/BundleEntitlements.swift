@@ -9,6 +9,13 @@ import Foundation
 /// while keeping optional capabilities limited to those the original executable
 /// already requested.
 enum BundleEntitlements {
+    private static let generatedEntitlementKeys: Set<String> = [
+        "application-identifier",
+        "com.apple.developer.associated-application-identifier",
+        "com.apple.developer.team-identifier",
+        "keychain-access-groups",
+    ]
+
     /// Expands profile entitlements for one bundle identifier.
     ///
     /// The profile is the upper bound of allowed capabilities. The original
@@ -28,8 +35,18 @@ enum BundleEntitlements {
 
         let original = try EntitlementPlist.dictionary(fromXML: originalEntitlementsXML)
         let appGroups = AppGroupIdentifiers.normalize(appGroupIdentifiers)
-        for key in entitlements.keys where !shouldKeep(key, original: original, appGroupIdentifiers: appGroups) {
-            entitlements.removeValue(forKey: key)
+        for key in Array(entitlements.keys) {
+            guard shouldKeep(key, original: original, appGroupIdentifiers: appGroups) else {
+                entitlements.removeValue(forKey: key)
+                continue
+            }
+            if let narrowedValue = narrowedProfileValue(
+                entitlements[key],
+                requestedValue: original[key],
+                key: key
+            ) {
+                entitlements[key] = narrowedValue
+            }
         }
 
         let applicationIdentifier = "\(profile.teamIdentifier).\(bundleIdentifier)"
@@ -75,6 +92,31 @@ enum BundleEntitlements {
             return !appGroupIdentifiers.isEmpty || original[key] != nil
         }
         return original[key] != nil
+    }
+
+    /// Preserves explicit string-array entitlement requests when the profile
+    /// authorizes a broader set of values.
+    private static func narrowedProfileValue(
+        _ profileValue: Any?,
+        requestedValue: Any?,
+        key: String
+    ) -> Any? {
+        let profileValues = stringArray(profileValue)
+        let requestedValues = stringArray(requestedValue)
+        guard !profileValues.isEmpty, !requestedValues.isEmpty else {
+            return nil
+        }
+        guard requestedValues.allSatisfy(profileValues.contains) else {
+            return nil
+        }
+        return generatedEntitlementKeys.contains(key) ? nil : requestedValues
+    }
+
+    private static func stringArray(_ value: Any?) -> [String] {
+        guard let values = value as? [String] else {
+            return []
+        }
+        return values
     }
 
     /// Rewrites requested keychain access groups to the signing team's App ID prefix.

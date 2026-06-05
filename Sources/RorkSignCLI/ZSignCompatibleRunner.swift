@@ -310,6 +310,7 @@ struct ZSignCompatibleRunner {
             rootProvisioningProfile: profiles.first,
             provisioningProfilesByBundleIdentifier: try provisioningProfilesByIdentifier(profiles),
             rootEntitlementsXML: try entitlementsXML(),
+            entitlementRequestResourceName: command.entitlementRequestResourceName,
             displayName: command.displayName,
             bundleVersion: command.bundleVersion,
             minimumOSVersion: command.minimumOSVersion,

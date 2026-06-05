@@ -264,6 +264,95 @@ final class StandaloneBundleSigningTests: XCTestCase {
         )
     }
 
+    func testStandaloneUsesBundleEntitlementsResourceWhenExecutableHasNoEntitlements() throws {
+        let fixture = try makeStandaloneBundleFixture()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
+        }
+        let entitlementRequestResourceName = "FixtureEntitlements.plist"
+        try Fixtures.machO64WithCodeSignature().write(to: fixture.bundleURL.appendingPathComponent("Host"))
+        try entitlementsXML(
+            [
+                "com.apple.developer.networking.networkextension": ["packet-tunnel-provider"],
+                "com.apple.developer.networking.vpn.api": ["allow-vpn"],
+            ]
+        )
+        .write(
+            to: fixture.bundleURL.appendingPathComponent(entitlementRequestResourceName),
+            atomically: true,
+            encoding: .utf8
+        )
+        try Fixtures.machO64WithCodeSignature().write(to: fixture.extensionURL.appendingPathComponent("Share"))
+        try entitlementsXML(
+            [
+                "com.apple.developer.networking.networkextension": ["packet-tunnel-provider"],
+            ]
+        )
+        .write(
+            to: fixture.extensionURL.appendingPathComponent(entitlementRequestResourceName),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let rootProfile = try provisioningProfilePlist(
+            teamIdentifier: "TEAMID1234",
+            entitlements: [
+                "application-identifier": "TEAMID1234.*",
+                "com.apple.developer.team-identifier": "TEAMID1234",
+                "get-task-allow": true,
+                "com.apple.developer.networking.networkextension": [
+                    "app-proxy-provider",
+                    "packet-tunnel-provider",
+                ],
+                "com.apple.developer.networking.vpn.api": ["allow-vpn"],
+            ]
+        )
+        let extensionProfile = try provisioningProfilePlist(
+            teamIdentifier: "TEAMID1234",
+            entitlements: [
+                "application-identifier": "TEAMID1234.*",
+                "com.apple.developer.team-identifier": "TEAMID1234",
+                "get-task-allow": true,
+                "com.apple.developer.networking.networkextension": [
+                    "app-proxy-provider",
+                    "packet-tunnel-provider",
+                ],
+            ]
+        )
+
+        try RorkSigner.signStandaloneBundleAdHoc(
+            at: fixture.bundleURL,
+            options: StandaloneBundleSigningOptions(
+                bundleIdentifier: "app.rork.tunnel",
+                rootProvisioningProfile: rootProfile,
+                provisioningProfilesByBundleIdentifier: [
+                    "app.rork.tunnel.ShareExtension": extensionProfile,
+                ],
+                entitlementRequestResourceName: entitlementRequestResourceName
+            )
+        )
+
+        let rootEntitlements = try entitlementDictionary(
+            inSignedMachOAt: fixture.bundleURL.appendingPathComponent("Host")
+        )
+        XCTAssertEqual(
+            rootEntitlements["com.apple.developer.networking.networkextension"] as? [String],
+            ["packet-tunnel-provider"]
+        )
+        XCTAssertEqual(
+            rootEntitlements["com.apple.developer.networking.vpn.api"] as? [String],
+            ["allow-vpn"]
+        )
+
+        let extensionEntitlements = try entitlementDictionary(
+            inSignedMachOAt: fixture.extensionURL.appendingPathComponent("Share")
+        )
+        XCTAssertEqual(
+            extensionEntitlements["com.apple.developer.networking.networkextension"] as? [String],
+            ["packet-tunnel-provider"]
+        )
+    }
+
     func testStandaloneRootEntitlementsOverrideProfileExpansion() throws {
         let fixture = try makeStandaloneBundleFixture()
         addTeardownBlock {

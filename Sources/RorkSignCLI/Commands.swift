@@ -94,6 +94,9 @@ struct ZSignOptions: ParsableArguments {
     @Option(name: [.customShort("e"), .customLong("entitlements")], help: "Path to an entitlements plist.")
     var entitlementsPath: String?
 
+    @Option(name: [.customLong("entitlements-resource")], help: "Bundle-local entitlement request plist filename for unsigned standalone artifacts.")
+    var entitlementRequestResourceName: String?
+
     @Option(name: [.customShort("o"), .customLong("output")], help: "Path to the output IPA or Mach-O.")
     var outputPath: String?
 
@@ -320,6 +323,9 @@ struct SignIPA: ParsableCommand {
     @Option(name: [.customLong("bundle-name")], help: "Replacement root display name.")
     var bundleName: String?
 
+    @Option(name: [.customLong("entitlements-resource")], help: "Bundle-local entitlement request plist filename for unsigned standalone artifacts.")
+    var entitlementRequestResourceName: String?
+
     func run() throws {
         let rootBundleIdentifier = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rootBundleIdentifier.isEmpty else {
@@ -347,6 +353,7 @@ struct SignIPA: ParsableCommand {
                 rootProvisioningProfile: rootProfile,
                 provisioningProfilesByBundleIdentifier: profiles,
                 appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups),
+                entitlementRequestResourceName: entitlementRequestResourceName,
                 displayName: bundleName
             )
         )
@@ -704,6 +711,8 @@ struct StandaloneSignIPAAdhoc: ParsableCommand {
     @Argument var bundleIdentifier: String
     @Argument var profilePath: String
     @Argument var appGroups: String?
+    @Option(name: [.customLong("entitlements-resource")], help: "Bundle-local entitlement request plist filename for unsigned standalone artifacts.")
+    var entitlementRequestResourceName: String?
 
     func run() throws {
         let profile = try Data(contentsOf: fileURL(profilePath))
@@ -713,7 +722,8 @@ struct StandaloneSignIPAAdhoc: ParsableCommand {
             options: StandaloneBundleSigningOptions(
                 bundleIdentifier: bundleIdentifier,
                 rootProvisioningProfile: profile,
-                appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups)
+                appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups),
+                entitlementRequestResourceName: entitlementRequestResourceName
             )
         )
         print("app=\(report.appBundlePath) sealed=\(report.sealedBundlePaths.count) signed=\(report.signedCodePaths.count)")
@@ -733,6 +743,8 @@ struct StandaloneSignIPAP12: ParsableCommand {
     @Argument var pkcs12Path: String
     @Argument var password: String
     @Argument var appGroups: String?
+    @Option(name: [.customLong("entitlements-resource")], help: "Bundle-local entitlement request plist filename for unsigned standalone artifacts.")
+    var entitlementRequestResourceName: String?
 
     func run() throws {
         let profile = try Data(contentsOf: fileURL(profilePath))
@@ -744,7 +756,8 @@ struct StandaloneSignIPAP12: ParsableCommand {
             options: StandaloneBundleSigningOptions(
                 bundleIdentifier: bundleIdentifier,
                 rootProvisioningProfile: profile,
-                appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups)
+                appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups),
+                entitlementRequestResourceName: entitlementRequestResourceName
             )
         )
         print("app=\(report.appBundlePath) sealed=\(report.sealedBundlePaths.count) signed=\(report.signedCodePaths.count)")
@@ -764,6 +777,8 @@ struct StandaloneSignIPAProfileKey: ParsableCommand {
     @Argument var credentialPath: String
     @Argument var password: String
     @Argument var appGroups: String?
+    @Option(name: [.customLong("entitlements-resource")], help: "Bundle-local entitlement request plist filename for unsigned standalone artifacts.")
+    var entitlementRequestResourceName: String?
 
     func run() throws {
         let profile = try Data(contentsOf: fileURL(profilePath))
@@ -779,7 +794,8 @@ struct StandaloneSignIPAProfileKey: ParsableCommand {
             options: StandaloneBundleSigningOptions(
                 bundleIdentifier: bundleIdentifier,
                 rootProvisioningProfile: profile,
-                appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups)
+                appGroupIdentifiers: CLISupport.appGroupIdentifiers(appGroups),
+                entitlementRequestResourceName: entitlementRequestResourceName
             )
         )
         print("app=\(report.appBundlePath) sealed=\(report.sealedBundlePaths.count) signed=\(report.signedCodePaths.count)")
