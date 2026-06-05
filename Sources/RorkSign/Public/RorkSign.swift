@@ -1057,6 +1057,31 @@ public struct SigningIdentity {
         self.privateKey = privateKey
     }
 
+    /// Returns an equivalent identity that carries the supplied Apple team identifier.
+    public func withTeamIdentifier(_ teamIdentifier: String) throws -> SigningIdentity {
+        let normalizedTeamIdentifier = teamIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedTeamIdentifier.isEmpty else {
+            return self
+        }
+
+        let currentTeamIdentifier = self.teamIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        if currentTeamIdentifier == normalizedTeamIdentifier {
+            return self
+        }
+        if !currentTeamIdentifier.isEmpty {
+            throw RorkSignError.invalidSigningIdentity(
+                "Signing identity team identifier \(currentTeamIdentifier) does not match provisioning profile team \(normalizedTeamIdentifier)."
+            )
+        }
+
+        return try SigningIdentity(
+            certificateDER: certificateDER,
+            additionalCertificatesDER: additionalCertificatesDER,
+            privateKey: privateKey,
+            teamIdentifier: normalizedTeamIdentifier
+        )
+    }
+
     private init(provisioningProfile: ProvisioningProfile, credential: SigningCredentialMaterial) throws {
         for certificateDER in provisioningProfile.developerCertificatesDER {
             guard let certificateInfo = try? CertificateInfo.parse(certificateDER),

@@ -185,10 +185,11 @@ enum StandaloneBundleSigner {
         bundleURL: URL,
         options: StandaloneBundleSigningOptions
     ) throws -> BundleSigningReport {
+        let profiles = try provisioningAssets(options: options, identity: nil)
         let bundleSigningOptions = try prepareBundleSigningOptions(
             bundleURL: bundleURL,
             options: options,
-            identity: nil
+            profiles: profiles
         )
         return try BundleSigner.signAdHoc(bundleURL: bundleURL, options: bundleSigningOptions)
     }
@@ -199,15 +200,29 @@ enum StandaloneBundleSigner {
         identity: SigningIdentity,
         options: StandaloneBundleSigningOptions
     ) throws -> BundleSigningReport {
+        let profiles = try provisioningAssets(options: options, identity: identity)
+        let effectiveIdentity = try profiles.signingIdentity(for: identity)
         let bundleSigningOptions = try prepareBundleSigningOptions(
             bundleURL: bundleURL,
             options: options,
-            identity: identity
+            profiles: profiles
         )
         return try BundleSigner.signWithIdentity(
             bundleURL: bundleURL,
-            identity: identity,
+            identity: effectiveIdentity,
             options: bundleSigningOptions
+        )
+    }
+
+    private static func provisioningAssets(
+        options: StandaloneBundleSigningOptions,
+        identity: SigningIdentity?
+    ) throws -> StandaloneProvisioningAssets {
+        try StandaloneProvisioningAssets(
+            rootProvisioningProfile: options.rootProvisioningProfile,
+            watchProvisioningProfile: options.watchProvisioningProfile,
+            provisioningProfilesByBundleIdentifier: options.provisioningProfilesByBundleIdentifier,
+            identity: identity
         )
     }
 
@@ -215,15 +230,9 @@ enum StandaloneBundleSigner {
     private static func prepareBundleSigningOptions(
         bundleURL: URL,
         options: StandaloneBundleSigningOptions,
-        identity: SigningIdentity?
+        profiles: StandaloneProvisioningAssets
     ) throws -> BundleSigningOptions {
         let replacementIdentifier = try BundleIdentifier.normalize(options.bundleIdentifier)
-        let profiles = try StandaloneProvisioningAssets(
-            rootProvisioningProfile: options.rootProvisioningProfile,
-            watchProvisioningProfile: options.watchProvisioningProfile,
-            provisioningProfilesByBundleIdentifier: options.provisioningProfilesByBundleIdentifier,
-            identity: identity
-        )
         let rewrittenBundles = try StandaloneBundleIdentityRewriter.rewrite(
             rootBundleURL: bundleURL,
             replacementBundleIdentifier: replacementIdentifier,
@@ -734,6 +743,7 @@ private struct StandaloneProvisioningAssets {
     let rootAsset: StandaloneProvisioningAsset?
     let watchAsset: StandaloneProvisioningAsset?
     let assetsByBundleIdentifier: [String: StandaloneProvisioningAsset]
+    let teamIdentifier: String?
 
     init(
         rootProvisioningProfile: Data?,
@@ -766,9 +776,17 @@ private struct StandaloneProvisioningAssets {
 
         let assets = [rootAsset, watchAsset].compactMap { $0 } + Array(decoded.values)
         try Self.validateTeams(assets)
+        teamIdentifier = assets.first?.profile.teamIdentifier
         if let identity {
             try Self.validateIdentity(identity, assets: assets)
         }
+    }
+
+    func signingIdentity(for identity: SigningIdentity) throws -> SigningIdentity {
+        guard let teamIdentifier else {
+            return identity
+        }
+        return try identity.withTeamIdentifier(teamIdentifier)
     }
 
     /// Returns an exact per-bundle profile, then Watch/root fallback profiles.
