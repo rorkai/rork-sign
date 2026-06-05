@@ -729,6 +729,7 @@ final class CLITests: XCTestCase {
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
         let appURL = archiveRootURL.appendingPathComponent("Payload/Host.app", isDirectory: true)
         let extensionURL = appURL.appendingPathComponent("PlugIns/Widget.appex", isDirectory: true)
+        let frameworkURL = appURL.appendingPathComponent("Frameworks/Nested.framework", isDirectory: true)
         let inputURL = fixture.directory.appendingPathComponent("Input.ipa")
         let outputURL = fixture.directory.appendingPathComponent("Signed.ipa")
         let rootProfileURL = fixture.directory.appendingPathComponent("Root.mobileprovision")
@@ -740,6 +741,7 @@ final class CLITests: XCTestCase {
         }
 
         try FileManager.default.createDirectory(at: extensionURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: frameworkURL, withIntermediateDirectories: true)
         try writeCLIInfoPlist(
             [
                 "CFBundleIdentifier": "com.example.original",
@@ -757,8 +759,16 @@ final class CLITests: XCTestCase {
             ],
             to: extensionURL.appendingPathComponent("Info.plist")
         )
+        try writeCLIInfoPlist(
+            [
+                "CFBundleIdentifier": "com.example.original.Nested",
+                "CFBundleExecutable": "Nested",
+            ],
+            to: frameworkURL.appendingPathComponent("Info.plist")
+        )
         try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
         try Fixtures.machO64WithCodeSignature().write(to: extensionURL.appendingPathComponent("Widget"))
+        try Fixtures.machO64DylibWithCodeSignature().write(to: frameworkURL.appendingPathComponent("Nested"))
 
         let rootProfile = try cliProvisioningProfile(
             bundleIdentifier: "com.example.rewritten",
@@ -798,6 +808,7 @@ final class CLITests: XCTestCase {
         try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
         let signedAppURL = extractedURL.appendingPathComponent("Payload/Host.app")
         let signedExtensionURL = signedAppURL.appendingPathComponent("PlugIns/Widget.appex")
+        let signedFrameworkExecutableURL = signedAppURL.appendingPathComponent("Frameworks/Nested.framework/Nested")
         XCTAssertEqual(
             try cliPlistDictionary(at: signedAppURL.appendingPathComponent("Info.plist"))["CFBundleIdentifier"] as? String,
             "com.example.rewritten"
@@ -821,6 +832,15 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(
             try cliEntitlementDictionary(inSignedMachOAt: signedExtensionURL.appendingPathComponent("Widget"))["application-identifier"] as? String,
             "TEAMID1234.com.example.rewritten.Widget"
+        )
+        let frameworkCodeDirectory = try XCTUnwrap(
+            signatureBlobs(in: try Data(contentsOf: signedFrameworkExecutableURL))[0]
+        )
+        let frameworkTeamOffset = Int(frameworkCodeDirectory.readUInt32BE(at: 48))
+        XCTAssertGreaterThan(frameworkTeamOffset, 0)
+        XCTAssertEqual(
+            nullTerminatedString(in: frameworkCodeDirectory, offset: frameworkTeamOffset),
+            "TEAMID1234"
         )
     }
 
