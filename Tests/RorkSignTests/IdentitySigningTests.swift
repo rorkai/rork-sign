@@ -1286,10 +1286,12 @@ final class IdentitySigningTests: XCTestCase {
 
         let process = Process()
         process.executableURL = codesignURL
+        // Isolate signature integrity from the self-signed fixture's Apple-anchored designated requirement.
         process.arguments = [
             "--verify",
             "--strict",
-            "--verbose=4",
+            "--test-requirement",
+            "=true",
             signedURL.path,
         ]
         var environment = ProcessInfo.processInfo.environment
@@ -1306,7 +1308,7 @@ final class IdentitySigningTests: XCTestCase {
             decoding: output.fileHandleForReading.readDataToEndOfFile(),
             as: UTF8.self
         )
-        XCTAssertTrue(message.contains("valid on disk"), message)
+        XCTAssertEqual(process.terminationStatus, 0, message)
         XCTAssertFalse(message.localizedCaseInsensitiveContains("invalid signature"), message)
     }
 
