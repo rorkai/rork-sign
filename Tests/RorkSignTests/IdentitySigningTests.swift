@@ -1200,12 +1200,17 @@ final class IdentitySigningTests: XCTestCase {
         )
         let codeDirectorySHA256 = Data(SHA256.hash(data: content))
         let cdHashBase64 = Data(codeDirectorySHA256.prefix(20)).base64EncodedString()
+        let cdHashSequence = derSequence(
+            derObjectIdentifier("2.16.840.1.101.3.4.2.1")
+                + derOctetString(codeDirectorySHA256)
+        )
 
         XCTAssertNotNil(cms.range(of: derObjectIdentifier("1.2.840.113635.100.9.1")))
         XCTAssertNotNil(cms.range(of: derObjectIdentifier("1.2.840.113635.100.9.2")))
         XCTAssertNotNil(cms.range(of: derObjectIdentifier("1.2.840.113549.1.9.5")))
         XCTAssertNotNil(cms.range(of: Data("cdhashes".utf8)))
         XCTAssertNotNil(cms.range(of: Data(cdHashBase64.utf8)))
+        XCTAssertNotNil(cms.range(of: cdHashSequence))
         XCTAssertGreaterThanOrEqual(cms.nonOverlappingOccurrences(of: codeDirectorySHA256), 2)
 
         try fixture.verifyDetachedCMS(cms, content: content)
@@ -1244,12 +1249,73 @@ final class IdentitySigningTests: XCTestCase {
         let primaryCDHash = Data(Insecure.SHA1.hash(data: primaryCodeDirectory))
         let alternateCDHash = Data(SHA256.hash(data: alternateCodeDirectory)).prefix(20)
         let alternateDigest = Data(SHA256.hash(data: alternateCodeDirectory))
+        let primarySequence = derSequence(
+            derObjectIdentifier("1.3.14.3.2.26")
+                + derOctetString(primaryCDHash)
+        )
+        let alternateSequence = derSequence(
+            derObjectIdentifier("2.16.840.1.101.3.4.2.1")
+                + derOctetString(alternateDigest)
+        )
 
         XCTAssertNotNil(cms.range(of: Data(primaryCDHash.base64EncodedString().utf8)))
         XCTAssertNotNil(cms.range(of: Data(Data(alternateCDHash).base64EncodedString().utf8)))
-        XCTAssertNotNil(cms.range(of: alternateDigest))
+        XCTAssertNotNil(cms.range(of: primarySequence))
+        XCTAssertNotNil(cms.range(of: alternateSequence))
 
         try fixture.verifyDetachedCMS(cms, content: primaryCodeDirectory)
+    }
+
+    /// Verifies compatible CMS output with Apple's native code-signature integrity checker.
+    func testCompatibleIdentitySignaturePassesAppleCodesignIntegrityValidation() throws {
+        let codesignURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        let executableURL = URL(fileURLWithPath: "/bin/echo")
+        guard FileManager.default.isExecutableFile(atPath: codesignURL.path),
+              FileManager.default.isExecutableFile(atPath: executableURL.path)
+        else {
+            throw XCTSkip("Apple codesign verification requires macOS.")
+        }
+
+        let fixture = try OpenSSLFixture(codeSigning: true)
+        defer {
+            fixture.remove()
+        }
+
+        let signed = try RorkSigner.signMachOWithIdentity(
+            Data(contentsOf: executableURL),
+            bundleIdentifier: "app.rork.sign.codesign-compatible",
+            identity: fixture.identity,
+            codeDirectoryHashingMode: .compatible
+        )
+        let signedURL = fixture.directory.appendingPathComponent("codesign-compatible")
+        try signed.write(to: signedURL)
+
+        let process = Process()
+        process.executableURL = codesignURL
+        // Isolate signature integrity from the self-signed fixture's Apple-anchored designated requirement.
+        process.arguments = [
+            "--verify",
+            "--strict",
+            "--test-requirement",
+            "=true",
+            signedURL.path,
+        ]
+        var environment = ProcessInfo.processInfo.environment
+        environment["LC_ALL"] = "C"
+        process.environment = environment
+
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        process.waitUntilExit()
+
+        let message = String(
+            decoding: output.fileHandleForReading.readDataToEndOfFile(),
+            as: UTF8.self
+        )
+        XCTAssertEqual(process.terminationStatus, 0, message)
+        XCTAssertFalse(message.localizedCaseInsensitiveContains("invalid signature"), message)
     }
 
     func testSignsMachOWithIdentityAndEmbedsVerifiableCMSBlob() throws {
@@ -1770,6 +1836,7 @@ final class IdentitySigningTests: XCTestCase {
     }
 }
 
+/// Creates an app fixture containing a signable executable and nested framework.
 private func makeIdentityBundleFixture(bundleIdentifier: String = "app.rork.identity.host") throws -> URL {
     let rootURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -1792,6 +1859,7 @@ private func makeIdentityBundleFixture(bundleIdentifier: String = "app.rork.iden
     return bundleURL
 }
 
+/// Writes the minimal bundle metadata required by identity-signing fixtures.
 private func writeIdentityInfoPlist(bundleIdentifier: String, executableName: String, to url: URL) throws {
     let plist = """
     <?xml version="1.0" encoding="UTF-8"?>
@@ -1801,6 +1869,7 @@ private func writeIdentityInfoPlist(bundleIdentifier: String, executableName: St
     try Data(plist.utf8).write(to: url)
 }
 
+/// Builds a provisioning-profile plist containing one authorized certificate.
 private func identityProvisioningProfile(
     bundleIdentifier: String,
     certificateDER: Data,
@@ -1813,6 +1882,7 @@ private func identityProvisioningProfile(
     )
 }
 
+/// Builds a provisioning-profile plist containing the authorized certificates.
 private func identityProvisioningProfile(
     bundleIdentifier: String,
     certificatesDER: [Data],
@@ -1834,6 +1904,7 @@ private func identityProvisioningProfile(
     )
 }
 
+/// Encodes a dotted-decimal object identifier for CMS attribute assertions.
 private func derObjectIdentifier(_ oid: String) -> Data {
     let components = oid.split(separator: ".").compactMap { Int($0) }
     precondition(components.count >= 2)
@@ -1844,6 +1915,17 @@ private func derObjectIdentifier(_ oid: String) -> Data {
     return Data([0x06]) + derLength(content.count) + content
 }
 
+/// Encodes raw content as a DER octet string for CMS attribute assertions.
+private func derOctetString(_ content: Data) -> Data {
+    Data([0x04]) + derLength(content.count) + content
+}
+
+/// Encodes prebuilt DER elements as one DER sequence for CMS attribute assertions.
+private func derSequence(_ content: Data) -> Data {
+    Data([0x30]) + derLength(content.count) + content
+}
+
+/// Encodes one object-identifier component in base-128 form.
 private func derBase128(_ value: Int) -> [UInt8] {
     var remaining = value
     var bytes = [UInt8(remaining & 0x7f)]
@@ -1855,6 +1937,7 @@ private func derBase128(_ value: Int) -> [UInt8] {
     return bytes
 }
 
+/// Encodes a DER definite length for test-only attribute construction.
 private func derLength(_ length: Int) -> Data {
     if length < 0x80 {
         return Data([UInt8(length)])
@@ -1868,6 +1951,7 @@ private func derLength(_ length: Int) -> Data {
     return Data([0x80 | UInt8(bytes.count)] + bytes)
 }
 
+/// Returns a bundle-relative path while rejecting paths outside the fixture root.
 private func relativePath(_ url: URL, under rootURL: URL) throws -> String {
     let rootPath = rootURL.standardizedFileURL.path
     let path = url.standardizedFileURL.path
@@ -1877,6 +1961,7 @@ private func relativePath(_ url: URL, under rootURL: URL) throws -> String {
     return String(path.dropFirst(rootPath.count + 1))
 }
 
+/// Locates an OpenSSL executable that supports legacy PKCS #12 providers.
 private func legacyCapableOpenSSLURL() throws -> URL {
     let environment = ProcessInfo.processInfo.environment
     let candidates = [
@@ -1898,6 +1983,7 @@ private func legacyCapableOpenSSLURL() throws -> URL {
     throw XCTSkip("OpenSSL with PKCS#12 -legacy support is required for RC4 PBE fixtures.")
 }
 
+/// Reports whether an OpenSSL executable accepts the PKCS #12 legacy-provider option.
 private func opensslSupportsPKCS12LegacyProvider(_ url: URL) -> Bool {
     let process = Process()
     process.executableURL = url

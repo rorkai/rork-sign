@@ -61,9 +61,8 @@ enum CMSGenerator {
     /// `messageDigest` remains the normative CMS binding to the detached
     /// primary CodeDirectory content. The Apple-private attributes describe the
     /// cdhashes used by code-signing tools: a plist of 20-byte cdhash values, plus
-    /// a DER sequence naming SHA-256 and the complete modern digest. When an
-    /// alternate CodeDirectory exists, that SHA-256 digest belongs to the
-    /// alternate directory while the CMS still signs the primary directory.
+    /// one DER sequence per CodeDirectory naming its hash algorithm and complete
+    /// digest. The CMS still signs only the primary CodeDirectory.
     private static func signedAttributes(for content: Data, alternateCodeDirectory: Data) -> [Data] {
         [
             attribute(
@@ -87,10 +86,10 @@ enum CMSGenerator {
             ),
             attribute(
                 OID.appleCDHashSequence,
-                values: [cdHashSequence(
+                values: cdHashSequences(
                     primaryCodeDirectory: content,
                     alternateCodeDirectory: alternateCodeDirectory
-                )]
+                )
             ),
         ]
     }
@@ -129,15 +128,46 @@ enum CMSGenerator {
         """.utf8)
     }
 
-    /// Builds Apple's structured SHA-256 cdhash attribute value.
-    private static func cdHashSequence(primaryCodeDirectory: Data, alternateCodeDirectory: Data) -> Data {
-        let digestInput = alternateCodeDirectory.isEmpty ? primaryCodeDirectory : alternateCodeDirectory
-        return DER.sequence(
-            DER.objectIdentifier(OID.sha256)
-                + DER.octetString(Data(SHA256.hash(data: digestInput)))
+    /// Builds Apple's structured cdhash attribute values.
+    ///
+    /// Compatible signatures must describe both embedded CodeDirectories. Apple
+    /// emits one SHA-1 sequence for the primary directory and one SHA-256 sequence
+    /// for the alternate directory. SHA-256-only signatures emit just the primary
+    /// SHA-256 sequence.
+    private static func cdHashSequences(
+        primaryCodeDirectory: Data,
+        alternateCodeDirectory: Data
+    ) -> [Data] {
+        if alternateCodeDirectory.isEmpty {
+            return [
+                cdHashSequence(
+                    algorithmOID: OID.sha256,
+                    digest: Data(SHA256.hash(data: primaryCodeDirectory))
+                ),
+            ]
+        }
+
+        return [
+            cdHashSequence(
+                algorithmOID: OID.sha1,
+                digest: Data(Insecure.SHA1.hash(data: primaryCodeDirectory))
+            ),
+            cdHashSequence(
+                algorithmOID: OID.sha256,
+                digest: Data(SHA256.hash(data: alternateCodeDirectory))
+            ),
+        ]
+    }
+
+    /// Encodes one algorithm-and-digest pair for Apple's structured cdhash attribute.
+    private static func cdHashSequence(algorithmOID: String, digest: Data) -> Data {
+        DER.sequence(
+            DER.objectIdentifier(algorithmOID)
+                + DER.octetString(digest)
         )
     }
 
+    /// Builds the CMS SignedData envelope containing certificates and signer information.
     private static func signedData(
         certificatesDER: [Data],
         certificateInfo: CertificateInfo,
@@ -161,6 +191,7 @@ enum CMSGenerator {
         )
     }
 
+    /// Builds the CMS SignerInfo record for the selected certificate and signature.
     private static func signerInfo(
         certificateInfo: CertificateInfo,
         signedAttributes: [Data],
@@ -183,6 +214,7 @@ enum CMSGenerator {
         )
     }
 
+    /// Encodes a CMS AlgorithmIdentifier with optional DER NULL parameters.
     private static func algorithmIdentifier(_ oid: String, includeNullParameters: Bool = true) -> Data {
         DER.sequence(DER.objectIdentifier(oid) + (includeNullParameters ? DER.null() : Data()))
     }
@@ -197,32 +229,47 @@ enum CMSGenerator {
         algorithmIdentifier(oid, includeNullParameters: false)
     }
 
+    /// Encodes a CMS signed attribute containing a DER SET of values.
     private static func attribute(_ oid: String, values: [Data]) -> Data {
         DER.sequence(DER.objectIdentifier(oid) + DER.set(values))
     }
 }
 
+/// Object identifiers used by the CMS envelope and Apple code-signing attributes.
 private enum OID {
+    /// PKCS #7 data content type.
     static let data = "1.2.840.113549.1.7.1"
+    /// PKCS #7 signed-data content type.
     static let signedData = "1.2.840.113549.1.7.2"
+    /// CMS content-type signed attribute.
     static let contentType = "1.2.840.113549.1.9.3"
+    /// CMS message-digest signed attribute.
     static let messageDigest = "1.2.840.113549.1.9.4"
+    /// CMS signing-time signed attribute.
     static let signingTime = "1.2.840.113549.1.9.5"
+    /// SHA-1 digest algorithm identifier used by the primary compatible CodeDirectory.
+    static let sha1 = "1.3.14.3.2.26"
+    /// SHA-256 digest algorithm identifier.
     static let sha256 = "2.16.840.1.101.3.4.2.1"
+    /// Apple signed attribute containing a plist of truncated CodeDirectory hashes.
     static let appleCDHashesPlist = "1.2.840.113635.100.9.1"
+    /// Apple signed attribute containing structured CodeDirectory hash records.
     static let appleCDHashSequence = "1.2.840.113635.100.9.2"
 }
 
 /// Minimal DER writer for CMS.
 private enum DER {
+    /// Encodes content as a DER sequence.
     static func sequence(_ content: Data) -> Data {
         tagged(0x30, content)
     }
 
+    /// Encodes and canonically orders elements as a DER set.
     static func set(_ elements: [Data]) -> Data {
         tagged(0x31, elements.sortedLexicographically().reduce(Data(), +))
     }
 
+    /// Encodes a dotted-decimal object identifier.
     static func objectIdentifier(_ oid: String) -> Data {
         let components = oid.split(separator: ".").compactMap { Int($0) }
         precondition(components.count >= 2)
@@ -233,6 +280,7 @@ private enum DER {
         return tagged(0x06, content)
     }
 
+    /// Encodes a nonnegative integer using the minimal DER representation.
     static func integer(_ value: Int) -> Data {
         precondition(value >= 0)
         var remaining = value
@@ -247,10 +295,12 @@ private enum DER {
         return tagged(0x02, Data(bytes))
     }
 
+    /// Encodes raw content as a DER octet string.
     static func octetString(_ content: Data) -> Data {
         tagged(0x04, content)
     }
 
+    /// Returns the canonical DER NULL value.
     static func null() -> Data {
         Data([0x05, 0x00])
     }
@@ -273,18 +323,22 @@ private enum DER {
         return tagged(0x17, Data(value.utf8))
     }
 
+    /// Encodes a context-specific explicitly tagged value.
     static func explicit(_ tagNumber: UInt8, _ encodedValue: Data) -> Data {
         tagged(0xa0 | tagNumber, encodedValue)
     }
 
+    /// Encodes content with a context-specific implicit tag.
     static func `implicit`(_ tagNumber: UInt8, _ content: Data) -> Data {
         tagged(0xa0 | tagNumber, content)
     }
 
+    /// Encodes canonically ordered elements as a context-specific implicit set.
     static func implicitSet(_ tagNumber: UInt8, _ elements: [Data]) -> Data {
         tagged(0xa0 | tagNumber, elements.sortedLexicographically().reduce(Data(), +))
     }
 
+    /// Extracts the content bytes from a locally generated DER value.
     static func contentBytes(of encodedValue: Data) -> Data {
         var reader = DERReader(encodedValue)
         // The value is produced locally, so failure here indicates a programmer
@@ -292,10 +346,12 @@ private enum DER {
         return (try? reader.readNode().content) ?? Data()
     }
 
+    /// Prefixes content with a DER tag and encoded length.
     private static func tagged(_ tag: UInt8, _ content: Data) -> Data {
         Data([tag]) + length(content.count) + content
     }
 
+    /// Encodes a DER definite length.
     private static func length(_ length: Int) -> Data {
         if length < 0x80 {
             return Data([UInt8(length)])
@@ -310,6 +366,7 @@ private enum DER {
         return Data([0x80 | UInt8(bytes.count)] + bytes)
     }
 
+    /// Encodes one object-identifier component in base-128 form.
     private static func base128(_ value: Int) -> [UInt8] {
         var remaining = value
         var bytes = [UInt8(remaining & 0x7f)]
@@ -322,7 +379,9 @@ private enum DER {
     }
 }
 
+/// Canonical ordering helpers for DER-encoded values.
 private extension Array where Element == Data {
+    /// Returns the encoded values in lexicographic byte order.
     func sortedLexicographically() -> [Data] {
         sorted { lhs, rhs in
             lhs.lexicographicallyPrecedes(rhs)
@@ -330,7 +389,9 @@ private extension Array where Element == Data {
     }
 }
 
+/// Data slicing helpers used while constructing code-signing attributes.
 private extension Data {
+    /// Returns the requested prefix as standalone `Data`.
     func prefixData(_ count: Int) -> Data {
         Data(prefix(count))
     }
