@@ -11,6 +11,10 @@ struct OpenSSLFixture {
     let certificateURL: URL
     let privateKeyURL: URL
 
+    /// Creates a temporary self-signed identity for cryptographic tests.
+    ///
+    /// - Parameter codeSigning: Adds digital-signature key usage and the code-signing
+    ///   extended key usage when the identity will be passed to Apple's `codesign`.
     init(codeSigning: Bool = false) throws {
         let openssl = URL(fileURLWithPath: "/usr/bin/openssl")
         guard FileManager.default.fileExists(atPath: openssl.path) else {

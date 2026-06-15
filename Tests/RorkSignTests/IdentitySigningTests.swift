@@ -1261,6 +1261,7 @@ final class IdentitySigningTests: XCTestCase {
         try fixture.verifyDetachedCMS(cms, content: primaryCodeDirectory)
     }
 
+    /// Verifies compatible CMS output with Apple's native code-signature integrity checker.
     func testCompatibleIdentitySignaturePassesAppleCodesignIntegrityValidation() throws {
         let codesignURL = URL(fileURLWithPath: "/usr/bin/codesign")
         let executableURL = URL(fileURLWithPath: "/bin/echo")
@@ -1830,6 +1831,7 @@ final class IdentitySigningTests: XCTestCase {
     }
 }
 
+/// Creates an app fixture containing a signable executable and nested framework.
 private func makeIdentityBundleFixture(bundleIdentifier: String = "app.rork.identity.host") throws -> URL {
     let rootURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -1852,6 +1854,7 @@ private func makeIdentityBundleFixture(bundleIdentifier: String = "app.rork.iden
     return bundleURL
 }
 
+/// Writes the minimal bundle metadata required by identity-signing fixtures.
 private func writeIdentityInfoPlist(bundleIdentifier: String, executableName: String, to url: URL) throws {
     let plist = """
     <?xml version="1.0" encoding="UTF-8"?>
@@ -1861,6 +1864,7 @@ private func writeIdentityInfoPlist(bundleIdentifier: String, executableName: St
     try Data(plist.utf8).write(to: url)
 }
 
+/// Builds a provisioning-profile plist containing one authorized certificate.
 private func identityProvisioningProfile(
     bundleIdentifier: String,
     certificateDER: Data,
@@ -1873,6 +1877,7 @@ private func identityProvisioningProfile(
     )
 }
 
+/// Builds a provisioning-profile plist containing the authorized certificates.
 private func identityProvisioningProfile(
     bundleIdentifier: String,
     certificatesDER: [Data],
@@ -1894,6 +1899,7 @@ private func identityProvisioningProfile(
     )
 }
 
+/// Encodes a dotted-decimal object identifier for CMS attribute assertions.
 private func derObjectIdentifier(_ oid: String) -> Data {
     let components = oid.split(separator: ".").compactMap { Int($0) }
     precondition(components.count >= 2)
@@ -1904,14 +1910,17 @@ private func derObjectIdentifier(_ oid: String) -> Data {
     return Data([0x06]) + derLength(content.count) + content
 }
 
+/// Encodes raw content as a DER octet string for CMS attribute assertions.
 private func derOctetString(_ content: Data) -> Data {
     Data([0x04]) + derLength(content.count) + content
 }
 
+/// Encodes prebuilt DER elements as one DER sequence for CMS attribute assertions.
 private func derSequence(_ content: Data) -> Data {
     Data([0x30]) + derLength(content.count) + content
 }
 
+/// Encodes one object-identifier component in base-128 form.
 private func derBase128(_ value: Int) -> [UInt8] {
     var remaining = value
     var bytes = [UInt8(remaining & 0x7f)]
@@ -1923,6 +1932,7 @@ private func derBase128(_ value: Int) -> [UInt8] {
     return bytes
 }
 
+/// Encodes a DER definite length for test-only attribute construction.
 private func derLength(_ length: Int) -> Data {
     if length < 0x80 {
         return Data([UInt8(length)])
@@ -1936,6 +1946,7 @@ private func derLength(_ length: Int) -> Data {
     return Data([0x80 | UInt8(bytes.count)] + bytes)
 }
 
+/// Returns a bundle-relative path while rejecting paths outside the fixture root.
 private func relativePath(_ url: URL, under rootURL: URL) throws -> String {
     let rootPath = rootURL.standardizedFileURL.path
     let path = url.standardizedFileURL.path
@@ -1945,6 +1956,7 @@ private func relativePath(_ url: URL, under rootURL: URL) throws -> String {
     return String(path.dropFirst(rootPath.count + 1))
 }
 
+/// Locates an OpenSSL executable that supports legacy PKCS #12 providers.
 private func legacyCapableOpenSSLURL() throws -> URL {
     let environment = ProcessInfo.processInfo.environment
     let candidates = [
@@ -1966,6 +1978,7 @@ private func legacyCapableOpenSSLURL() throws -> URL {
     throw XCTSkip("OpenSSL with PKCS#12 -legacy support is required for RC4 PBE fixtures.")
 }
 
+/// Reports whether an OpenSSL executable accepts the PKCS #12 legacy-provider option.
 private func opensslSupportsPKCS12LegacyProvider(_ url: URL) -> Bool {
     let process = Process()
     process.executableURL = url
