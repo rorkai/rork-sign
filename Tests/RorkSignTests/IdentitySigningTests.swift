@@ -1200,12 +1200,17 @@ final class IdentitySigningTests: XCTestCase {
         )
         let codeDirectorySHA256 = Data(SHA256.hash(data: content))
         let cdHashBase64 = Data(codeDirectorySHA256.prefix(20)).base64EncodedString()
+        let cdHashSequence = derSequence(
+            derObjectIdentifier("2.16.840.1.101.3.4.2.1")
+                + derOctetString(codeDirectorySHA256)
+        )
 
         XCTAssertNotNil(cms.range(of: derObjectIdentifier("1.2.840.113635.100.9.1")))
         XCTAssertNotNil(cms.range(of: derObjectIdentifier("1.2.840.113635.100.9.2")))
         XCTAssertNotNil(cms.range(of: derObjectIdentifier("1.2.840.113549.1.9.5")))
         XCTAssertNotNil(cms.range(of: Data("cdhashes".utf8)))
         XCTAssertNotNil(cms.range(of: Data(cdHashBase64.utf8)))
+        XCTAssertNotNil(cms.range(of: cdHashSequence))
         XCTAssertGreaterThanOrEqual(cms.nonOverlappingOccurrences(of: codeDirectorySHA256), 2)
 
         try fixture.verifyDetachedCMS(cms, content: content)
