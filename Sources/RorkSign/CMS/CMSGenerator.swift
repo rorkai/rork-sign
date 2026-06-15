@@ -61,9 +61,8 @@ enum CMSGenerator {
     /// `messageDigest` remains the normative CMS binding to the detached
     /// primary CodeDirectory content. The Apple-private attributes describe the
     /// cdhashes used by code-signing tools: a plist of 20-byte cdhash values, plus
-    /// a DER sequence naming SHA-256 and the complete modern digest. When an
-    /// alternate CodeDirectory exists, that SHA-256 digest belongs to the
-    /// alternate directory while the CMS still signs the primary directory.
+    /// one DER sequence per CodeDirectory naming its hash algorithm and complete
+    /// digest. The CMS still signs only the primary CodeDirectory.
     private static func signedAttributes(for content: Data, alternateCodeDirectory: Data) -> [Data] {
         [
             attribute(
@@ -87,10 +86,10 @@ enum CMSGenerator {
             ),
             attribute(
                 OID.appleCDHashSequence,
-                values: [cdHashSequence(
+                values: cdHashSequences(
                     primaryCodeDirectory: content,
                     alternateCodeDirectory: alternateCodeDirectory
-                )]
+                )
             ),
         ]
     }
@@ -129,12 +128,41 @@ enum CMSGenerator {
         """.utf8)
     }
 
-    /// Builds Apple's structured SHA-256 cdhash attribute value.
-    private static func cdHashSequence(primaryCodeDirectory: Data, alternateCodeDirectory: Data) -> Data {
-        let digestInput = alternateCodeDirectory.isEmpty ? primaryCodeDirectory : alternateCodeDirectory
-        return DER.sequence(
-            DER.objectIdentifier(OID.sha256)
-                + DER.octetString(Data(SHA256.hash(data: digestInput)))
+    /// Builds Apple's structured cdhash attribute values.
+    ///
+    /// Compatible signatures must describe both embedded CodeDirectories. Apple
+    /// emits one SHA-1 sequence for the primary directory and one SHA-256 sequence
+    /// for the alternate directory. SHA-256-only signatures emit just the primary
+    /// SHA-256 sequence.
+    private static func cdHashSequences(
+        primaryCodeDirectory: Data,
+        alternateCodeDirectory: Data
+    ) -> [Data] {
+        if alternateCodeDirectory.isEmpty {
+            return [
+                cdHashSequence(
+                    algorithmOID: OID.sha256,
+                    digest: Data(SHA256.hash(data: primaryCodeDirectory))
+                ),
+            ]
+        }
+
+        return [
+            cdHashSequence(
+                algorithmOID: OID.sha1,
+                digest: Data(Insecure.SHA1.hash(data: primaryCodeDirectory))
+            ),
+            cdHashSequence(
+                algorithmOID: OID.sha256,
+                digest: Data(SHA256.hash(data: alternateCodeDirectory))
+            ),
+        ]
+    }
+
+    private static func cdHashSequence(algorithmOID: String, digest: Data) -> Data {
+        DER.sequence(
+            DER.objectIdentifier(algorithmOID)
+                + DER.octetString(digest)
         )
     }
 
@@ -208,6 +236,7 @@ private enum OID {
     static let contentType = "1.2.840.113549.1.9.3"
     static let messageDigest = "1.2.840.113549.1.9.4"
     static let signingTime = "1.2.840.113549.1.9.5"
+    static let sha1 = "1.3.14.3.2.26"
     static let sha256 = "2.16.840.1.101.3.4.2.1"
     static let appleCDHashesPlist = "1.2.840.113635.100.9.1"
     static let appleCDHashSequence = "1.2.840.113635.100.9.2"

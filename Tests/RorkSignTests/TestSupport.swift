@@ -11,7 +11,7 @@ struct OpenSSLFixture {
     let certificateURL: URL
     let privateKeyURL: URL
 
-    init() throws {
+    init(codeSigning: Bool = false) throws {
         let openssl = URL(fileURLWithPath: "/usr/bin/openssl")
         guard FileManager.default.fileExists(atPath: openssl.path) else {
             throw XCTSkip("OpenSSL is required for CMS verification.")
@@ -23,20 +23,24 @@ struct OpenSSLFixture {
 
         privateKeyURL = directory.appendingPathComponent("key.pem")
         certificateURL = directory.appendingPathComponent("cert.pem")
-        try runCommand(
-            openssl,
-            arguments: [
-                "req",
-                "-x509",
-                "-newkey", "rsa:2048",
-                "-keyout", privateKeyURL.path,
-                "-out", certificateURL.path,
-                "-nodes",
-                "-subj", "/CN=RorkSignTest/O=Rork Sign Tests",
-                "-days", "1",
-                "-sha256",
-            ]
-        )
+        var certificateArguments = [
+            "req",
+            "-x509",
+            "-newkey", "rsa:2048",
+            "-keyout", privateKeyURL.path,
+            "-out", certificateURL.path,
+            "-nodes",
+            "-subj", "/CN=RorkSignTest/O=Rork Sign Tests",
+            "-days", "1",
+            "-sha256",
+        ]
+        if codeSigning {
+            certificateArguments.append(contentsOf: [
+                "-addext", "keyUsage=critical,digitalSignature",
+                "-addext", "extendedKeyUsage=codeSigning",
+            ])
+        }
+        try runCommand(openssl, arguments: certificateArguments)
 
         certificatePEM = try String(contentsOf: certificateURL, encoding: .utf8)
         privateKeyPEM = try String(contentsOf: privateKeyURL, encoding: .utf8)

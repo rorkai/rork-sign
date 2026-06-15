@@ -1244,12 +1244,70 @@ final class IdentitySigningTests: XCTestCase {
         let primaryCDHash = Data(Insecure.SHA1.hash(data: primaryCodeDirectory))
         let alternateCDHash = Data(SHA256.hash(data: alternateCodeDirectory)).prefix(20)
         let alternateDigest = Data(SHA256.hash(data: alternateCodeDirectory))
+        let primarySequence = derSequence(
+            derObjectIdentifier("1.3.14.3.2.26")
+                + derOctetString(primaryCDHash)
+        )
+        let alternateSequence = derSequence(
+            derObjectIdentifier("2.16.840.1.101.3.4.2.1")
+                + derOctetString(alternateDigest)
+        )
 
         XCTAssertNotNil(cms.range(of: Data(primaryCDHash.base64EncodedString().utf8)))
         XCTAssertNotNil(cms.range(of: Data(Data(alternateCDHash).base64EncodedString().utf8)))
-        XCTAssertNotNil(cms.range(of: alternateDigest))
+        XCTAssertNotNil(cms.range(of: primarySequence))
+        XCTAssertNotNil(cms.range(of: alternateSequence))
 
         try fixture.verifyDetachedCMS(cms, content: primaryCodeDirectory)
+    }
+
+    func testCompatibleIdentitySignaturePassesAppleCodesignIntegrityValidation() throws {
+        let codesignURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        let executableURL = URL(fileURLWithPath: "/bin/echo")
+        guard FileManager.default.isExecutableFile(atPath: codesignURL.path),
+              FileManager.default.isExecutableFile(atPath: executableURL.path)
+        else {
+            throw XCTSkip("Apple codesign verification requires macOS.")
+        }
+
+        let fixture = try OpenSSLFixture(codeSigning: true)
+        defer {
+            fixture.remove()
+        }
+
+        let signed = try RorkSigner.signMachOWithIdentity(
+            Data(contentsOf: executableURL),
+            bundleIdentifier: "app.rork.sign.codesign-compatible",
+            identity: fixture.identity,
+            codeDirectoryHashingMode: .compatible
+        )
+        let signedURL = fixture.directory.appendingPathComponent("codesign-compatible")
+        try signed.write(to: signedURL)
+
+        let process = Process()
+        process.executableURL = codesignURL
+        process.arguments = [
+            "--verify",
+            "--strict",
+            "--verbose=4",
+            signedURL.path,
+        ]
+        var environment = ProcessInfo.processInfo.environment
+        environment["LC_ALL"] = "C"
+        process.environment = environment
+
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        process.waitUntilExit()
+
+        let message = String(
+            decoding: output.fileHandleForReading.readDataToEndOfFile(),
+            as: UTF8.self
+        )
+        XCTAssertTrue(message.contains("valid on disk"), message)
+        XCTAssertFalse(message.localizedCaseInsensitiveContains("invalid signature"), message)
     }
 
     func testSignsMachOWithIdentityAndEmbedsVerifiableCMSBlob() throws {
@@ -1842,6 +1900,14 @@ private func derObjectIdentifier(_ oid: String) -> Data {
         content.append(contentsOf: derBase128(component))
     }
     return Data([0x06]) + derLength(content.count) + content
+}
+
+private func derOctetString(_ content: Data) -> Data {
+    Data([0x04]) + derLength(content.count) + content
+}
+
+private func derSequence(_ content: Data) -> Data {
+    Data([0x30]) + derLength(content.count) + content
 }
 
 private func derBase128(_ value: Int) -> [UInt8] {
