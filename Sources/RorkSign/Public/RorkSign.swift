@@ -1540,7 +1540,8 @@ public struct BundleSigningOptions: Equatable {
     /// custom backend according to their environment.
     public var diagnostics: SigningDiagnostics
 
-    /// Creates explicit bundle-signing assets keyed by `CFBundleIdentifier`.
+    /// Creates bundle-signing options using the root bundle identifier for its
+    /// CodeDirectory.
     ///
     /// `defaultEntitlementsXML` is used only for the root executable when no
     /// identifier-specific entitlement entry or profile-derived fallback
@@ -1552,7 +1553,6 @@ public struct BundleSigningOptions: Equatable {
         entitlementsByBundleIdentifier: [String: String] = [:],
         provisioningProfilesByBundleIdentifier: [String: Data] = [:],
         embedProvisioningProfiles: Bool = true,
-        codeDirectoryIdentifier: String? = nil,
         codeDirectoryHashingMode: CodeDirectoryHashingMode = .compatible,
         dylibInjections: [BundleDylibInjection] = [],
         dylibLoadCommandsToRemove: [String] = [],
@@ -1564,12 +1564,42 @@ public struct BundleSigningOptions: Equatable {
         self.entitlementsByBundleIdentifier = entitlementsByBundleIdentifier
         self.provisioningProfilesByBundleIdentifier = provisioningProfilesByBundleIdentifier
         self.embedProvisioningProfiles = embedProvisioningProfiles
-        self.codeDirectoryIdentifier = codeDirectoryIdentifier
+        self.codeDirectoryIdentifier = nil
         self.codeDirectoryHashingMode = codeDirectoryHashingMode
         self.dylibInjections = dylibInjections
         self.dylibLoadCommandsToRemove = dylibLoadCommandsToRemove
         self.signingCache = signingCache
         self.diagnostics = diagnostics
+    }
+
+    /// Creates bundle-signing options with an explicit root CodeDirectory
+    /// identifier.
+    public init(
+        defaultEntitlementsXML: String = "",
+        rootProvisioningProfile: Data? = nil,
+        entitlementsByBundleIdentifier: [String: String] = [:],
+        provisioningProfilesByBundleIdentifier: [String: Data] = [:],
+        embedProvisioningProfiles: Bool = true,
+        codeDirectoryIdentifier: String?,
+        codeDirectoryHashingMode: CodeDirectoryHashingMode = .compatible,
+        dylibInjections: [BundleDylibInjection] = [],
+        dylibLoadCommandsToRemove: [String] = [],
+        signingCache: SigningCacheOptions? = nil,
+        diagnostics: SigningDiagnostics = .disabled
+    ) {
+        self.init(
+            defaultEntitlementsXML: defaultEntitlementsXML,
+            rootProvisioningProfile: rootProvisioningProfile,
+            entitlementsByBundleIdentifier: entitlementsByBundleIdentifier,
+            provisioningProfilesByBundleIdentifier: provisioningProfilesByBundleIdentifier,
+            embedProvisioningProfiles: embedProvisioningProfiles,
+            codeDirectoryHashingMode: codeDirectoryHashingMode,
+            dylibInjections: dylibInjections,
+            dylibLoadCommandsToRemove: dylibLoadCommandsToRemove,
+            signingCache: signingCache,
+            diagnostics: diagnostics
+        )
+        self.codeDirectoryIdentifier = codeDirectoryIdentifier
     }
 
     /// Compares semantic signing inputs while ignoring the diagnostics sink.
