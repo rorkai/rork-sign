@@ -14,8 +14,18 @@ enum BundleSigner {
     /// `.app`, `.appex`, `.bundle`, `.framework`, and `.xpc` bundles. It also
     /// signs standalone Mach-O files found inside a bundle before resource
     /// sealing so helper tools and dylibs are protected by the parent seal.
-    static func signAdHoc(bundleURL: URL, options: BundleSigningOptions) throws -> BundleSigningReport {
-        var context = BundleSigningContext(options: options)
+    ///
+    /// When supplied, `rootCodeDirectoryIdentifier` overrides only the root
+    /// executable's CodeDirectory identifier.
+    static func signAdHoc(
+        bundleURL: URL,
+        options: BundleSigningOptions,
+        rootCodeDirectoryIdentifier: String? = nil
+    ) throws -> BundleSigningReport {
+        var context = BundleSigningContext(
+            options: options,
+            rootCodeDirectoryIdentifier: rootCodeDirectoryIdentifier
+        )
         try signBundle(
             bundleURL,
             isRoot: true,
@@ -32,14 +42,19 @@ enum BundleSigner {
     }
 
     /// Signs `bundleURL` with identity-backed CMS signatures.
+    ///
+    /// When supplied, `rootCodeDirectoryIdentifier` overrides only the root
+    /// executable's CodeDirectory identifier.
     static func signWithIdentity(
         bundleURL: URL,
         identity: SigningIdentity,
-        options: BundleSigningOptions
+        options: BundleSigningOptions,
+        rootCodeDirectoryIdentifier: String? = nil
     ) throws -> BundleSigningReport {
         var context = BundleSigningContext(
             options: options,
-            profileValidationPolicy: .strictBundleIdentifier
+            profileValidationPolicy: .strictBundleIdentifier,
+            rootCodeDirectoryIdentifier: rootCodeDirectoryIdentifier
         )
         try signBundle(
             bundleURL,
@@ -100,9 +115,13 @@ enum BundleSigner {
         options: FrameworkSigningOptions
     ) throws -> BundleSigningReport {
         try validateFrameworkURL(frameworkURL)
+        let rootCodeDirectoryIdentifier = try normalizedCodeDirectoryIdentifier(
+            options.codeDirectoryIdentifier
+        )
         return try signAdHoc(
             bundleURL: frameworkURL,
-            options: options.bundleSigningOptions
+            options: options.bundleSigningOptions,
+            rootCodeDirectoryIdentifier: rootCodeDirectoryIdentifier
         )
     }
 
@@ -117,10 +136,14 @@ enum BundleSigner {
         options: FrameworkSigningOptions
     ) throws -> BundleSigningReport {
         try validateFrameworkURL(frameworkURL)
+        let rootCodeDirectoryIdentifier = try normalizedCodeDirectoryIdentifier(
+            options.codeDirectoryIdentifier
+        )
         return try signWithIdentity(
             bundleURL: frameworkURL,
             identity: identity,
-            options: options.bundleSigningOptions
+            options: options.bundleSigningOptions,
+            rootCodeDirectoryIdentifier: rootCodeDirectoryIdentifier
         )
     }
 
@@ -180,6 +203,27 @@ enum BundleSigner {
         guard url.pathExtension.lowercased() == "framework" else {
             throw RorkSignError.invalidBundle("Expected a .framework bundle: \(url.path).")
         }
+    }
+
+    /// Returns a normalized CodeDirectory identifier for the root framework
+    /// executable.
+    private static func normalizedCodeDirectoryIdentifier(_ identifier: String?) throws -> String? {
+        guard let identifier else {
+            return nil
+        }
+
+        let normalizedIdentifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedIdentifier.isEmpty else {
+            throw RorkSignError.invalidBundle(
+                "Framework CodeDirectory identifier is empty."
+            )
+        }
+        guard !normalizedIdentifier.contains("\u{0}") else {
+            throw RorkSignError.invalidBundle(
+                "Framework CodeDirectory identifier contains a NUL character."
+            )
+        }
+        return normalizedIdentifier
     }
 
     /// Recursively signs one bundle. Nested bundles are fully completed before
@@ -260,9 +304,15 @@ enum BundleSigner {
 
         let codeResources = try Data(contentsOf: codeResourcesURL)
         let infoPlist = try bundle.infoPlistData()
+        let codeDirectoryIdentifier: String
+        if isRoot, let rootCodeDirectoryIdentifier = context.rootCodeDirectoryIdentifier {
+            codeDirectoryIdentifier = rootCodeDirectoryIdentifier
+        } else {
+            codeDirectoryIdentifier = try bundle.requireIdentifier()
+        }
         try signCode(
             at: executableURL,
-            bundleIdentifier: try bundle.requireIdentifier(),
+            bundleIdentifier: codeDirectoryIdentifier,
             entitlementsXML: bundleEntitlementsXML,
             infoPlist: infoPlist,
             resourceDirectory: codeResources,
@@ -341,7 +391,7 @@ enum BundleSigner {
     ) {
         context.diagnostics.info(">>> Signing: \t\(bundle.url.path) ...")
         context.diagnostics.info(">>> AppName: \t\(bundle.displayName)")
-        context.diagnostics.info(">>> BundleId: \t\(bundle.identifier ?? "-")")
+        context.diagnostics.info(">>> BundleId: \t\(context.rootCodeDirectoryIdentifier ?? bundle.identifier ?? "-")")
         context.diagnostics.info(">>> Version: \t\(bundle.version)")
         context.diagnostics.info(">>> TeamId: \t\(signingMode.diagnosticsTeamIdentifier)")
         context.diagnostics.info(">>> SubjectCN: \t\(signingMode.diagnosticsSubjectCommonName)")
@@ -412,6 +462,7 @@ enum BundleSigner {
     }
 }
 
+/// Adapts framework-specific options to the shared recursive bundle signer.
 private extension FrameworkSigningOptions {
     /// Maps framework-specific options onto the shared bundle signer.
     ///
@@ -438,8 +489,13 @@ private extension FrameworkSigningOptions {
 /// temporary name, writes the temporary host identity, and later restores the
 /// bundle to its public shape.
 private struct HostedBundleSigningTransaction {
+    /// Location of the bundle Info.plist mutated during hosted signing.
     let infoPlistURL: URL
+
+    /// Exact Info.plist bytes restored after hosted signing.
     let originalInfoPlistData: Data
+
+    /// Temporary host executable copied into the guest bundle.
     let stubURL: URL
 
     /// Prepares the bundle for a hosted signing pass.
@@ -602,6 +658,7 @@ private struct HostedBundleSigningTransaction {
     }
 }
 
+/// Adds report filtering used when temporary hosted-signing code is removed.
 private extension Array where Element == URL {
     /// Removes one URL using standardized filesystem paths for comparison.
     func removing(_ removedURL: URL) -> [URL] {
@@ -614,6 +671,7 @@ private extension Array where Element == URL {
 
 /// Applies root-executable dylib edits before resources are sealed.
 private enum BundleDylibEditor {
+    /// Applies requested root-executable load-command and dylib-file mutations.
     static func apply(to bundle: SigningBundle, options: BundleSigningOptions) throws {
         guard !options.dylibInjections.isEmpty || !options.dylibLoadCommandsToRemove.isEmpty else {
             return
@@ -655,6 +713,7 @@ private enum BundleDylibEditor {
         try executable.write(to: executableURL)
     }
 
+    /// Validates and copies one injected dylib into its bundle-relative destination.
     private static func copyDylib(
         _ sourceURL: URL,
         into bundleURL: URL,
@@ -796,29 +855,55 @@ private enum BundleDylibEditor {
     }
 }
 
+/// Mutable report, policy, cache, and diagnostics state for one recursive pass.
 private struct BundleSigningContext {
+    /// Bundles whose CodeResources files were written during this pass.
     var sealedBundles: [URL] = []
+
+    /// Provisioning profiles embedded during this pass.
     var embeddedProvisioningProfiles: [URL] = []
+
+    /// Mach-O files signed during this pass.
     var signedCode: [URL] = []
+
+    /// Signed Mach-O files restored from the persistent cache.
     var cachedCode: [URL] = []
+
+    /// CodeDirectory digest layout applied to signed Mach-O files.
     var codeDirectoryHashingMode: CodeDirectoryHashingMode = .compatible
+
+    /// Bundle-identifier validation applied to provisioning profiles.
     var profileValidationPolicy: ProvisioningProfileValidationPolicy = .strictBundleIdentifier
+
+    /// CodeDirectory identifier used only for the root executable, when overridden.
+    let rootCodeDirectoryIdentifier: String?
+
+    /// Optional persistent cache for signed Mach-O outputs.
     var signatureCache: BundleSignatureCache?
+
+    /// Opt-in signing diagnostics sink.
     var diagnostics: SigningDiagnostics = .disabled
 
+    /// Creates one mutable signing context for a recursive bundle pass.
     init(
         options: BundleSigningOptions,
-        profileValidationPolicy: ProvisioningProfileValidationPolicy = .strictBundleIdentifier
+        profileValidationPolicy: ProvisioningProfileValidationPolicy = .strictBundleIdentifier,
+        rootCodeDirectoryIdentifier: String? = nil
     ) {
         self.codeDirectoryHashingMode = options.codeDirectoryHashingMode
         self.profileValidationPolicy = profileValidationPolicy
+        self.rootCodeDirectoryIdentifier = rootCodeDirectoryIdentifier
         self.signatureCache = options.signingCache.map { BundleSignatureCache(options: $0) }
         self.diagnostics = options.diagnostics
     }
 }
 
+/// Controls whether profile validation also enforces the bundle identifier.
 private enum ProvisioningProfileValidationPolicy {
+    /// Requires both certificate authorization and bundle-identifier coverage.
     case strictBundleIdentifier
+
+    /// Requires certificate authorization while preserving arbitrary bundle IDs.
     case certificateOnly
 }
 
@@ -879,6 +964,7 @@ enum BundleCodeSigningMode {
     }
 }
 
+/// Resolves shared entitlements and provisioning-profile options per bundle.
 private extension BundleSigningOptions {
     /// Selects entitlements for a bundle by identifier.
     ///
@@ -933,12 +1019,22 @@ private extension BundleSigningOptions {
 /// This deliberately does not use `Bundle` because these bundles are often
 /// being prepared off-device and should be treated as filesystem artifacts.
 private struct SigningBundle {
+    /// Filesystem URL of the bundle being signed.
     let url: URL
+
+    /// Bundle identifier read from Info.plist, when present.
     let identifier: String?
+
+    /// Main executable URL derived from Info.plist, when present.
     let executableURL: URL?
+
+    /// Human-readable bundle name used in diagnostics.
     let displayName: String
+
+    /// Bundle version used in diagnostics.
     let version: String
 
+    /// Reads and validates the signing metadata for one filesystem bundle.
     init(url: URL) throws {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
@@ -1001,6 +1097,7 @@ private struct SigningBundle {
         return try Data(contentsOf: infoURL)
     }
 
+    /// Reads an optional bundle Info.plist dictionary.
     private static func readInfoPlist(bundleURL: URL) throws -> [String: Any]? {
         let infoURL = bundleURL.appendingPathComponent("Info.plist")
         guard FileManager.default.fileExists(atPath: infoURL.path) else {
@@ -1015,6 +1112,7 @@ private struct SigningBundle {
         return dictionary
     }
 
+    /// Returns a trimmed non-empty string from an untyped plist value.
     private static func nonEmptyString(_ value: Any?) -> String? {
         guard let string = value as? String else {
             return nil
@@ -1032,6 +1130,7 @@ private struct SigningBundle {
 /// Finds signable code without descending into nested bundles that are signed by
 /// their own recursive pass.
 private enum BundleCodeScanner {
+    /// Bundle extensions that receive their own recursive signing pass.
     private static let nestedBundleExtensions: Set<String> = [
         "app",
         "appex",
@@ -1041,6 +1140,7 @@ private enum BundleCodeScanner {
         "xpc",
     ]
 
+    /// Finds nested bundles without descending into their contents.
     static func nestedBundles(in bundleURL: URL) throws -> [URL] {
         let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey]
         guard let enumerator = FileManager.default.enumerator(
@@ -1068,6 +1168,7 @@ private enum BundleCodeScanner {
         return bundles.sorted { $0.path < $1.path }
     }
 
+    /// Finds loose Mach-O files owned by the current bundle.
     static func standaloneCodeFiles(in bundle: SigningBundle) throws -> [URL] {
         let resourceKeys: Set<URLResourceKey> = [
             .isDirectoryKey,
@@ -1108,10 +1209,12 @@ private enum BundleCodeScanner {
         return codeFiles.sorted { $0.path < $1.path }
     }
 
+    /// Returns whether a directory extension identifies a nested bundle.
     private static func isNestedBundle(_ url: URL) -> Bool {
         nestedBundleExtensions.contains(url.pathExtension.lowercased())
     }
 
+    /// Returns whether scanner traversal should ignore a bundle-relative path.
     private static func shouldSkip(relativePath: String) -> Bool {
         let pathComponents = relativePath.split(separator: "/").map(String.init)
         return relativePath == "_CodeSignature"
@@ -1122,6 +1225,7 @@ private enum BundleCodeScanner {
             || pathComponents.contains(where: { $0 == "_WatchKitStub" })
     }
 
+    /// Reads a URL's directory resource flag without surfacing lookup failures.
     private static func isDirectory(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
@@ -1149,6 +1253,7 @@ private enum BundleCodeScanner {
     }
 }
 
+/// Provides traversal-safe bundle-relative path handling.
 private enum BundlePath {
     /// Produces a bundle-relative path and rejects traversal outside `rootURL`.
     static func relativePath(for url: URL, under rootURL: URL) throws -> String {
@@ -1161,6 +1266,7 @@ private enum BundlePath {
     }
 }
 
+/// Converts loose-code file names into conservative CodeDirectory identifiers.
 private enum IdentifierSanitizer {
     /// Converts a relative path into a conservative identifier suffix.
     static func sanitize(_ value: String) -> String {

@@ -779,6 +779,14 @@ public final class FrameworkSigningOptionsObjC: NSObject {
     /// Entitlement plist XML supplied for the framework executable.
     @objc public var entitlementsXML: String
 
+    /// The identifier written to the framework executable's CodeDirectory.
+    ///
+    /// When `nil`, the signer uses the framework's `CFBundleIdentifier`.
+    /// The override does not rewrite `Info.plist` or nested-code identifiers.
+    /// Surrounding whitespace is ignored; empty values and embedded NUL
+    /// characters are rejected before signing.
+    @objc public var codeDirectoryIdentifier: String?
+
     /// CodeDirectory digest layout used for every signed Mach-O.
     @objc public var codeDirectoryHashingMode: CodeDirectoryHashingModeObjC
 
@@ -819,6 +827,7 @@ public final class FrameworkSigningOptionsObjC: NSObject {
     /// Creates default framework-signing options.
     @objc public override init() {
         entitlementsXML = ""
+        codeDirectoryIdentifier = nil
         codeDirectoryHashingMode = .compatible
         signingCache = nil
         logLevel = .none
@@ -829,7 +838,7 @@ public final class FrameworkSigningOptionsObjC: NSObject {
 
     /// Builds Swift framework-signing options from Objective-C-compatible fields.
     func coreValue() -> RorkSign.FrameworkSigningOptions {
-        RorkSign.FrameworkSigningOptions(
+        var options = RorkSign.FrameworkSigningOptions(
             entitlementsXML: entitlementsXML,
             codeDirectoryHashingMode: codeDirectoryHashingMode.coreValue,
             signingCache: signingCache?.coreValue,
@@ -839,6 +848,8 @@ public final class FrameworkSigningOptionsObjC: NSObject {
                 logger: logger
             )
         )
+        options.codeDirectoryIdentifier = codeDirectoryIdentifier
+        return options
     }
 }
 

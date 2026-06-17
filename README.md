@@ -379,24 +379,29 @@ try RorkSigner.signIPAWithIdentity(
 )
 ```
 
-Sign a framework directly:
+When a framework is loaded under the host app's local provisioning profile,
+sign its main executable with the host bundle identifier:
 
 ```swift
 let frameworkURL = URL(fileURLWithPath: "Demo.framework")
 let profile = try Data(contentsOf: URL(fileURLWithPath: "app.mobileprovision"))
 let credential = try Data(contentsOf: URL(fileURLWithPath: "dev.p12"))
+var frameworkOptions = FrameworkSigningOptions()
+frameworkOptions.codeDirectoryIdentifier = Bundle.main.bundleIdentifier
 
 try RorkSigner.signFrameworkWithCredential(
     at: frameworkURL,
     provisioningProfileData: profile,
     credentialData: credential,
-    password: "password"
+    password: "password",
+    options: frameworkOptions
 )
 ```
 
 Framework signing seals resources and signs the framework executable in place.
 It does not embed provisioning profiles or copy app entitlements from the
-profile by default.
+profile by default. Omit `codeDirectoryIdentifier` to preserve the framework's
+`CFBundleIdentifier`.
 
 Sign a hosted bundle for a runtime that loads guest code from an installed host:
 
@@ -527,10 +532,11 @@ RKBundleSigningReport *report =
                                     error:&error];
 ```
 
-Sign a framework directly:
+Sign a framework with the host app's CodeDirectory identifier:
 
 ```objc
 RKFrameworkSigningOptions *frameworkOptions = [[RKFrameworkSigningOptions alloc] init];
+frameworkOptions.codeDirectoryIdentifier = NSBundle.mainBundle.bundleIdentifier;
 frameworkOptions.codeDirectoryHashingMode = RKCodeDirectoryHashingModeCompatible;
 
 RKBundleSigningReport *frameworkReport =
