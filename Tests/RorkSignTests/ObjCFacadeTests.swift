@@ -15,8 +15,11 @@ final class ObjCFacadeTests: XCTestCase {
         addTeardownBlock {
             try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
         }
+        let codeDirectoryIdentifier = "app.rork.objc.adhoc.host"
+        let options = BundleSigningOptionsObjC()
+        options.codeDirectoryIdentifier = codeDirectoryIdentifier
 
-        let report = try Signer().signBundleAdHoc(at: bundleURL, options: nil)
+        let report = try Signer().signBundleAdHoc(at: bundleURL, options: options)
 
         XCTAssertEqual(report.sealedBundleURLs, [bundleURL])
         XCTAssertEqual(report.embeddedProvisioningProfileURLs, [])
@@ -26,6 +29,12 @@ final class ObjCFacadeTests: XCTestCase {
             FileManager.default.fileExists(
                 atPath: bundleURL.appendingPathComponent("_CodeSignature/CodeResources").path
             )
+        )
+        XCTAssertEqual(
+            try RorkSigner.checkMachOCodeSignatures(
+                at: bundleURL.appendingPathComponent("Host")
+            ).first?.codeDirectories.map(\.identifier),
+            [codeDirectoryIdentifier, codeDirectoryIdentifier]
         )
     }
 
@@ -305,8 +314,9 @@ final class ObjCFacadeTests: XCTestCase {
         let hostExecutableURL = bundleURL.deletingLastPathComponent().appendingPathComponent("HostStubSource")
         try Fixtures.machO64WithCodeSignature().write(to: hostExecutableURL)
         let originalInfoPlist = try Data(contentsOf: bundleURL.appendingPathComponent("Info.plist"))
+        let hostBundleIdentifier = "app.rork.objc.hosted.host"
         let profile = try objcFacadeProvisioningProfile(
-            bundleIdentifier: "app.rork.objc.hosted.host",
+            bundleIdentifier: hostBundleIdentifier,
             certificateDER: fixture.identity.certificateDER
         )
         addTeardownBlock {
@@ -315,7 +325,7 @@ final class ObjCFacadeTests: XCTestCase {
 
         let options = HostedBundleSigningOptionsObjC(
             hostExecutableURL: hostExecutableURL,
-            hostBundleIdentifier: "app.rork.objc.hosted.host"
+            hostBundleIdentifier: hostBundleIdentifier
         )
         let report = try Signer().signHostedBundleWithCredential(
             at: bundleURL,
@@ -332,6 +342,16 @@ final class ObjCFacadeTests: XCTestCase {
         XCTAssertEqual(
             report.signedCodeURLs.map { $0.standardizedFileURL },
             [bundleURL.appendingPathComponent("Host").standardizedFileURL]
+        )
+
+        let codeDirectories = try XCTUnwrap(
+            RorkSigner.checkMachOCodeSignatures(
+                at: bundleURL.appendingPathComponent("Host")
+            ).first?.codeDirectories
+        )
+        XCTAssertEqual(
+            codeDirectories.map(\.identifier),
+            [hostBundleIdentifier, hostBundleIdentifier]
         )
     }
 
@@ -502,8 +522,12 @@ private final class ObjCFacadeSigningLogger: NSObject, SigningLoggerObjC {
     }
 }
 
+/// App and extension locations used by Objective-C inspection tests.
 private struct ObjCFacadeAppBundleFixture {
+    /// Root app bundle location.
     let bundleURL: URL
+
+    /// Nested extension bundle location.
     let extensionURL: URL
 }
 

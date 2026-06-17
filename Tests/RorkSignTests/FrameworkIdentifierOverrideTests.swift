@@ -106,6 +106,42 @@ final class FrameworkIdentifierOverrideTests: XCTestCase {
         )
     }
 
+    /// Verifies generic bundle-signing options can override only the root identity.
+    func testBundleSigningOptionsOverrideRootCodeDirectoryIdentifier() throws {
+        let frameworkFixture = try makeFrameworkIdentifierFixture()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(
+                at: frameworkFixture.frameworkURL.deletingLastPathComponent()
+            )
+        }
+        let rootIdentifier = "app.rork.generic.root"
+
+        _ = try RorkSigner.signBundleAdHoc(
+            at: frameworkFixture.frameworkURL,
+            options: BundleSigningOptions(codeDirectoryIdentifier: rootIdentifier)
+        )
+
+        let rootCodeDirectories = try XCTUnwrap(
+            RorkSigner.checkMachOCodeSignatures(
+                at: frameworkFixture.frameworkURL.appendingPathComponent("TestFramework")
+            ).first?.codeDirectories
+        )
+        XCTAssertEqual(
+            rootCodeDirectories.map(\.identifier),
+            [rootIdentifier, rootIdentifier]
+        )
+
+        let helperCodeDirectories = try XCTUnwrap(
+            RorkSigner.checkMachOCodeSignatures(
+                at: frameworkFixture.helperURL
+            ).first?.codeDirectories
+        )
+        XCTAssertEqual(
+            helperCodeDirectories.map(\.identifier),
+            ["Helper.dylib", "Helper.dylib"]
+        )
+    }
+
     /// Verifies the Objective-C option maps the override into the Swift signer.
     func testObjectiveCFrameworkIdentifierOverrideMapsToSwiftSigner() throws {
         let identityFixture = try OpenSSLFixture()
@@ -148,9 +184,15 @@ final class FrameworkIdentifierOverrideTests: XCTestCase {
         let overriddenOptions = FrameworkSigningOptions(
             codeDirectoryIdentifier: "app.rork.free.host"
         )
+        let defaultBundleOptions = BundleSigningOptions()
+        let overriddenBundleOptions = BundleSigningOptions(
+            codeDirectoryIdentifier: "app.rork.free.host"
+        )
 
         XCTAssertNil(defaultOptions.codeDirectoryIdentifier)
         XCTAssertNotEqual(defaultOptions, overriddenOptions)
+        XCTAssertNil(defaultBundleOptions.codeDirectoryIdentifier)
+        XCTAssertNotEqual(defaultBundleOptions, overriddenBundleOptions)
     }
 
     /// Verifies an empty root CodeDirectory identifier fails before framework mutation.
@@ -173,7 +215,7 @@ final class FrameworkIdentifierOverrideTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? RorkSignError,
-                .invalidBundle("Framework CodeDirectory identifier is empty.")
+                .invalidBundle("CodeDirectory identifier is empty.")
             )
         }
         XCTAssertEqual(

@@ -14,18 +14,11 @@ enum BundleSigner {
     /// `.app`, `.appex`, `.bundle`, `.framework`, and `.xpc` bundles. It also
     /// signs standalone Mach-O files found inside a bundle before resource
     /// sealing so helper tools and dylibs are protected by the parent seal.
-    ///
-    /// When supplied, `rootCodeDirectoryIdentifier` overrides only the root
-    /// executable's CodeDirectory identifier.
     static func signAdHoc(
         bundleURL: URL,
-        options: BundleSigningOptions,
-        rootCodeDirectoryIdentifier: String? = nil
+        options: BundleSigningOptions
     ) throws -> BundleSigningReport {
-        var context = BundleSigningContext(
-            options: options,
-            rootCodeDirectoryIdentifier: rootCodeDirectoryIdentifier
-        )
+        var context = try BundleSigningContext(options: options)
         try signBundle(
             bundleURL,
             isRoot: true,
@@ -42,19 +35,14 @@ enum BundleSigner {
     }
 
     /// Signs `bundleURL` with identity-backed CMS signatures.
-    ///
-    /// When supplied, `rootCodeDirectoryIdentifier` overrides only the root
-    /// executable's CodeDirectory identifier.
     static func signWithIdentity(
         bundleURL: URL,
         identity: SigningIdentity,
-        options: BundleSigningOptions,
-        rootCodeDirectoryIdentifier: String? = nil
+        options: BundleSigningOptions
     ) throws -> BundleSigningReport {
-        var context = BundleSigningContext(
+        var context = try BundleSigningContext(
             options: options,
-            profileValidationPolicy: .strictBundleIdentifier,
-            rootCodeDirectoryIdentifier: rootCodeDirectoryIdentifier
+            profileValidationPolicy: .strictBundleIdentifier
         )
         try signBundle(
             bundleURL,
@@ -83,7 +71,7 @@ enum BundleSigner {
         identity: SigningIdentity,
         options: BundleSigningOptions
     ) throws -> BundleSigningReport {
-        var context = BundleSigningContext(
+        var context = try BundleSigningContext(
             options: options,
             profileValidationPolicy: options.embedProvisioningProfiles
                 ? .strictBundleIdentifier
@@ -115,13 +103,9 @@ enum BundleSigner {
         options: FrameworkSigningOptions
     ) throws -> BundleSigningReport {
         try validateFrameworkURL(frameworkURL)
-        let rootCodeDirectoryIdentifier = try normalizedCodeDirectoryIdentifier(
-            options.codeDirectoryIdentifier
-        )
         return try signAdHoc(
             bundleURL: frameworkURL,
-            options: options.bundleSigningOptions,
-            rootCodeDirectoryIdentifier: rootCodeDirectoryIdentifier
+            options: options.bundleSigningOptions
         )
     }
 
@@ -136,14 +120,10 @@ enum BundleSigner {
         options: FrameworkSigningOptions
     ) throws -> BundleSigningReport {
         try validateFrameworkURL(frameworkURL)
-        let rootCodeDirectoryIdentifier = try normalizedCodeDirectoryIdentifier(
-            options.codeDirectoryIdentifier
-        )
         return try signWithIdentity(
             bundleURL: frameworkURL,
             identity: identity,
-            options: options.bundleSigningOptions,
-            rootCodeDirectoryIdentifier: rootCodeDirectoryIdentifier
+            options: options.bundleSigningOptions
         )
     }
 
@@ -162,16 +142,19 @@ enum BundleSigner {
             bundleURL: bundleURL,
             options: options
         )
+        var signingOptions = options.bundleSigningOptions
+        signingOptions.codeDirectoryIdentifier = options.hostBundleIdentifier
         let result: Result<BundleSigningReport, Error>
         do {
-            var context = BundleSigningContext(
-                options: options.bundleSigningOptions,
-                profileValidationPolicy: .strictBundleIdentifier
+            var context = try BundleSigningContext(
+                options: signingOptions,
+                profileValidationPolicy: .strictBundleIdentifier,
+                codeDirectoryIdentifiers: transaction.codeDirectoryIdentifiers
             )
             try signBundle(
                 bundleURL,
                 isRoot: true,
-                options: options.bundleSigningOptions,
+                options: signingOptions,
                 signingMode: .identity(identity),
                 context: &context
             )
@@ -203,27 +186,6 @@ enum BundleSigner {
         guard url.pathExtension.lowercased() == "framework" else {
             throw RorkSignError.invalidBundle("Expected a .framework bundle: \(url.path).")
         }
-    }
-
-    /// Returns a normalized CodeDirectory identifier for the root framework
-    /// executable.
-    private static func normalizedCodeDirectoryIdentifier(_ identifier: String?) throws -> String? {
-        guard let identifier else {
-            return nil
-        }
-
-        let normalizedIdentifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedIdentifier.isEmpty else {
-            throw RorkSignError.invalidBundle(
-                "Framework CodeDirectory identifier is empty."
-            )
-        }
-        guard !normalizedIdentifier.contains("\u{0}") else {
-            throw RorkSignError.invalidBundle(
-                "Framework CodeDirectory identifier contains a NUL character."
-            )
-        }
-        return normalizedIdentifier
     }
 
     /// Recursively signs one bundle. Nested bundles are fully completed before
@@ -266,9 +228,15 @@ enum BundleSigner {
         )
 
         for codeURL in try BundleCodeScanner.standaloneCodeFiles(in: bundle) {
+            let codeDirectoryIdentifier: String
+            if let explicitIdentifier = context.codeDirectoryIdentifiers.identifier(for: codeURL) {
+                codeDirectoryIdentifier = explicitIdentifier
+            } else {
+                codeDirectoryIdentifier = try bundle.standaloneCodeIdentifier(for: codeURL)
+            }
             try signCode(
                 at: codeURL,
-                bundleIdentifier: bundle.standaloneCodeIdentifier(for: codeURL),
+                bundleIdentifier: codeDirectoryIdentifier,
                 entitlementsXML: bundleEntitlementsXML,
                 infoPlist: Data(),
                 resourceDirectory: Data(),
@@ -305,8 +273,8 @@ enum BundleSigner {
         let codeResources = try Data(contentsOf: codeResourcesURL)
         let infoPlist = try bundle.infoPlistData()
         let codeDirectoryIdentifier: String
-        if isRoot, let rootCodeDirectoryIdentifier = context.rootCodeDirectoryIdentifier {
-            codeDirectoryIdentifier = rootCodeDirectoryIdentifier
+        if isRoot, let rootIdentifier = context.codeDirectoryIdentifiers.root {
+            codeDirectoryIdentifier = rootIdentifier
         } else {
             codeDirectoryIdentifier = try bundle.requireIdentifier()
         }
@@ -391,7 +359,7 @@ enum BundleSigner {
     ) {
         context.diagnostics.info(">>> Signing: \t\(bundle.url.path) ...")
         context.diagnostics.info(">>> AppName: \t\(bundle.displayName)")
-        context.diagnostics.info(">>> BundleId: \t\(context.rootCodeDirectoryIdentifier ?? bundle.identifier ?? "-")")
+        context.diagnostics.info(">>> BundleId: \t\(context.codeDirectoryIdentifiers.root ?? bundle.identifier ?? "-")")
         context.diagnostics.info(">>> Version: \t\(bundle.version)")
         context.diagnostics.info(">>> TeamId: \t\(signingMode.diagnosticsTeamIdentifier)")
         context.diagnostics.info(">>> SubjectCN: \t\(signingMode.diagnosticsSubjectCommonName)")
@@ -474,10 +442,45 @@ private extension FrameworkSigningOptions {
         BundleSigningOptions(
             defaultEntitlementsXML: entitlementsXML,
             embedProvisioningProfiles: false,
+            codeDirectoryIdentifier: codeDirectoryIdentifier,
             codeDirectoryHashingMode: codeDirectoryHashingMode,
             signingCache: signingCache,
             diagnostics: diagnostics
         )
+    }
+}
+
+/// Resolves explicit CodeDirectory identifiers for a recursive signing pass.
+private struct CodeDirectoryIdentifiers {
+    /// Explicit identifier for the root executable, when one is required.
+    private(set) var root: String?
+
+    /// Explicit identifiers for code files that cannot use their default identity.
+    private let overrides: [URL: String]
+
+    /// Creates a set of explicit CodeDirectory identifiers.
+    init(overrides: [URL: String] = [:]) {
+        root = nil
+        self.overrides = overrides.reduce(into: [:]) { result, entry in
+            result[entry.key.standardizedFileURL] = entry.value
+        }
+    }
+
+    /// Sets the root identifier supplied through bundle options.
+    mutating func setRoot(to identifier: String) throws {
+        let normalizedIdentifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedIdentifier.isEmpty else {
+            throw RorkSignError.invalidBundle("CodeDirectory identifier is empty.")
+        }
+        guard !normalizedIdentifier.contains("\u{0}") else {
+            throw RorkSignError.invalidBundle("CodeDirectory identifier contains a NUL character.")
+        }
+        root = normalizedIdentifier
+    }
+
+    /// Returns the explicit identifier for a code file, when configured.
+    func identifier(for codeURL: URL) -> String? {
+        overrides[codeURL.standardizedFileURL]
     }
 }
 
@@ -494,6 +497,9 @@ private struct HostedBundleSigningTransaction {
 
     /// Exact Info.plist bytes restored after hosted signing.
     let originalInfoPlistData: Data
+
+    /// Explicit CodeDirectory identifiers required during the signing pass.
+    let codeDirectoryIdentifiers: CodeDirectoryIdentifiers
 
     /// Temporary host executable copied into the guest bundle.
     let stubURL: URL
@@ -516,6 +522,7 @@ private struct HostedBundleSigningTransaction {
             originalInfo["CFBundleExecutable"],
             key: "CFBundleExecutable"
         )
+        let originalExecutableURL = bundleURL.appendingPathComponent(originalExecutableName)
         _ = try requireBundleIdentifier(originalInfo["CFBundleIdentifier"], key: "CFBundleIdentifier")
 
         let stubExecutableName = try requirePlainFilename(
@@ -539,6 +546,11 @@ private struct HostedBundleSigningTransaction {
         let transaction = HostedBundleSigningTransaction(
             infoPlistURL: infoPlistURL,
             originalInfoPlistData: originalInfoPlistData,
+            codeDirectoryIdentifiers: CodeDirectoryIdentifiers(
+                overrides: [
+                    originalExecutableURL: hostBundleIdentifier
+                ]
+            ),
             stubURL: stubURL
         )
 
@@ -875,8 +887,8 @@ private struct BundleSigningContext {
     /// Bundle-identifier validation applied to provisioning profiles.
     var profileValidationPolicy: ProvisioningProfileValidationPolicy = .strictBundleIdentifier
 
-    /// CodeDirectory identifier used only for the root executable, when overridden.
-    let rootCodeDirectoryIdentifier: String?
+    /// Explicit CodeDirectory identifiers applied during this signing pass.
+    let codeDirectoryIdentifiers: CodeDirectoryIdentifiers
 
     /// Optional persistent cache for signed Mach-O outputs.
     var signatureCache: BundleSignatureCache?
@@ -888,11 +900,15 @@ private struct BundleSigningContext {
     init(
         options: BundleSigningOptions,
         profileValidationPolicy: ProvisioningProfileValidationPolicy = .strictBundleIdentifier,
-        rootCodeDirectoryIdentifier: String? = nil
-    ) {
+        codeDirectoryIdentifiers: CodeDirectoryIdentifiers = CodeDirectoryIdentifiers()
+    ) throws {
         self.codeDirectoryHashingMode = options.codeDirectoryHashingMode
         self.profileValidationPolicy = profileValidationPolicy
-        self.rootCodeDirectoryIdentifier = rootCodeDirectoryIdentifier
+        var resolvedIdentifiers = codeDirectoryIdentifiers
+        if let rootIdentifier = options.codeDirectoryIdentifier {
+            try resolvedIdentifiers.setRoot(to: rootIdentifier)
+        }
+        self.codeDirectoryIdentifiers = resolvedIdentifiers
         self.signatureCache = options.signingCache.map { BundleSignatureCache(options: $0) }
         self.diagnostics = options.diagnostics
     }

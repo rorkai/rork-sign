@@ -419,9 +419,10 @@ try RorkSigner.signHostedBundleWithCredential(
 ```
 
 Hosted signing temporarily signs a copied host executable as the root
-executable, signs the original executable as loose code, then restores the
-guest `Info.plist` and removes the temporary stub. Use app signing
-instead when the output must be installed and launched directly.
+executable, signs the original executable as loose code under the same host
+identifier, then restores the guest `Info.plist` and removes the temporary
+stub. Use app signing instead when the output must be installed and launched
+directly.
 
 Read a team id from a provisioning profile:
 
