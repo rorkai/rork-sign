@@ -1042,6 +1042,7 @@ public struct SigningIdentity {
         )
     }
 
+    /// Creates an identity from already-decoded certificate and private-key material.
     fileprivate init(
         certificateDER: Data,
         additionalCertificatesDER: [Data],
@@ -1082,6 +1083,7 @@ public struct SigningIdentity {
         )
     }
 
+    /// Selects the profile certificate whose public key matches the credential.
     private init(provisioningProfile: ProvisioningProfile, credential: SigningCredentialMaterial) throws {
         for certificateDER in provisioningProfile.developerCertificatesDER {
             guard let certificateInfo = try? CertificateInfo.parse(certificateDER),
@@ -1102,6 +1104,7 @@ public struct SigningIdentity {
         )
     }
 
+    /// Verifies that a certificate and private key represent the same identity.
     private static func validateMatch(
         certificateInfo: CertificateInfo,
         privateKey: SigningPrivateKey
@@ -1120,6 +1123,7 @@ public struct SigningIdentity {
         return [data]
     }
 
+    /// Decodes supported private-key or PKCS#12 credential input.
     private static func credential(from credentialData: Data, password: String) throws -> SigningCredentialMaterial {
         if let pem = String(data: credentialData, encoding: .utf8),
            pem.contains("-----BEGIN "),
@@ -1169,6 +1173,7 @@ public struct SigningIdentity {
         return result
     }
 
+    /// Returns whether DER input has the outer shape and version of a PKCS#12 PFX.
     private static func looksLikePKCS12PFX(_ data: Data) -> Bool {
         var reader = DERReader(data)
         guard let root = try? reader.readNode(expectedTag: 0x30),
@@ -1187,7 +1192,10 @@ public struct SigningIdentity {
 /// Private-key credential plus optional chain material extracted from caller
 /// input.
 private struct SigningCredentialMaterial {
+    /// Private key selected from the caller credential.
     let privateKey: SigningPrivateKey
+
+    /// Additional certificates discovered alongside the private key.
     let additionalCertificatesDER: [Data]
 }
 
@@ -1587,6 +1595,16 @@ public struct FrameworkSigningOptions: Equatable {
     /// remain on the embedding app or extension.
     public var entitlementsXML: String
 
+    /// The identifier written to the framework executable's CodeDirectory.
+    ///
+    /// When `nil`, the signer uses the framework's `CFBundleIdentifier`.
+    /// Set this when a host must load the framework under an identifier
+    /// authorized by the host provisioning profile. The override changes only
+    /// the root executable signature; it does not rewrite `Info.plist` or the
+    /// identifiers of nested code. Surrounding whitespace is ignored; empty
+    /// values and embedded NUL characters are rejected before signing.
+    public var codeDirectoryIdentifier: String?
+
     /// CodeDirectory digest layout used for framework Mach-O signatures.
     ///
     /// The default `.compatible` mode emits SHA-1 and SHA-256 CodeDirectories,
@@ -1612,6 +1630,13 @@ public struct FrameworkSigningOptions: Equatable {
     /// Leave `entitlementsXML` empty for the ordinary framework case. Supply an
     /// explicit plist only for framework artifacts that intentionally need
     /// entitlement input and whose Mach-O type can carry entitlement slots.
+    ///
+    /// - Parameters:
+    ///   - entitlementsXML: Entitlement plist XML supplied for the framework
+    ///     executable.
+    ///   - codeDirectoryHashingMode: Digest layout used for signed Mach-O code.
+    ///   - signingCache: Persistent cache for signed Mach-O outputs.
+    ///   - diagnostics: Opt-in signing diagnostics sink.
     public init(
         entitlementsXML: String = "",
         codeDirectoryHashingMode: CodeDirectoryHashingMode = .compatible,
@@ -1619,14 +1644,42 @@ public struct FrameworkSigningOptions: Equatable {
         diagnostics: SigningDiagnostics = .disabled
     ) {
         self.entitlementsXML = entitlementsXML
+        self.codeDirectoryIdentifier = nil
         self.codeDirectoryHashingMode = codeDirectoryHashingMode
         self.signingCache = signingCache
         self.diagnostics = diagnostics
     }
 
+    /// Creates framework-signing options with an explicit CodeDirectory identifier.
+    ///
+    /// - Parameters:
+    ///   - codeDirectoryIdentifier: Identifier written to the root framework
+    ///     executable's CodeDirectory.
+    ///   - entitlementsXML: Entitlement plist XML supplied for the framework
+    ///     executable.
+    ///   - codeDirectoryHashingMode: Digest layout used for signed Mach-O code.
+    ///   - signingCache: Persistent cache for signed Mach-O outputs.
+    ///   - diagnostics: Opt-in signing diagnostics sink.
+    public init(
+        codeDirectoryIdentifier: String,
+        entitlementsXML: String = "",
+        codeDirectoryHashingMode: CodeDirectoryHashingMode = .compatible,
+        signingCache: SigningCacheOptions? = nil,
+        diagnostics: SigningDiagnostics = .disabled
+    ) {
+        self.init(
+            entitlementsXML: entitlementsXML,
+            codeDirectoryHashingMode: codeDirectoryHashingMode,
+            signingCache: signingCache,
+            diagnostics: diagnostics
+        )
+        self.codeDirectoryIdentifier = codeDirectoryIdentifier
+    }
+
     /// Compares semantic signing inputs while ignoring the diagnostics sink.
     public static func == (lhs: FrameworkSigningOptions, rhs: FrameworkSigningOptions) -> Bool {
         lhs.entitlementsXML == rhs.entitlementsXML
+            && lhs.codeDirectoryIdentifier == rhs.codeDirectoryIdentifier
             && lhs.codeDirectoryHashingMode == rhs.codeDirectoryHashingMode
             && lhs.signingCache == rhs.signingCache
     }
