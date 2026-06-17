@@ -1497,6 +1497,14 @@ public struct BundleSigningOptions: Equatable {
     /// does not seal a stale profile.
     public var embedProvisioningProfiles: Bool
 
+    /// The identifier written to the root executable's CodeDirectory.
+    ///
+    /// When `nil`, the signer uses the root bundle's `CFBundleIdentifier`.
+    /// The override does not rewrite `Info.plist` or nested-code identifiers.
+    /// Surrounding whitespace is ignored; empty values and embedded NUL
+    /// characters are rejected before signing.
+    public var codeDirectoryIdentifier: String?
+
     /// CodeDirectory digest layout used for every Mach-O signed in this bundle.
     ///
     /// Regular bundle signing defaults to `.compatible` so ordinary re-signing
@@ -1544,6 +1552,7 @@ public struct BundleSigningOptions: Equatable {
         entitlementsByBundleIdentifier: [String: String] = [:],
         provisioningProfilesByBundleIdentifier: [String: Data] = [:],
         embedProvisioningProfiles: Bool = true,
+        codeDirectoryIdentifier: String? = nil,
         codeDirectoryHashingMode: CodeDirectoryHashingMode = .compatible,
         dylibInjections: [BundleDylibInjection] = [],
         dylibLoadCommandsToRemove: [String] = [],
@@ -1555,6 +1564,7 @@ public struct BundleSigningOptions: Equatable {
         self.entitlementsByBundleIdentifier = entitlementsByBundleIdentifier
         self.provisioningProfilesByBundleIdentifier = provisioningProfilesByBundleIdentifier
         self.embedProvisioningProfiles = embedProvisioningProfiles
+        self.codeDirectoryIdentifier = codeDirectoryIdentifier
         self.codeDirectoryHashingMode = codeDirectoryHashingMode
         self.dylibInjections = dylibInjections
         self.dylibLoadCommandsToRemove = dylibLoadCommandsToRemove
@@ -1569,6 +1579,7 @@ public struct BundleSigningOptions: Equatable {
             && lhs.entitlementsByBundleIdentifier == rhs.entitlementsByBundleIdentifier
             && lhs.provisioningProfilesByBundleIdentifier == rhs.provisioningProfilesByBundleIdentifier
             && lhs.embedProvisioningProfiles == rhs.embedProvisioningProfiles
+            && lhs.codeDirectoryIdentifier == rhs.codeDirectoryIdentifier
             && lhs.codeDirectoryHashingMode == rhs.codeDirectoryHashingMode
             && lhs.dylibInjections == rhs.dylibInjections
             && lhs.dylibLoadCommandsToRemove == rhs.dylibLoadCommandsToRemove
@@ -1691,7 +1702,8 @@ public struct FrameworkSigningOptions: Equatable {
 /// its code from an already-installed host app or extension instead of
 /// installing the copied bundle as an independent app. The signer temporarily
 /// points `CFBundleExecutable` and `CFBundleIdentifier` at the host executable
-/// and host bundle identifier for the signing pass, then restores the original
+/// and host bundle identifier for the signing pass, signs the original guest
+/// executable under that host identifier, then restores the original
 /// `Info.plist` and removes the copied host stub.
 ///
 /// The final bundle is intentionally not directly installable: its restored
@@ -1706,11 +1718,11 @@ public struct HostedBundleSigningOptions: Equatable {
     /// the signing pass completes.
     public var hostExecutableURL: URL
 
-    /// Host bundle identifier visible while the temporary root executable is signed.
+    /// Host identifier written to the hosted executable CodeDirectories.
     ///
     /// Identity-backed signing validates any selected root provisioning profile
-    /// against this identifier, not the guest identifier that is restored after
-    /// signing.
+    /// against this identifier. Both the temporary root stub and the original
+    /// guest executable use it instead of the restored guest identifier.
     public var hostBundleIdentifier: String
 
     /// Plain filename used for the copied host executable inside the guest bundle.
@@ -1724,7 +1736,8 @@ public struct HostedBundleSigningOptions: Equatable {
     ///
     /// Hosted signing defaults to not embedding provisioning profiles. The
     /// credential overload fills `rootProvisioningProfile` with the supplied
-    /// profile when this value leaves it empty.
+    /// profile when this value leaves it empty. Hosted signing always replaces
+    /// `codeDirectoryIdentifier` with `hostBundleIdentifier`.
     public var bundleSigningOptions: BundleSigningOptions
 
     /// Creates hosted-bundle signing options.
@@ -1732,8 +1745,8 @@ public struct HostedBundleSigningOptions: Equatable {
     /// - Parameters:
     ///   - hostExecutableURL: Host executable copied into the bundle as a
     ///     temporary signing stub.
-    ///   - hostBundleIdentifier: Host bundle identifier used for the temporary
-    ///     root executable signature.
+    ///   - hostBundleIdentifier: Host identifier used for the temporary root
+    ///     stub and original guest executable signatures.
     ///   - stubExecutableName: Filename for the copied host executable inside
     ///     the bundle.
     ///   - bundleSigningOptions: Full bundle-signing options for the signing
@@ -2759,10 +2772,11 @@ public enum RorkSigner {
     ///
     /// The signing pass temporarily uses `options.hostExecutableURL` and
     /// `options.hostBundleIdentifier` as the root executable identity, signs
-    /// the original bundle executable as loose code, seals resources, signs the
-    /// temporary stub, and then restores the original `Info.plist` while
-    /// removing the stub. Any root provisioning profile supplied through
-    /// `options.bundleSigningOptions` must authorize the host bundle identifier.
+    /// the original bundle executable as loose code under the same identifier,
+    /// seals resources, signs the temporary stub, and then restores the original
+    /// `Info.plist` while removing the stub. Any root provisioning profile
+    /// supplied through `options.bundleSigningOptions` must authorize the host
+    /// bundle identifier.
     @discardableResult
     public static func signHostedBundleWithIdentity(
         at bundleURL: URL,

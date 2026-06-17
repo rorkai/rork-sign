@@ -104,8 +104,9 @@ final class BundleSigningTests: XCTestCase {
         let hostExecutableURL = bundleURL.deletingLastPathComponent().appendingPathComponent("HostStubSource")
         try Fixtures.machO64WithCodeSignature().write(to: hostExecutableURL)
         let originalInfoPlist = try Data(contentsOf: bundleURL.appendingPathComponent("Info.plist"))
+        let hostBundleIdentifier = "app.rork.hosted.host"
         let profile = try rawProvisioningProfile(
-            bundleIdentifier: "app.rork.hosted.host",
+            bundleIdentifier: hostBundleIdentifier,
             developerCertificates: [fixture.identity.certificateDER]
         )
         addTeardownBlock {
@@ -118,7 +119,11 @@ final class BundleSigningTests: XCTestCase {
             credentialData: Data(fixture.privateKeyPEM.utf8),
             options: HostedBundleSigningOptions(
                 hostExecutableURL: hostExecutableURL,
-                hostBundleIdentifier: "app.rork.hosted.host"
+                hostBundleIdentifier: hostBundleIdentifier,
+                bundleSigningOptions: BundleSigningOptions(
+                    embedProvisioningProfiles: false,
+                    codeDirectoryIdentifier: "app.rork.hosted.ignored"
+                )
             )
         )
 
@@ -145,6 +150,26 @@ final class BundleSigningTests: XCTestCase {
         let originalExecutableBlobs = try signatureBlobs(in: originalExecutable)
         XCTAssertNil(originalExecutableBlobs[5])
         XCTAssertNil(originalExecutableBlobs[7])
+
+        let originalCodeDirectories = try XCTUnwrap(
+            RorkSigner.checkMachOCodeSignatures(
+                at: bundleURL.appendingPathComponent("Host")
+            ).first?.codeDirectories
+        )
+        XCTAssertEqual(
+            originalCodeDirectories.map(\.identifier),
+            [hostBundleIdentifier, hostBundleIdentifier]
+        )
+
+        let nestedCodeDirectories = try XCTUnwrap(
+            RorkSigner.checkMachOCodeSignatures(
+                at: bundleURL.appendingPathComponent("Frameworks/Nested.framework/Nested")
+            ).first?.codeDirectories
+        )
+        XCTAssertEqual(
+            nestedCodeDirectories.map(\.identifier),
+            ["app.rork.host.nested", "app.rork.host.nested"]
+        )
     }
 
     func testSignHostedBundleRestoresTemporaryFilesAfterSigningFailure() throws {
@@ -814,6 +839,7 @@ final class BundleSigningTests: XCTestCase {
     }
 }
 
+/// Creates a root app fixture with one nested framework.
 private func makeNestedBundleFixture(
     hostExecutable: Data = Fixtures.machO64WithCodeSignature(),
     nestedExecutable: Data = Fixtures.machO64WithCodeSignature()
@@ -841,6 +867,7 @@ private func makeNestedBundleFixture(
     return bundleURL
 }
 
+/// Creates a standalone framework fixture.
 private func makeFrameworkFixture(
     bundleIdentifier: String = "app.rork.framework",
     executable: Data = Fixtures.machO64DylibWithCodeSignature(),
@@ -860,6 +887,7 @@ private func makeFrameworkFixture(
     return frameworkURL
 }
 
+/// Writes the minimal bundle metadata required by signing tests.
 private func writeInfoPlist(bundleIdentifier: String, executableName: String, to url: URL) throws {
     let plist = """
     <?xml version="1.0" encoding="UTF-8"?>
@@ -869,6 +897,7 @@ private func writeInfoPlist(bundleIdentifier: String, executableName: String, to
     try Data(plist.utf8).write(to: url)
 }
 
+/// Creates a Mach-O fixture with extra capacity for injected load commands.
 private func machO64WithExtraLoadCommandSpace() -> Data {
     var data = Fixtures.machO64WithoutCodeSignatureButWithLoadCommandSpace()
     data.append(Data(repeating: 0, count: 0x80))
@@ -877,18 +906,21 @@ private func machO64WithExtraLoadCommandSpace() -> Data {
     return data
 }
 
+/// Reads the resource-directory special-slot hash from a signed Mach-O.
 private func resourceDirectoryHash(inSignedMachO signed: Data) throws -> Data? {
     let blobs = try signatureBlobs(in: signed)
     let codeDirectory = try XCTUnwrap(blobs[0x1000])
     return specialSlotHash(3, in: codeDirectory)
 }
 
+/// Reads the Info.plist special-slot hash from a signed Mach-O.
 private func infoPlistHash(inSignedMachO signed: Data) throws -> Data? {
     let blobs = try signatureBlobs(in: signed)
     let codeDirectory = try XCTUnwrap(blobs[0x1000])
     return specialSlotHash(1, in: codeDirectory)
 }
 
+/// Reads the XML entitlement payload from a signed Mach-O.
 private func entitlementsPayload(inSignedMachO signed: Data) throws -> String {
     let blobs = try signatureBlobs(in: signed)
     let entitlements = try XCTUnwrap(blobs[5])
@@ -897,18 +929,21 @@ private func entitlementsPayload(inSignedMachO signed: Data) throws -> String {
     return String(decoding: payload, as: UTF8.self)
 }
 
+/// Parses the entitlement payload from a signed Mach-O.
 private func entitlementsDictionary(inSignedMachO signed: Data) throws -> [String: Any] {
     let payload = try Data(entitlementsPayload(inSignedMachO: signed).utf8)
     let plist = try PropertyListSerialization.propertyList(from: payload, options: [], format: nil)
     return try XCTUnwrap(plist as? [String: Any])
 }
 
+/// Reads a SHA-256 resource hash from a CodeResources dictionary.
 private func hash2(for relativePath: String, in codeResources: [String: Any]) throws -> Data {
     let files2 = try XCTUnwrap(codeResources["files2"] as? [String: [String: Any]])
     let entry = try XCTUnwrap(files2[relativePath])
     return try XCTUnwrap(entry["hash2"] as? Data)
 }
 
+/// Creates the entitlement plist used by bundle-signing tests.
 private func entitlementsXML(applicationIdentifier: String) -> String {
     """
     <?xml version="1.0" encoding="UTF-8"?>
@@ -917,6 +952,7 @@ private func entitlementsXML(applicationIdentifier: String) -> String {
     """
 }
 
+/// Creates a raw plist provisioning profile for bundle-signing tests.
 private func rawProvisioningProfile(
     bundleIdentifier: String,
     applicationIdentifier: String? = nil,
@@ -938,6 +974,7 @@ private func rawProvisioningProfile(
     )
 }
 
+/// Returns a validated path relative to a test fixture root.
 private func relativePath(_ url: URL, under rootURL: URL) throws -> String {
     let rootPath = rootURL.standardizedFileURL.path
     let path = url.standardizedFileURL.path

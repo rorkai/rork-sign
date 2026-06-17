@@ -664,6 +664,14 @@ public final class BundleSigningOptionsObjC: NSObject {
         }
     }
 
+    /// Identifier written to the root executable's CodeDirectory.
+    ///
+    /// When `nil`, the signer uses the root bundle's `CFBundleIdentifier`.
+    /// The override does not rewrite `Info.plist` or nested-code identifiers.
+    /// Surrounding whitespace is ignored; empty values and embedded NUL
+    /// characters are rejected before signing.
+    @objc public var codeDirectoryIdentifier: String?
+
     /// CodeDirectory digest layout used for every signed Mach-O.
     @objc public var codeDirectoryHashingMode: CodeDirectoryHashingModeObjC
 
@@ -714,6 +722,7 @@ public final class BundleSigningOptionsObjC: NSObject {
         entitlementsByBundleIdentifier = [:]
         provisioningProfilesByBundleIdentifier = [:]
         embedProvisioningProfiles = true
+        codeDirectoryIdentifier = nil
         codeDirectoryHashingMode = .compatible
         dylibInjections = []
         dylibLoadCommandsToRemove = []
@@ -738,6 +747,7 @@ public final class BundleSigningOptionsObjC: NSObject {
                 label: "provisioningProfilesByBundleIdentifier"
             ),
             embedProvisioningProfiles: embedProvisioningProfiles,
+            codeDirectoryIdentifier: codeDirectoryIdentifier,
             codeDirectoryHashingMode: codeDirectoryHashingMode.coreValue,
             dylibInjections: dylibInjections.map(\.coreValue),
             dylibLoadCommandsToRemove: dylibLoadCommandsToRemove,
@@ -857,14 +867,15 @@ public final class FrameworkSigningOptionsObjC: NSObject {
 ///
 /// Hosted signing temporarily copies an already-installed host executable into
 /// a guest bundle, signs that copy as the root executable under the host bundle
-/// identifier, then restores the guest `Info.plist` and removes the temporary
-/// stub. The output is for hosted runtime loading, not standalone installation.
+/// identifier, signs the original guest executable under the same identifier,
+/// then restores the guest `Info.plist` and removes the temporary stub. The
+/// output is for hosted runtime loading, not standalone installation.
 @objc(RKHostedBundleSigningOptions)
 public final class HostedBundleSigningOptionsObjC: NSObject {
     /// Host executable copied into the bundle as a temporary signing stub.
     @objc public var hostExecutableURL: URL
 
-    /// Host bundle identifier used while the temporary root executable is signed.
+    /// Host identifier used by the temporary stub and original guest executable.
     @objc public var hostBundleIdentifier: String
 
     /// Plain filename for the copied host executable inside the guest bundle.
@@ -875,6 +886,8 @@ public final class HostedBundleSigningOptionsObjC: NSObject {
     /// The default options do not embed provisioning profiles. The credential
     /// signing method supplies its `provisioningProfileData` as the root
     /// provisioning profile when this nested option object leaves it empty.
+    /// Hosted signing replaces its root CodeDirectory identifier with
+    /// `hostBundleIdentifier`.
     @objc public var bundleSigningOptions: BundleSigningOptionsObjC
 
     /// Creates hosted bundle-signing options.
@@ -1983,8 +1996,9 @@ public final class Signer: NSObject {
     /// Signs a hosted bundle with identity-backed CMS signatures.
     ///
     /// The signer temporarily uses the host executable and bundle identifier
-    /// from `options`, restores the original guest `Info.plist`, and removes
-    /// the copied host stub before returning.
+    /// from `options`, signs the original guest executable under that identifier,
+    /// restores the original guest `Info.plist`, and removes the copied host
+    /// stub before returning.
     @objc(signHostedBundleWithIdentityAtURL:identity:options:error:)
     public func signHostedBundleWithIdentity(
         at bundleURL: URL,
