@@ -155,29 +155,20 @@ final class OCSPResponseTests: XCTestCase {
         let responderURL = try XCTUnwrap(URL(string: "http://ocsp.example.test/status"))
         let session = ocspStatusMockSession()
         defer {
-            OCSPStatusMockURLProtocol.requestHandler = nil
             session.invalidateAndCancel()
         }
-        OCSPStatusMockURLProtocol.requestHandler = { urlRequest in
-            XCTAssertEqual(urlRequest.url, responderURL)
-            XCTAssertEqual(urlRequest.httpMethod, "POST")
-            XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "Content-Type"), "application/ocsp-request")
-            return (
-                HTTPURLResponse(
-                    url: responderURL,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/ocsp-response"]
-                )!,
-                try Data(contentsOf: response.url)
-            )
-        }
+        let responseDER = try Data(contentsOf: response.url)
 
         let report = try await RorkSigner.checkOCSPStatus(
             certificateData: Data(contentsOf: fixture.certificateURL),
             issuerCertificateData: Data(contentsOf: fixture.certificateURL),
             responderURL: responderURL,
             policy: OCSPResponseValidationPolicy(maximumAge: 3600, requiresNextUpdate: true),
+            httpOptions: OCSPHTTPOptions(
+                additionalHeaders: [
+                    "X-RorkSign-Test-Body": responseDER.base64EncodedString(),
+                ]
+            ),
             session: session
         )
 
@@ -652,9 +643,9 @@ private func ocspStatusMockSession() -> URLSession {
     return URLSession(configuration: configuration)
 }
 
+/// Serves one OCSP status response described by request-local test headers,
+/// avoiding mutable URLProtocol type state across concurrent tests.
 private final class OCSPStatusMockURLProtocol: URLProtocol {
-    static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
-
     override class func canInit(with request: URLRequest) -> Bool {
         true
     }
@@ -664,23 +655,33 @@ private final class OCSPStatusMockURLProtocol: URLProtocol {
     }
 
     override func startLoading() {
-        guard let requestHandler = Self.requestHandler else {
-            client?.urlProtocol(
-                self,
-                didFailWithError: RorkSignError.cmsSigning("Missing OCSP URLProtocol handler.")
-            )
+        guard request.url?.absoluteString == "http://ocsp.example.test/status",
+              request.httpMethod == "POST",
+              request.value(forHTTPHeaderField: "Content-Type") == "application/ocsp-request",
+              let url = request.url,
+              let bodyValue = request.value(forHTTPHeaderField: "X-RorkSign-Test-Body"),
+              let body = Data(base64Encoded: bodyValue),
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 200,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Type": "application/ocsp-response"]
+              ) else {
+            failLoading("OCSP status mock received an invalid request.")
             return
         }
 
-        do {
-            let (response, data) = try requestHandler(request)
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error)
-        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
     }
 
     override func stopLoading() {}
+
+    private func failLoading(_ message: String) {
+        client?.urlProtocol(
+            self,
+            didFailWithError: RorkSignError.cmsSigning(message)
+        )
+    }
 }

@@ -1,6 +1,6 @@
 # rork-sign
 
-[![Swift](https://img.shields.io/badge/Swift-5.9-orange.svg)](Package.swift)
+[![Swift](https://img.shields.io/badge/Swift-6.0-orange.svg)](Package.swift)
 [![SwiftPM](https://img.shields.io/badge/SwiftPM-supported-brightgreen.svg)](Package.swift)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -81,6 +81,9 @@ toolchain. The library code is pure Swift and SwiftPM-based; additional platform
 support should be added with CI coverage before it is advertised as supported.
 
 ## Build
+
+Building requires a Swift 6.0 or newer toolchain. Client targets may continue
+using Swift 5 language mode.
 
 ```bash
 git clone https://github.com/rorkai/rork-sign.git

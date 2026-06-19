@@ -6,7 +6,9 @@ import RorkSign
 ///
 /// The library remains the primary product. The CLI exists for fixtures,
 /// debugging, and CI scripts that need a signing subprocess.
-struct RorkSignCommand: ParsableCommand {
+@main
+@available(macOS 10.15, macCatalyst 13, iOS 13, tvOS 13, watchOS 6, *)
+struct RorkSignCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "rorksign",
         abstract: "Sign Mach-O files, app bundles, and IPA archives with a Swift ZSign-compatible signer.",
@@ -44,7 +46,8 @@ struct RorkSignCommand: ParsableCommand {
 /// `rorksign -k key.p12 -m profile.mobileprovision -o out.ipa in.ipa` without
 /// typing a subcommand, while development subcommands such as `inspect` keep
 /// their normal `rorksign inspect <path>` shape.
-struct ZSign: ParsableCommand {
+@available(macOS 10.15, macCatalyst 13, iOS 13, tvOS 13, watchOS 6, *)
+struct ZSign: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "zsign",
         abstract: "Run the ZSign-compatible signing flow."
@@ -52,8 +55,8 @@ struct ZSign: ParsableCommand {
 
     @OptionGroup var compatibilityOptions: ZSignOptions
 
-    mutating func run() throws {
-        try compatibilityOptions.run()
+    mutating func run() async throws {
+        try await compatibilityOptions.run()
     }
 }
 
@@ -170,7 +173,7 @@ struct ZSignOptions: ParsableArguments {
         return !resourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    func run() throws {
+    func run() async throws {
         if shortVersion {
             print("version: \(RorkSigner.version)")
             return
@@ -179,7 +182,7 @@ struct ZSignOptions: ParsableArguments {
             throw ValidationError("Missing input file or folder. Run `rorksign --help` for usage.")
         }
         RorkSignCLILogging.bootstrapIfNeeded()
-        try ZSignCompatibleRunner(command: self).run(inputPath: inputPath)
+        try await ZSignCompatibleRunner(command: self).run(inputPath: inputPath)
     }
 }
 

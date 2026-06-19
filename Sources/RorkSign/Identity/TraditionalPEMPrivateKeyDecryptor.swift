@@ -3,8 +3,8 @@ import CryptoKit
 #else
 import Crypto
 #endif
+import CryptoExtras
 import Foundation
-import _CryptoExtras
 
 /// Decrypts OpenSSL's traditional encrypted RSA private-key PEM format.
 ///

@@ -41,7 +41,7 @@ enum AppleCertificateChain {
     /// DER-encoded Apple root certificates that issue WWDR intermediates.
     static let rootCertificatesDER = rootCertificates.map(\.der)
 
-    private struct EmbeddedCertificate {
+    private struct EmbeddedCertificate: Sendable {
         let der: Data
 
         init(name: String, pem: String, sha256Fingerprint: String) {
@@ -69,7 +69,7 @@ enum AppleCertificateChain {
         }
     }
 
-    private struct ParsedCertificate {
+    private struct ParsedCertificate: Sendable {
         let der: Data
         let info: CertificateInfo
     }

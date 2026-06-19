@@ -627,55 +627,67 @@ private struct ResourceRuleDecision {
 /// The matching logic lives in `ResourceRuleDecision`; these values are
 /// serialized for compatibility with Apple's CodeResources format.
 private enum ResourceRules {
-    static let legacy: [String: Any] = [
-        "^.*": true,
-        "^.*\\.lproj/": [
-            "optional": true,
-            "weight": 1000,
-        ],
-        "^.*\\.lproj/locversion.plist$": [
-            "omit": true,
-            "weight": 1100,
-        ],
-        "^Base\\.lproj/": [
-            "weight": 1010,
-        ],
-        "^version.plist$": true,
-    ]
+    /// A fresh legacy rules graph for serialization in CodeResources.
+    ///
+    /// Each access returns new Foundation containers because `[String: Any]`
+    /// cannot be shared safely between concurrent signing operations.
+    static var legacy: [String: Any] {
+        [
+            "^.*": true,
+            "^.*\\.lproj/": [
+                "optional": true,
+                "weight": 1000,
+            ],
+            "^.*\\.lproj/locversion.plist$": [
+                "omit": true,
+                "weight": 1100,
+            ],
+            "^Base\\.lproj/": [
+                "weight": 1010,
+            ],
+            "^version.plist$": true,
+        ]
+    }
 
-    static let modern: [String: Any] = [
-        ".*\\.dSYM($|/)": [
-            "weight": 11,
-        ],
-        "^.*": true,
-        "^.*\\.lproj/": [
-            "optional": true,
-            "weight": 1000,
-        ],
-        "^.*\\.lproj/locversion.plist$": [
-            "omit": true,
-            "weight": 1100,
-        ],
-        "^(.*/)?\\.DS_Store$": [
-            "omit": true,
-            "weight": 2000,
-        ],
-        "^Base\\.lproj/": [
-            "weight": 1010,
-        ],
-        "^embedded\\.mobileprovision$": [
-            "weight": 20,
-        ],
-        "^Info\\.plist$": [
-            "omit": true,
-            "weight": 20,
-        ],
-        "^PkgInfo$": [
-            "omit": true,
-            "weight": 20,
-        ],
-        "^version\\.plist$": [
-            "weight": 20,
-        ],
-    ]
+    /// A fresh modern rules graph for serialization in CodeResources.
+    ///
+    /// Each access returns new Foundation containers because `[String: Any]`
+    /// cannot be shared safely between concurrent signing operations.
+    static var modern: [String: Any] {
+        [
+            ".*\\.dSYM($|/)": [
+                "weight": 11,
+            ],
+            "^.*": true,
+            "^.*\\.lproj/": [
+                "optional": true,
+                "weight": 1000,
+            ],
+            "^.*\\.lproj/locversion.plist$": [
+                "omit": true,
+                "weight": 1100,
+            ],
+            "^(.*/)?\\.DS_Store$": [
+                "omit": true,
+                "weight": 2000,
+            ],
+            "^Base\\.lproj/": [
+                "weight": 1010,
+            ],
+            "^embedded\\.mobileprovision$": [
+                "weight": 20,
+            ],
+            "^Info\\.plist$": [
+                "omit": true,
+                "weight": 20,
+            ],
+            "^PkgInfo$": [
+                "omit": true,
+                "weight": 20,
+            ],
+            "^version\\.plist$": [
+                "weight": 20,
+            ],
+        ]
+    }
 }

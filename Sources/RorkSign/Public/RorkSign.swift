@@ -246,7 +246,7 @@ public struct ProvisioningProfile: Equatable {
 /// The values use RFC 5280 bit positions, not byte-order positions from the DER
 /// BIT STRING. The signer uses this to decide whether an issuer certificate is
 /// structurally allowed to sign child certificates during local chain checks.
-public struct CertificateKeyUsage: OptionSet, Equatable {
+public struct CertificateKeyUsage: OptionSet, Equatable, Sendable {
     /// Raw X.509 KeyUsage bits in RFC 5280 bit order.
     public let rawValue: UInt16
 
@@ -472,7 +472,7 @@ public struct CertificateChainValidationReport: Equatable {
 /// `responderURL` is selected from the leaf certificate's AIA extension when
 /// present, with Apple WWDR fallbacks for known issuer common names. This is
 /// request material only; it is not a revocation or trust decision.
-public struct OCSPRequest: Equatable {
+public struct OCSPRequest: Equatable, Sendable {
     /// DER-encoded `OCSPRequest` body suitable for an
     /// `application/ocsp-request` HTTP POST.
     public let derRepresentation: Data
@@ -649,7 +649,7 @@ public enum OCSPResponderAuthorization: Equatable {
 /// `allowedClockSkew` tolerates small clock differences; `maximumAge` can cap
 /// how old a response may be even when the responder omits `nextUpdate`; and
 /// `requiresNextUpdate` makes that responder field mandatory.
-public struct OCSPResponseValidationPolicy: Equatable {
+public struct OCSPResponseValidationPolicy: Equatable, Sendable {
     /// Date at which the response should be considered.
     public let validationDate: Date
 
@@ -879,7 +879,7 @@ public struct ProfileCredentialCheckReport: Equatable {
 /// can embed the exact leaf certificate supplied by the caller. The private key
 /// itself remains internal and currently supports RSA and NIST EC signing
 /// identities.
-public struct SigningIdentity {
+public struct SigningIdentity: Sendable {
     /// DER-encoded leaf certificate embedded into CMS SignedData.
     public let certificateDER: Data
 
