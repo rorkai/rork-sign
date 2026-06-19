@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
+import CryptoKit
+#else
 import Crypto
+#endif
 import Foundation
 
 /// Builds detached CMS SignedData blobs for Apple code signatures.

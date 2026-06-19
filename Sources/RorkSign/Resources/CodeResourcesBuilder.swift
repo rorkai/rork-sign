@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
+import CryptoKit
+#else
 import Crypto
+#endif
 import Foundation
 
 /// Builds the `_CodeSignature/CodeResources` resource seal for app-style bundles.

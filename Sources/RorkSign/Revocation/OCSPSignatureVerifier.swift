@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
+import CryptoKit
+#else
 import Crypto
+#endif
 import Foundation
 import _CryptoExtras
 
@@ -152,7 +156,7 @@ enum OCSPSignatureVerifier {
     }
 
     /// Verifies an RSA PKCS#1 v1.5 signature for the supplied digest.
-    private static func verifyRSASignature<D: Crypto.Digest>(
+    private static func verifyRSASignature<D: Digest>(
         _ signatureBytes: Data,
         certificateInfo: CertificateInfo,
         digest: D
@@ -171,7 +175,7 @@ enum OCSPSignatureVerifier {
     }
 
     /// Verifies ECDSA signatures for the supported NIST curves.
-    private static func verifyECDSASignature<D: Crypto.Digest>(
+    private static func verifyECDSASignature<D: Digest>(
         _ signatureBytes: Data,
         certificateInfo: CertificateInfo,
         digest: D

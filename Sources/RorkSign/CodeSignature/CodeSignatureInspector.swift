@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
+import CryptoKit
+#else
 import Crypto
+#endif
 import Foundation
 
 /// Extracts embedded code-signature SuperBlob data from Mach-O containers.

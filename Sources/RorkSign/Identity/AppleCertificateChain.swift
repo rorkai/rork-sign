@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
+import CryptoKit
+#else
 import Crypto
+#endif
 import Foundation
 
 /// Supplies Apple code-signing issuer certificates when credentials omit them.
