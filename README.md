@@ -1,6 +1,6 @@
 # rork-sign
 
-[![Swift](https://img.shields.io/badge/Swift-5.9-orange.svg)](Package.swift)
+[![Swift](https://img.shields.io/badge/Swift-6.0-orange.svg)](Package.swift)
 [![SwiftPM](https://img.shields.io/badge/SwiftPM-supported-brightgreen.svg)](Package.swift)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -19,6 +19,7 @@ oracle for certificate and CMS interoperability.
 ## Contents
 
 - [Features](#features)
+- [Requirements](#requirements)
 - [Supported Targets](#supported-targets)
 - [Build](#build)
 - [Usage](#usage)
@@ -68,6 +69,15 @@ oracle for certificate and CMS interoperability.
   policy.
 - **Signature cache** - reuse unchanged Mach-O signatures across repeated
   bundle or IPA signing runs through `.zsign_cache`.
+
+## Requirements
+
+- Swift 6.0 or newer
+- Swift Package Manager
+
+`RorkSign` and `RorkSignObjC` are built in Swift 6 language mode. Their public
+APIs remain source-compatible with clients compiled in Swift 5 language mode by
+a Swift 6 toolchain, including the Foundation-based Objective-C facade.
 
 ## Supported Targets
 

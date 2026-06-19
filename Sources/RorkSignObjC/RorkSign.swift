@@ -1377,10 +1377,14 @@ public final class Signer: NSObject {
         options: OCSPHTTPOptionsObjC?,
         completionHandler: @escaping (NSDictionary?, NSError?) -> Void
     ) {
+        let coreRequest = request.coreValue
+        let optionsResult = Result {
+            try (options ?? OCSPHTTPOptionsObjC()).coreValue()
+        }
         completeReport(completionHandler) {
             try await RorkSigner.fetchOCSPResponse(
-                request.coreValue,
-                options: try (options ?? OCSPHTTPOptionsObjC()).coreValue()
+                coreRequest,
+                options: try optionsResult.get()
             )
         }
     }
@@ -1396,14 +1400,18 @@ public final class Signer: NSObject {
         httpOptions: OCSPHTTPOptionsObjC?,
         completionHandler: @escaping (NSDictionary?, NSError?) -> Void
     ) {
+        let corePolicy = (policy ?? OCSPResponseValidationPolicyObjC()).coreValue
+        let httpOptionsResult = Result {
+            try (httpOptions ?? OCSPHTTPOptionsObjC()).coreValue()
+        }
         completeReport(completionHandler) {
             try await RorkSigner.checkOCSPStatus(
                 certificateData: certificateData,
                 issuerCertificateData: issuerCertificateData,
                 responderCertificateData: responderCertificateData,
                 responderURL: responderURL,
-                policy: (policy ?? OCSPResponseValidationPolicyObjC()).coreValue,
-                httpOptions: try (httpOptions ?? OCSPHTTPOptionsObjC()).coreValue()
+                policy: corePolicy,
+                httpOptions: try httpOptionsResult.get()
             )
         }
     }
@@ -1417,12 +1425,16 @@ public final class Signer: NSObject {
         httpOptions: OCSPHTTPOptionsObjC?,
         completionHandler: @escaping (NSDictionary?, NSError?) -> Void
     ) {
+        let corePolicy = (policy ?? OCSPResponseValidationPolicyObjC()).coreValue
+        let httpOptionsResult = Result {
+            try (httpOptions ?? OCSPHTTPOptionsObjC()).coreValue()
+        }
         completeReport(completionHandler) {
             try await RorkSigner.checkOCSPStatus(
                 certificateChainData: certificateChainData,
                 responderURL: responderURL,
-                policy: (policy ?? OCSPResponseValidationPolicyObjC()).coreValue,
-                httpOptions: try (httpOptions ?? OCSPHTTPOptionsObjC()).coreValue()
+                policy: corePolicy,
+                httpOptions: try httpOptionsResult.get()
             )
         }
     }
@@ -1436,12 +1448,17 @@ public final class Signer: NSObject {
         httpOptions: OCSPHTTPOptionsObjC?,
         completionHandler: @escaping (NSDictionary?, NSError?) -> Void
     ) {
+        let coreIdentity = identity.coreValue
+        let corePolicy = (policy ?? OCSPResponseValidationPolicyObjC()).coreValue
+        let httpOptionsResult = Result {
+            try (httpOptions ?? OCSPHTTPOptionsObjC()).coreValue()
+        }
         completeReport(completionHandler) {
             try await RorkSigner.checkOCSPStatus(
-                identity: identity.coreValue,
+                identity: coreIdentity,
                 responderURL: responderURL,
-                policy: (policy ?? OCSPResponseValidationPolicyObjC()).coreValue,
-                httpOptions: try (httpOptions ?? OCSPHTTPOptionsObjC()).coreValue()
+                policy: corePolicy,
+                httpOptions: try httpOptionsResult.get()
             )
         }
     }
@@ -2314,12 +2331,20 @@ private enum BridgeDictionaries {
     }
 }
 
-/// Runs an async Swift report operation and returns an Objective-C completion result.
-private func completeReport<T>(
+/// Starts an async Swift report operation and returns through the Objective-C facade.
+///
+/// The isolated parameter lets the child task inherit the caller's current
+/// isolation. That keeps the facade's established non-`Sendable` completion
+/// type source-compatible while preventing the callback and operation from
+/// being transferred to an unrelated executor.
+private func completeReport<Value>(
     _ completionHandler: @escaping (NSDictionary?, NSError?) -> Void,
-    operation: @escaping () async throws -> T
+    isolation: isolated (any Actor)? = #isolation,
+    operation: @escaping () async throws -> Value
 ) {
     Task {
+        // An explicit use keeps the caller's isolation attached to the task.
+        _ = isolation
         do {
             completionHandler(try ReportBridge.dictionary(from: try await operation()), nil)
         } catch {

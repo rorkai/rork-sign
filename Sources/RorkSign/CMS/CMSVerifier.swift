@@ -3,8 +3,8 @@ import CryptoKit
 #else
 import Crypto
 #endif
+import CryptoExtras
 import Foundation
-import _CryptoExtras
 
 /// Verifies detached CMS SignedData payloads used by Apple code signatures.
 ///

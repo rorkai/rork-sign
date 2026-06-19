@@ -1073,7 +1073,7 @@ private func signThinMachO(_ data: Data, options: MachOSigningOptions) throws ->
                 options: options,
                 infoPlist: options.infoPlist.isEmpty ? layout.embeddedInfoPlist : options.infoPlist,
                 cmsSignature: cmsSignature,
-                adHoc: options.adHoc,
+                adHoc: options.adHoc
             )
         )
     }
@@ -1189,7 +1189,7 @@ private func prepareThinMachOCMSCodeDirectories(
                 options: options,
                 infoPlist: options.infoPlist.isEmpty ? layout.embeddedInfoPlist : options.infoPlist,
                 cmsSignature: options.cmsSignature,
-                adHoc: false,
+                adHoc: false
             )
         )
     }
@@ -1226,7 +1226,7 @@ private func prepareThinMachOCMSCodeDirectories(
             options: options,
             infoPlist: options.infoPlist.isEmpty ? layout.embeddedInfoPlist : options.infoPlist,
             cmsSignature: Data(),
-            adHoc: false,
+            adHoc: false
         )
     )
 }

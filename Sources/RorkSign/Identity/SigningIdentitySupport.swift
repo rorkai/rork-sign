@@ -4,10 +4,10 @@ import CryptoKit
 #else
 import Crypto
 #endif
-import _CryptoExtras
+import CryptoExtras
 
 /// CMS signature algorithms supported by signing identities.
-enum CMSSignatureAlgorithm {
+enum CMSSignatureAlgorithm: Sendable {
     /// RSA PKCS#1 v1.5 with the generic `rsaEncryption` SignerInfo algorithm.
     case rsaEncryption
 
@@ -50,7 +50,7 @@ enum CMSSignatureAlgorithm {
 /// Keeping this internal avoids exposing Swift Crypto's concrete RSA and EC key
 /// types through the public API while still supporting the signing key families
 /// used by common Apple code-signing certificates.
-enum SigningPrivateKey {
+enum SigningPrivateKey: Sendable {
     /// RSA signing key.
     case rsa(RSAPrivateSigningKey)
 
@@ -151,7 +151,7 @@ enum SigningPrivateKey {
 }
 
 /// Small wrapper around Swift Crypto's RSA private key type.
-struct RSAPrivateSigningKey {
+struct RSAPrivateSigningKey: Sendable {
     private let privateKey: _RSA.Signing.PrivateKey
 
     init(derRepresentation: Data, password: String = "") throws {
@@ -217,7 +217,7 @@ struct RSAPrivateSigningKey {
 }
 
 /// Small wrapper around Swift Crypto's P-256 signing key type.
-struct P256PrivateSigningKey {
+struct P256PrivateSigningKey: Sendable {
     private let privateKey: P256.Signing.PrivateKey
 
     init(derRepresentation: Data, password: String = "") throws {
@@ -296,7 +296,7 @@ struct P256PrivateSigningKey {
 }
 
 /// Small wrapper around Swift Crypto's P-384 signing key type.
-struct P384PrivateSigningKey {
+struct P384PrivateSigningKey: Sendable {
     private let privateKey: P384.Signing.PrivateKey
 
     init(derRepresentation: Data, password: String = "") throws {
@@ -375,7 +375,7 @@ struct P384PrivateSigningKey {
 }
 
 /// Small wrapper around Swift Crypto's P-521 signing key type.
-struct P521PrivateSigningKey {
+struct P521PrivateSigningKey: Sendable {
     private let privateKey: P521.Signing.PrivateKey
 
     init(derRepresentation: Data, password: String = "") throws {
@@ -526,7 +526,7 @@ private func sec1PrivateKeyScalar(
 }
 
 /// Extracted X.509 certificate fields used by signing, inspection, and OCSP.
-struct CertificateInfo {
+struct CertificateInfo: Sendable {
     let tbsCertificateDER: Data
     let issuerDER: Data
     let subjectDER: Data

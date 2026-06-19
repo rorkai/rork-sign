@@ -9,6 +9,32 @@ final class ObjCFacadeTests: XCTestCase {
         XCTAssertEqual(Signer.signerVersion(), RorkSigner.version)
     }
 
+    /// Verifies the Objective-C async bridge delivers setup failures through
+    /// its completion block instead of dropping the callback.
+    func testFetchOCSPResponseCompletesWhenRequestHasNoResponderURL() async throws {
+        let fixture = try OpenSSLFixture()
+        defer {
+            fixture.remove()
+        }
+        let signer = Signer()
+        let request = try signer.makeOCSPRequest(
+            certificateData: fixture.identity.certificateDER,
+            issuerCertificateData: fixture.identity.certificateDER
+        )
+        XCTAssertNil(request.responderURL)
+
+        let completion = await withCheckedContinuation { continuation in
+            signer.fetchOCSPResponse(request, options: nil) { report, error in
+                continuation.resume(
+                    returning: (hasReport: report != nil, hasError: error != nil)
+                )
+            }
+        }
+
+        XCTAssertFalse(completion.hasReport)
+        XCTAssertTrue(completion.hasError)
+    }
+
     /// Verifies ad-hoc bundle signing returns typed Objective-C report data.
     func testSignBundleAdHocReturnsTypedReport() throws {
         let bundleURL = try makeObjCFacadeBundleFixture(bundleIdentifier: "app.rork.objc.adhoc")

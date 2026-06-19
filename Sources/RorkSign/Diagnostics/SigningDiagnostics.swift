@@ -1,7 +1,7 @@
 import Logging
 
 /// Severity for signing diagnostic events.
-public enum SigningDiagnosticLevel: Equatable {
+public enum SigningDiagnosticLevel: Equatable, Sendable {
     /// High-level signing progress and preflight metadata.
     case info
 

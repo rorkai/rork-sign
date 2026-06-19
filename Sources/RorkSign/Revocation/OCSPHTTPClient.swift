@@ -10,7 +10,7 @@ import FoundationNetworking
 /// timeout, user agent, and caller-supplied headers. Signature verification,
 /// freshness checks, responder authorization, and certificate policy remain
 /// explicit follow-up steps.
-public struct OCSPHTTPOptions: Equatable {
+public struct OCSPHTTPOptions: Equatable, Sendable {
     /// Maximum duration allowed for the responder request.
     public let timeout: TimeInterval
 

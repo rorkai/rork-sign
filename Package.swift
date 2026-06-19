@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 
 import PackageDescription
 
@@ -6,12 +6,12 @@ import PackageDescription
 // compatibility product as a standalone framework.
 #if canImport(CryptoKit)
 let platformCryptoDependencies: [Target.Dependency] = [
-    .product(name: "_CryptoExtras", package: "swift-crypto"),
+    .product(name: "CryptoExtras", package: "swift-crypto"),
 ]
 #else
 let platformCryptoDependencies: [Target.Dependency] = [
     .product(name: "Crypto", package: "swift-crypto"),
-    .product(name: "_CryptoExtras", package: "swift-crypto"),
+    .product(name: "CryptoExtras", package: "swift-crypto"),
 ]
 #endif
 
@@ -36,7 +36,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
         .package(url: "https://github.com/weichsel/ZIPFoundation.git", from: "0.9.20"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),

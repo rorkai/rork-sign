@@ -3,8 +3,8 @@ import CryptoKit
 #else
 import Crypto
 #endif
+import CryptoExtras
 import Foundation
-import _CryptoExtras
 
 /// Certificate/private-key material extracted from a PKCS#12 container.
 struct PKCS12IdentityMaterial {

@@ -1,5 +1,4 @@
 import ArgumentParser
-import Dispatch
 import Foundation
 import Logging
 import RorkSign
@@ -16,7 +15,7 @@ struct ZSignCompatibleRunner {
     let command: ZSignOptions
 
     /// Executes the compatibility command for one positional input path.
-    func run(inputPath: String) throws {
+    func run(inputPath: String) async throws {
         try validateUnsupportedOptions()
 
         let inputURL = fileURL(inputPath)
@@ -25,7 +24,7 @@ struct ZSignCompatibleRunner {
         }
 
         if isCertificateCheckOnlyCommand {
-            try checkCertificateInput(at: inputURL)
+            try await checkCertificateInput(at: inputURL)
             return
         }
 
@@ -835,7 +834,7 @@ struct ZSignCompatibleRunner {
     }
 
     /// Performs the ZSign-style `-C` input inspection flow.
-    private func checkCertificateInput(at inputURL: URL) throws {
+    private func checkCertificateInput(at inputURL: URL) async throws {
         if try isDirectory(inputURL) {
             let directoryInput = try resolveDirectoryInput(inputURL)
             try checkAppSignatureOrEmbeddedProfile(in: directoryInput.bundleURL)
@@ -857,12 +856,12 @@ struct ZSignCompatibleRunner {
                 try RorkSigner.checkPKCS12Identity(credentialData, password: command.password)
             )
             printCertificateChainValidationReport(try RorkSigner.validateCertificateChain(identity: identity))
-            try printOnlineOCSPStatusIfRequested(identity: identity)
+            try await printOnlineOCSPStatusIfRequested(identity: identity)
         case "cer", "cert", "der", "pem":
             let certificateData = try Data(contentsOf: inputURL)
             printCertificateReports(try RorkSigner.checkCertificateChain(certificateData))
             printCertificateChainValidationReport(try RorkSigner.validateCertificateChain(certificateData))
-            try printOnlineOCSPStatusIfRequested(certificateChainData: certificateData)
+            try await printOnlineOCSPStatusIfRequested(certificateChainData: certificateData)
         default:
             printMachOCodeSignatureReports(
                 try RorkSigner.checkMachOCodeSignatures(at: inputURL)
@@ -871,47 +870,27 @@ struct ZSignCompatibleRunner {
     }
 
     /// Fetches and prints online OCSP status for a certificate chain when requested.
-    private func printOnlineOCSPStatusIfRequested(certificateChainData: Data) throws {
+    private func printOnlineOCSPStatusIfRequested(certificateChainData: Data) async throws {
         guard command.onlineOCSP else {
             return
         }
-        let report = try waitForAsync {
-            try await RorkSigner.checkOCSPStatus(
-                certificateChainData: certificateChainData,
-                httpOptions: OCSPHTTPOptions(userAgent: "rorksign")
-            )
-        }
+        let report = try await RorkSigner.checkOCSPStatus(
+            certificateChainData: certificateChainData,
+            httpOptions: OCSPHTTPOptions(userAgent: "rorksign")
+        )
         printOCSPStatusReport(report)
     }
 
     /// Fetches and prints online OCSP status for a signing identity when requested.
-    private func printOnlineOCSPStatusIfRequested(identity: SigningIdentity) throws {
+    private func printOnlineOCSPStatusIfRequested(identity: SigningIdentity) async throws {
         guard command.onlineOCSP else {
             return
         }
-        let report = try waitForAsync {
-            try await RorkSigner.checkOCSPStatus(
-                identity: identity,
-                httpOptions: OCSPHTTPOptions(userAgent: "rorksign")
-            )
-        }
+        let report = try await RorkSigner.checkOCSPStatus(
+            identity: identity,
+            httpOptions: OCSPHTTPOptions(userAgent: "rorksign")
+        )
         printOCSPStatusReport(report)
-    }
-
-    /// Runs one async operation from the synchronous ArgumentParser command path.
-    private func waitForAsync<T>(_ operation: @escaping () async throws -> T) throws -> T {
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: Result<T, Error>?
-        Task {
-            do {
-                result = .success(try await operation())
-            } catch {
-                result = .failure(error)
-            }
-            semaphore.signal()
-        }
-        semaphore.wait()
-        return try result!.get()
     }
 
     /// Prints profile/credential preflight details before signing when `-C` is set.
