@@ -2,6 +2,19 @@
 
 import PackageDescription
 
+// Prefer native CryptoKit on Apple hosts to avoid linking Swift Crypto's
+// compatibility product as a standalone framework.
+#if canImport(CryptoKit)
+let platformCryptoDependencies: [Target.Dependency] = [
+    .product(name: "_CryptoExtras", package: "swift-crypto"),
+]
+#else
+let platformCryptoDependencies: [Target.Dependency] = [
+    .product(name: "Crypto", package: "swift-crypto"),
+    .product(name: "_CryptoExtras", package: "swift-crypto"),
+]
+#endif
+
 let package = Package(
     name: "rork-sign",
     platforms: [
@@ -31,9 +44,7 @@ let package = Package(
     targets: [
         .target(
             name: "RorkSign",
-            dependencies: [
-                .product(name: "Crypto", package: "swift-crypto"),
-                .product(name: "_CryptoExtras", package: "swift-crypto"),
+            dependencies: platformCryptoDependencies + [
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "ZIPFoundation", package: "ZIPFoundation"),
             ],
