@@ -749,3 +749,5 @@ production signing path.
 ## License
 
 rork-sign is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
+Legal notices for bundled third-party components are available in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
