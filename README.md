@@ -19,7 +19,6 @@ oracle for certificate and CMS interoperability.
 ## Contents
 
 - [Features](#features)
-- [Requirements](#requirements)
 - [Supported Targets](#supported-targets)
 - [Build](#build)
 - [Usage](#usage)
@@ -70,15 +69,6 @@ oracle for certificate and CMS interoperability.
 - **Signature cache** - reuse unchanged Mach-O signatures across repeated
   bundle or IPA signing runs through `.zsign_cache`.
 
-## Requirements
-
-- Swift 6.0 or newer
-- Swift Package Manager
-
-`RorkSign` and `RorkSignObjC` are built in Swift 6 language mode. Their public
-APIs remain source-compatible with clients compiled in Swift 5 language mode by
-a Swift 6 toolchain, including the Foundation-based Objective-C facade.
-
 ## Supported Targets
 
 The package currently declares:
@@ -91,6 +81,9 @@ toolchain. The library code is pure Swift and SwiftPM-based; additional platform
 support should be added with CI coverage before it is advertised as supported.
 
 ## Build
+
+Building requires a Swift 6.0 or newer toolchain. Client targets may continue
+using Swift 5 language mode.
 
 ```bash
 git clone https://github.com/rorkai/rork-sign.git
