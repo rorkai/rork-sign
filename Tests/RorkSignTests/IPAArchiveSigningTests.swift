@@ -483,6 +483,231 @@ final class IPAArchiveSigningTests: XCTestCase {
         )
     }
 
+    func testArchiveWriteRejectsOutputInsideSourceTreeWithoutDeletingIt()
+        throws
+    {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let sourceURL = rootURL.appendingPathComponent(
+            "ArchiveRoot",
+            isDirectory: true
+        )
+        let outputURL = sourceURL.appendingPathComponent("Output.ipa")
+        let originalOutput = Data("existing archive".utf8)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: sourceURL,
+            withIntermediateDirectories: true
+        )
+        try Data("source".utf8).write(
+            to: sourceURL.appendingPathComponent("source.txt")
+        )
+        try originalOutput.write(to: outputURL)
+
+        XCTAssertThrowsError(
+            try IPAArchive.write(
+                contentsOf: sourceURL,
+                to: outputURL,
+                compressionMode: .stored
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? RorkSignError,
+                .invalidArchive(
+                    "IPA archive output must be outside its source directory: \(outputURL.path)."
+                )
+            )
+        }
+        XCTAssertEqual(try Data(contentsOf: outputURL), originalOutput)
+    }
+
+    func testArchiveWriteRejectsDirectoryDestinationWithoutRemovingIt()
+        throws
+    {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let sourceURL = rootURL.appendingPathComponent(
+            "ArchiveRoot",
+            isDirectory: true
+        )
+        let outputURL = rootURL.appendingPathComponent(
+            "Output.ipa",
+            isDirectory: true
+        )
+        let markerURL = outputURL.appendingPathComponent("marker.txt")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: sourceURL,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: outputURL,
+            withIntermediateDirectories: true
+        )
+        try Data("source".utf8).write(
+            to: sourceURL.appendingPathComponent("source.txt")
+        )
+        try Data("marker".utf8).write(to: markerURL)
+
+        XCTAssertThrowsError(
+            try IPAArchive.write(
+                contentsOf: sourceURL,
+                to: outputURL,
+                compressionMode: .stored
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? RorkSignError,
+                .invalidArchive(
+                    "IPA archive output path is a directory: \(outputURL.path)."
+                )
+            )
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: markerURL.path))
+    }
+
+    func testArchiveDoesNotReuseSymlinkMetadataForReplacementFile() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let originalRootURL = rootURL.appendingPathComponent(
+            "Original",
+            isDirectory: true
+        )
+        let extractedURL = rootURL.appendingPathComponent(
+            "Extracted",
+            isDirectory: true
+        )
+        let linkURL = originalRootURL.appendingPathComponent("Current")
+        let inputURL = rootURL.appendingPathComponent("Input.ipa")
+        let outputURL = rootURL.appendingPathComponent("Output.ipa")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: originalRootURL,
+            withIntermediateDirectories: true
+        )
+        try Data("asset".utf8).write(
+            to: originalRootURL.appendingPathComponent("asset.txt")
+        )
+        try FileManager.default.createSymbolicLink(
+            atPath: linkURL.path,
+            withDestinationPath: "asset.txt"
+        )
+        try IPAArchive.write(
+            contentsOf: originalRootURL,
+            to: inputURL,
+            compressionMode: .stored
+        )
+
+        let contents = try IPAArchive.extract(
+            at: inputURL,
+            to: extractedURL,
+            metadataBehavior: .preserveInArchive
+        )
+        let extractedLinkURL = extractedURL.appendingPathComponent("Current")
+        try FileManager.default.removeItem(at: extractedLinkURL)
+        try Data("replacement".utf8).write(to: extractedLinkURL)
+        try IPAArchive.write(
+            contentsOf: extractedURL,
+            to: outputURL,
+            compressionMode: .stored,
+            preserving: contents
+        )
+
+        let reader = try ZipArchiveReader(
+            buffer: [UInt8](try Data(contentsOf: outputURL))
+        )
+        let entry = try XCTUnwrap(
+            try reader.readDirectory().first {
+                $0.filename.string == "Current"
+            }
+        )
+        XCTAssertTrue(
+            entry.externalAttributes.unixAttributes.contains(.isRegularFile)
+        )
+        XCTAssertFalse(
+            entry.externalAttributes.unixAttributes.contains(.isSymbolicLink)
+        )
+    }
+
+    #if !os(WASI)
+    func testArchiveRestoresDirectoryMetadataAfterExtractingChildren() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let inputURL = rootURL.appendingPathComponent("Input.ipa")
+        let extractedURL = rootURL.appendingPathComponent(
+            "Extracted",
+            isDirectory: true
+        )
+        let resourcesURL = extractedURL.appendingPathComponent(
+            "Payload/Host.app/Resources",
+            isDirectory: true
+        )
+        addTeardownBlock {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: resourcesURL.path
+            )
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+
+        let modificationDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let writer = ZipArchiveWriter()
+        try writer.writeFile(
+            filename: "Payload/Host.app/Resources",
+            contents: [],
+            metadata: Zip.EntryMetadata(
+                modificationDate: modificationDate,
+                externalAttributes: .unix([
+                    .isDirectory,
+                    .permissions([
+                        .ownerRead,
+                        .ownerExecute,
+                        .groupRead,
+                        .groupExecute,
+                        .otherRead,
+                        .otherExecute,
+                    ]),
+                ])
+            )
+        )
+        try writer.writeFile(
+            filename: "Payload/Host.app/Resources/asset.txt",
+            contents: Array("asset".utf8)
+        )
+        try Data(try writer.finalizeBuffer()).write(to: inputURL)
+
+        _ = try IPAArchive.extract(at: inputURL, to: extractedURL)
+
+        XCTAssertEqual(
+            try Data(contentsOf: resourcesURL.appendingPathComponent("asset.txt")),
+            Data("asset".utf8)
+        )
+        let attributes = try FileManager.default.attributesOfItem(
+            atPath: resourcesURL.path
+        )
+        XCTAssertEqual(
+            (attributes[.posixPermissions] as? NSNumber)?.intValue,
+            0o555
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(attributes[.modificationDate] as? Date)
+                .timeIntervalSince1970,
+            modificationDate.timeIntervalSince1970,
+            accuracy: 1
+        )
+    }
+    #endif
+
     func testArchiveRoundTripsUnicodePaths() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

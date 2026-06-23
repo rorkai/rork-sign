@@ -42,7 +42,7 @@ final class XMLPropertyListEncoderTests: XCTestCase {
             "z": "last",
             "a": "<value> & \"text\"",
         ])
-        let xml = String(decoding: data, as: UTF8.self)
+        let xml = try XCTUnwrap(String(data: data, encoding: .utf8))
 
         XCTAssertLessThan(
             try XCTUnwrap(xml.range(of: "<key>a</key>")?.lowerBound),

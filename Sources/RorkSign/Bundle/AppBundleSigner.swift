@@ -257,11 +257,13 @@ enum AppBundleSigner {
         options: AppSigningOptions,
         profiles: AppProvisioningAssets
     ) throws -> BundleSigningOptions {
+        let replacementIdentifier = try BundleIdentifier.normalize(
+            options.bundleIdentifier
+        )
         try AdditionalBundleFileWriter.write(
             options.additionalBundleFiles,
             to: bundleURL
         )
-        let replacementIdentifier = try BundleIdentifier.normalize(options.bundleIdentifier)
         let rewrittenBundles = try AppBundleIdentityRewriter.rewrite(
             rootBundleURL: bundleURL,
             replacementBundleIdentifier: replacementIdentifier,
@@ -357,7 +359,7 @@ private enum AdditionalBundleFileWriter {
                 at: file.url.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            try file.data.write(to: file.url)
+            try file.data.writeReplacingItem(at: file.url)
         }
     }
 

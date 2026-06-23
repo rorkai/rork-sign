@@ -687,6 +687,42 @@ final class AppSigningTests: XCTestCase {
         XCTAssertNotNil(sealedFiles["Signing/credential-password.txt"])
     }
 
+    func testAppSigningRejectsInvalidBundleIdentifierBeforeWritingAdditionalFiles()
+        throws
+    {
+        let fixture = try makeAppSigningFixture()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(
+                at: fixture.bundleURL.deletingLastPathComponent()
+            )
+        }
+        let additionalFileURL = fixture.bundleURL.appendingPathComponent(
+            "credential.txt"
+        )
+
+        XCTAssertThrowsError(
+            try RorkSigner.signBundle(
+                at: fixture.bundleURL,
+                options: AppSigningOptions(
+                    bundleIdentifier: "invalid/identifier",
+                    additionalBundleFiles: [
+                        "credential.txt": Data("secret".utf8),
+                    ]
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? RorkSignError,
+                .invalidBundle(
+                    "Bundle identifier contains a path separator: invalid/identifier."
+                )
+            )
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: additionalFileURL.path)
+        )
+    }
+
     func testAppSigningRejectsAdditionalBundleFileOutsideRootBeforeWritingFiles() throws {
         let fixture = try makeAppSigningFixture()
         addTeardownBlock {

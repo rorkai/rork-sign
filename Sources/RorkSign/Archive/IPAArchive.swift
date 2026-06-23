@@ -8,6 +8,23 @@ import ZipArchive
 /// Both paths share path validation and metadata handling so signing produces
 /// the same archive structure on every supported platform.
 package enum IPAArchive {
+    /// Filesystem shape encoded by one ZIP entry.
+    ///
+    /// Preserved metadata remains valid only while the extracted entry keeps
+    /// this shape; reusing symlink or directory mode bits for a replacement
+    /// file would make the rebuilt archive describe the wrong object.
+    fileprivate enum ItemKind {
+        case directory
+        case regularFile
+        case symbolicLink
+    }
+
+    /// Original metadata paired with the entry shape that produced it.
+    fileprivate struct PreservedEntry {
+        let metadata: Zip.EntryMetadata
+        let kind: ItemKind
+    }
+
     /// Controls whether ZIP metadata is restored on extracted files.
     ///
     /// Browser WASI filesystems do not reliably preserve POSIX metadata, so
@@ -29,10 +46,10 @@ package enum IPAArchive {
 
     /// Metadata captured while extracting an archive.
     package struct Contents {
-        fileprivate let metadataByPath: [String: Zip.EntryMetadata]
+        fileprivate let entriesByPath: [String: PreservedEntry]
 
         /// Represents a directory tree that was not extracted from an archive.
-        package static let empty = Self(metadataByPath: [:])
+        package static let empty = Self(entriesByPath: [:])
     }
 
     /// Extracts an IPA and records metadata needed when it is rebuilt.
@@ -69,7 +86,8 @@ package enum IPAArchive {
         metadataBehavior: ExtractedMetadataBehavior
     ) throws -> Contents {
         let entries = try reader.readDirectory()
-        var metadataByPath: [String: Zip.EntryMetadata] = [:]
+        var entriesByPath: [String: PreservedEntry] = [:]
+        var directoriesToRestore: [(entry: Zip.FileHeader, url: URL)] = []
 
         for entry in entries {
             let relativePath = try validatedArchivePath(entry.filename.string)
@@ -77,10 +95,13 @@ package enum IPAArchive {
                 continue
             }
 
-            metadataByPath[relativePath] = Zip.EntryMetadata(
-                modificationDate: entry.fileModification,
-                externalAttributes: entry.externalAttributes,
-                comment: entry.comment
+            entriesByPath[relativePath] = PreservedEntry(
+                metadata: Zip.EntryMetadata(
+                    modificationDate: entry.fileModification,
+                    externalAttributes: entry.externalAttributes,
+                    comment: entry.comment
+                ),
+                kind: itemKind(for: entry)
             )
 
             let destinationURL = try destinationURL(
@@ -89,11 +110,8 @@ package enum IPAArchive {
                 isDirectory: entry.isDirectory
             )
             if entry.isDirectory {
-                try createDirectory(
-                    at: destinationURL,
-                    entry: entry,
-                    metadataBehavior: metadataBehavior
-                )
+                try createDirectory(at: destinationURL)
+                directoriesToRestore.append((entry, destinationURL))
                 continue
             }
 
@@ -118,7 +136,17 @@ package enum IPAArchive {
             }
         }
 
-        return Contents(metadataByPath: metadataByPath)
+        // Children must be created while every ancestor remains writable.
+        // Reversing the list also restores nested timestamps before parents.
+        for directory in directoriesToRestore.reversed() {
+            try restoreFileMetadata(
+                from: directory.entry,
+                to: directory.url,
+                metadataBehavior: metadataBehavior
+            )
+        }
+
+        return Contents(entriesByPath: entriesByPath)
     }
 
     /// Rebuilds an IPA while preserving metadata for entries that already existed.
@@ -129,6 +157,11 @@ package enum IPAArchive {
         preserving originalContents: Contents = .empty
     ) throws {
         let fileManager = FileManager.default
+        try validateArchiveDestination(
+            archiveURL,
+            outside: rootURL,
+            fileManager: fileManager
+        )
         if fileManager.fileExists(atPath: archiveURL.path) {
             try fileManager.removeItem(at: archiveURL)
         }
@@ -171,9 +204,15 @@ package enum IPAArchive {
         using writer: ZipArchiveWriter<Storage>
     ) throws {
         for item in items {
-            let metadata =
-                originalContents.metadataByPath[item.relativePath]
-                ?? item.metadata
+            let originalEntry = originalContents.entriesByPath[
+                item.relativePath
+            ]
+            let metadata: Zip.EntryMetadata
+            if let originalEntry, originalEntry.kind == item.kind {
+                metadata = originalEntry.metadata
+            } else {
+                metadata = item.metadata
+            }
             try writer.writeFile(
                 filename: item.relativePath,
                 contents: try item.contents(),
@@ -186,6 +225,7 @@ package enum IPAArchive {
         let relativePath: String
         let source: Source
         let metadata: Zip.EntryMetadata
+        let kind: ItemKind
 
         enum Source {
             case bytes([UInt8])
@@ -248,7 +288,8 @@ package enum IPAArchive {
                             for: entry.url,
                             modificationDate: modificationDate,
                             kind: .symbolicLink
-                        )
+                        ),
+                        kind: .symbolicLink
                     )
                 )
             case .directory:
@@ -260,7 +301,8 @@ package enum IPAArchive {
                             for: entry.url,
                             modificationDate: modificationDate,
                             kind: .directory
-                        )
+                        ),
+                        kind: .directory
                     )
                 )
                 try appendArchivedItems(
@@ -277,17 +319,12 @@ package enum IPAArchive {
                             for: entry.url,
                             modificationDate: modificationDate,
                             kind: .regularFile
-                        )
+                        ),
+                        kind: .regularFile
                     )
                 )
             }
         }
-    }
-
-    private enum ItemKind {
-        case directory
-        case regularFile
-        case symbolicLink
     }
 
     /// Creates metadata for files introduced by the signing pass.
@@ -347,21 +384,79 @@ package enum IPAArchive {
         )
     }
 
-    /// Creates one extracted directory with usable owner permissions.
-    private static func createDirectory(
-        at url: URL,
-        entry: Zip.FileHeader,
-        metadataBehavior: ExtractedMetadataBehavior
-    ) throws {
+    /// Creates one extracted directory while leaving it writable for children.
+    ///
+    /// Original permissions and timestamps are restored only after extraction
+    /// completes so read-only archive directories cannot block their contents.
+    private static func createDirectory(at url: URL) throws {
         try FileManager.default.createDirectory(
             at: url,
             withIntermediateDirectories: true
         )
-        try restoreFileMetadata(
-            from: entry,
-            to: url,
-            metadataBehavior: metadataBehavior
-        )
+    }
+
+    /// Returns the entry shape encoded in Unix attributes and ZIP directory flags.
+    private static func itemKind(for entry: Zip.FileHeader) -> ItemKind {
+        let fileType =
+            entry.externalAttributes.unixAttributes.rawValue & 0o170000
+        switch fileType {
+        case Zip.UnixAttributes.isDirectory.rawValue:
+            return .directory
+        case Zip.UnixAttributes.isSymbolicLink.rawValue:
+            return .symbolicLink
+        case Zip.UnixAttributes.isRegularFile.rawValue:
+            return .regularFile
+        default:
+            return entry.isDirectory ? .directory : .regularFile
+        }
+    }
+
+    /// Rejects destinations that could remove source content or a directory.
+    ///
+    /// Archive output is caller-controlled. Preflighting before `removeItem`
+    /// keeps an existing in-tree file or directory intact when the request is
+    /// invalid, including when an ancestor resolves through a symbolic link.
+    private static func validateArchiveDestination(
+        _ archiveURL: URL,
+        outside rootURL: URL,
+        fileManager: FileManager
+    ) throws {
+        let sourceURL = rootURL.standardizedFileURL
+        let outputURL = archiveURL.standardizedFileURL
+        let resolvedSourceURL = sourceURL.resolvingSymlinksInPath()
+        let resolvedOutputURL = outputURL
+            .deletingLastPathComponent()
+            .resolvingSymlinksInPath()
+            .appendingPathComponent(outputURL.lastPathComponent)
+
+        guard
+            !isSameOrDescendant(outputURL, of: sourceURL),
+            !isSameOrDescendant(resolvedOutputURL, of: resolvedSourceURL)
+        else {
+            throw RorkSignError.invalidArchive(
+                "IPA archive output must be outside its source directory: \(archiveURL.path)."
+            )
+        }
+
+        var isDirectory: ObjCBool = false
+        guard
+            !fileManager.fileExists(
+                atPath: archiveURL.path,
+                isDirectory: &isDirectory
+            ) || !isDirectory.boolValue
+        else {
+            throw RorkSignError.invalidArchive(
+                "IPA archive output path is a directory: \(archiveURL.path)."
+            )
+        }
+    }
+
+    /// Reports whether `candidateURL` is equal to or below `rootURL`.
+    private static func isSameOrDescendant(
+        _ candidateURL: URL,
+        of rootURL: URL
+    ) -> Bool {
+        candidateURL.pathComponents.starts(with: rootURL.pathComponents)
     }
 
     /// Writes one archive symlink after proving that its target stays in bounds.
