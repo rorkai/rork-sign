@@ -3,6 +3,8 @@ import Foundation
 import XCTest
 
 final class XMLPropertyListEncoderTests: XCTestCase {
+    /// Round-trips every supported composite value through Foundation's decoder
+    /// so the WASI writer remains compatible with native plist consumers.
     func testEncodesNestedPropertyListValues() throws {
         let date = Date(timeIntervalSince1970: 1_800_000_000)
         let propertyList: [String: Any] = [
@@ -37,6 +39,8 @@ final class XMLPropertyListEncoderTests: XCTestCase {
         XCTAssertEqual((decoded["real"] as? NSNumber)?.doubleValue, 1.25)
     }
 
+    /// Protects stable dictionary ordering and lossless XML escaping, both of
+    /// which affect reproducibility of signed bundle resources.
     func testProducesDeterministicEscapedXML() throws {
         let data = try XMLPropertyListEncoder.encode([
             "z": "last",
@@ -51,6 +55,8 @@ final class XMLPropertyListEncoderTests: XCTestCase {
         XCTAssertTrue(xml.contains("<string>&lt;value&gt; &amp; \"text\"</string>"))
     }
 
+    /// Ensures unsupported runtime values fail explicitly instead of producing
+    /// a plist whose decoded type differs from the caller's input.
     func testRejectsUnsupportedValues() {
         XCTAssertThrowsError(
             try XMLPropertyListEncoder.encode([

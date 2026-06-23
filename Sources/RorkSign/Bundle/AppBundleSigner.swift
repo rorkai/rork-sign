@@ -239,6 +239,10 @@ enum AppBundleSigner {
         )
     }
 
+    /// Builds and validates provisioning inputs before bundle mutation.
+    ///
+    /// Team and certificate mismatches must fail before identifiers, resources,
+    /// or caller-owned files are rewritten.
     private static func provisioningAssets(
         options: AppSigningOptions,
         identity: SigningIdentity?

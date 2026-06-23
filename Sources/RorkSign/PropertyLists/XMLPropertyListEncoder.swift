@@ -20,6 +20,10 @@ enum XMLPropertyListEncoder {
         return Data(xml.utf8)
     }
 
+    /// Appends one supported property-list value using its canonical XML node.
+    ///
+    /// Foundation bridges booleans and integers through `NSNumber`, so concrete
+    /// Swift value types are matched first to preserve their property-list kind.
     private static func append(
         _ value: Any,
         indentation: Int,
@@ -82,6 +86,10 @@ enum XMLPropertyListEncoder {
         }
     }
 
+    /// Appends dictionary keys in lexical order.
+    ///
+    /// Dictionary iteration order is not part of the property-list value, so
+    /// sorting avoids host-dependent bytes without changing semantics.
     private static func append(
         _ dictionary: [String: Any],
         indentation: Int,
@@ -108,6 +116,10 @@ enum XMLPropertyListEncoder {
         xml.append("\(prefix)</dict>")
     }
 
+    /// Appends array elements in caller-provided order.
+    ///
+    /// Property-list arrays are ordered data, so sorting them for determinism
+    /// would change the value rather than only its serialization.
     private static func append(
         _ array: [Any],
         indentation: Int,
@@ -127,6 +139,10 @@ enum XMLPropertyListEncoder {
         xml.append("\(prefix)</array>")
     }
 
+    /// Preserves an `NSNumber`'s integer-versus-real representation.
+    ///
+    /// Numeric magnitude alone cannot distinguish values such as `1` and `1.0`;
+    /// the Objective-C type encoding retains the property-list kind.
     private static func append(
         _ number: NSNumber,
         prefix: String,
@@ -140,6 +156,10 @@ enum XMLPropertyListEncoder {
         }
     }
 
+    /// Appends a finite XML property-list real value.
+    ///
+    /// Property lists have no portable representation for NaN or infinity, so
+    /// rejecting them avoids producing XML that Foundation cannot read back.
     private static func append(
         real: Double,
         prefix: String,
@@ -153,6 +173,10 @@ enum XMLPropertyListEncoder {
         xml.append("\(prefix)<real>\(real)</real>")
     }
 
+    /// Formats dates in the canonical UTC representation used by XML plists.
+    ///
+    /// Pinning the timezone prevents identical values from producing different
+    /// signed resources on different hosts.
     private static func formatted(_ date: Date) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
@@ -160,6 +184,10 @@ enum XMLPropertyListEncoder {
         return formatter.string(from: date)
     }
 
+    /// Escapes XML markup and rejects scalars forbidden by XML 1.0.
+    ///
+    /// Carriage returns use a character reference because XML parsers otherwise
+    /// normalize them to line feeds and change the decoded property-list value.
     private static func escaped(_ string: String) throws -> String {
         var result = ""
         result.reserveCapacity(string.utf8.count)

@@ -221,12 +221,20 @@ package enum IPAArchive {
         }
     }
 
+    /// One normalized ZIP entry whose file contents can remain lazily loaded.
+    ///
+    /// Keeping regular files file-backed bounds native memory use, while
+    /// directories and symbolic-link targets are small enough to retain inline.
     private struct ArchivedItem {
         let relativePath: String
         let source: Source
         let metadata: Zip.EntryMetadata
         let kind: ItemKind
 
+        /// Storage used until the ZIP writer requests the entry contents.
+        ///
+        /// Inline bytes represent structure-only entries; file URLs defer the
+        /// potentially large regular-file read until serialization.
         enum Source {
             case bytes([UInt8])
             case file(URL)

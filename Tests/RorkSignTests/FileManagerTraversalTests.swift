@@ -3,6 +3,8 @@ import Foundation
 import XCTest
 
 final class FileManagerTraversalTests: XCTestCase {
+    /// Exercises the entry model used by both native metadata lookup and the
+    /// browser WASI fallback.
     func testEntriesClassifyDirectoriesAndRegularFiles() throws {
         let rootURL = try makeTemporaryDirectory()
         defer {
@@ -34,6 +36,8 @@ final class FileManagerTraversalTests: XCTestCase {
         )
     }
 
+    /// Protects subtree pruning used to keep nested bundles in their own
+    /// independent signing pass.
     func testEnumerationCanSkipDirectoryDescendants() throws {
         let rootURL = try makeTemporaryDirectory()
         defer {
@@ -66,6 +70,8 @@ final class FileManagerTraversalTests: XCTestCase {
         XCTAssertEqual(visitedPaths, ["Nested.framework", "Root"])
     }
 
+    /// Ensures a link to a directory remains a leaf so traversal cannot escape
+    /// its caller-provided root.
     func testEnumerationDoesNotDescendThroughSymbolicLinks() throws {
         let rootURL = try makeTemporaryDirectory()
         let targetURL = try makeTemporaryDirectory()
@@ -93,6 +99,10 @@ final class FileManagerTraversalTests: XCTestCase {
         XCTAssertNil(entries["File"])
     }
 
+    /// Creates an isolated real filesystem root.
+    ///
+    /// Traversal behavior depends on actual directory and symlink metadata, so
+    /// an in-memory fixture would not exercise the production contract.
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

@@ -3,6 +3,8 @@ import Foundation
 import XCTest
 
 final class BundleSignerMetadataTests: XCTestCase {
+    /// Treats WASI's zero permission sentinel as unavailable metadata while
+    /// preserving real executable modes on capable filesystems.
     func testRestorablePOSIXPermissionsIgnoreUnavailableMetadata() {
         XCTAssertNil(
             BundleSigner.restorablePOSIXPermissions(

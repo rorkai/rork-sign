@@ -266,17 +266,29 @@ enum AppMetadataExtractor {
         return appURL
     }
 
+    /// Reads file size through attributes available on native and WASI hosts.
+    ///
+    /// URL resource values are intentionally avoided because browser Foundation
+    /// does not expose them consistently.
     private static func fileSize(_ url: URL) throws -> Int64 {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         return (attributes[.size] as? NSNumber)?.int64Value ?? 0
     }
 
+    /// Produces the stable icon filename expected by ZSign-compatible metadata.
+    ///
+    /// The source path, rather than file contents, preserves the compatibility
+    /// naming contract used by existing metadata consumers.
     private static func sha1Hex(_ string: String) -> String {
         Insecure.SHA1.hash(data: Data(string.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
     }
 
+    /// Returns a non-empty plist string after removing incidental whitespace.
+    ///
+    /// Metadata fields treat empty and whitespace-only plist values as absent so
+    /// their documented fallback order remains effective.
     private static func string(_ value: Any?) -> String? {
         guard let string = value as? String else {
             return nil

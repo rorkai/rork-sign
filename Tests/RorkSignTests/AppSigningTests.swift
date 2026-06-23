@@ -645,6 +645,8 @@ final class AppSigningTests: XCTestCase {
         XCTAssertEqual(localizedInfo["CFBundleDisplayName"] as? String, "Signed Fixture")
     }
 
+    /// Protects the ordering contract that caller files are replaced before
+    /// CodeResources hashes the final bundle contents.
     func testAppSigningWritesAdditionalBundleFilesBeforeSealingResources() throws {
         let fixture = try makeAppSigningFixture()
         addTeardownBlock {
@@ -687,6 +689,8 @@ final class AppSigningTests: XCTestCase {
         XCTAssertNotNil(sealedFiles["Signing/credential-password.txt"])
     }
 
+    /// Ensures invalid bundle identifiers fail before any caller file can
+    /// mutate an otherwise valid app bundle.
     func testAppSigningRejectsInvalidBundleIdentifierBeforeWritingAdditionalFiles()
         throws
     {
@@ -723,6 +727,8 @@ final class AppSigningTests: XCTestCase {
         )
     }
 
+    /// Verifies one escaping path prevents every requested write and leaves
+    /// bundle metadata untouched.
     func testAppSigningRejectsAdditionalBundleFileOutsideRootBeforeWritingFiles() throws {
         let fixture = try makeAppSigningFixture()
         addTeardownBlock {
@@ -757,6 +763,8 @@ final class AppSigningTests: XCTestCase {
         )
     }
 
+    /// Verifies lexical path validation is reinforced by rejecting existing
+    /// symlinks that could redirect a write outside the app bundle.
     func testAppSigningRejectsAdditionalBundleFileThroughSymbolicLinkBeforeWritingFiles() throws {
         let fixture = try makeAppSigningFixture()
         let fixtureRootURL = fixture.bundleURL.deletingLastPathComponent()
@@ -803,6 +811,8 @@ final class AppSigningTests: XCTestCase {
         )
     }
 
+    /// Ensures parent-file and child-file requests are preflighted as one set so
+    /// dictionary iteration order cannot leave a partial update.
     func testAppSigningRejectsConflictingAdditionalBundleFilePathsBeforeWritingFiles() throws {
         let fixture = try makeAppSigningFixture()
         addTeardownBlock {

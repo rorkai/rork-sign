@@ -242,6 +242,8 @@ final class IPAArchiveSigningTests: XCTestCase {
     }
 
     #if canImport(RorkSignWeb)
+    /// Exercises the complete in-memory browser API while proving that signing
+    /// preserves executable modes, symbolic links, and plist value types.
     func testWebSignerReturnsInstallableArchiveAndPreservesEntryTypes() throws {
         let signing = try OpenSSLFixture()
         defer {
@@ -315,6 +317,8 @@ final class IPAArchiveSigningTests: XCTestCase {
         XCTAssertEqual(infoPlist["UIDeviceFamily"] as? [Int], [1, 2])
     }
 
+    /// Ensures explicit empty ZIP directories survive the filesystem round trip
+    /// even though they contribute no file data.
     func testWebSignerPreservesEmptyDirectories() throws {
         let signing = try OpenSSLFixture()
         defer {
@@ -358,6 +362,8 @@ final class IPAArchiveSigningTests: XCTestCase {
     #endif
 
     #if !os(WASI)
+    /// Verifies native extraction restores the executable bit and timestamp
+    /// required by downstream bundle signing.
     func testArchiveExtractionRestoresExecutableMetadataOnNativeFilesystems()
         throws
     {
@@ -418,6 +424,8 @@ final class IPAArchiveSigningTests: XCTestCase {
     }
     #endif
 
+    /// Verifies browser-style extraction can retain archive metadata separately
+    /// when its workspace cannot represent that metadata reliably.
     func testArchivePreservesMetadataWithoutRestoringItToTheWorkspace()
         throws
     {
@@ -483,6 +491,8 @@ final class IPAArchiveSigningTests: XCTestCase {
         )
     }
 
+    /// Protects source data when a caller accidentally places the output archive
+    /// inside the directory being serialized.
     func testArchiveWriteRejectsOutputInsideSourceTreeWithoutDeletingIt()
         throws
     {
@@ -523,6 +533,8 @@ final class IPAArchiveSigningTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: outputURL), originalOutput)
     }
 
+    /// Ensures destination preflight never replaces a caller-owned directory
+    /// with an archive file.
     func testArchiveWriteRejectsDirectoryDestinationWithoutRemovingIt()
         throws
     {
@@ -570,6 +582,8 @@ final class IPAArchiveSigningTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: markerURL.path))
     }
 
+    /// Ensures preserved metadata is reused only when an entry keeps the same
+    /// filesystem kind across signing.
     func testArchiveDoesNotReuseSymlinkMetadataForReplacementFile() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -636,6 +650,8 @@ final class IPAArchiveSigningTests: XCTestCase {
     }
 
     #if !os(WASI)
+    /// Verifies read-only directory metadata is restored after children are
+    /// extracted, avoiding blocked writes and timestamp drift.
     func testArchiveRestoresDirectoryMetadataAfterExtractingChildren() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -708,6 +724,8 @@ final class IPAArchiveSigningTests: XCTestCase {
     }
     #endif
 
+    /// Protects UTF-8 archive names used by localized resources and user-owned
+    /// bundle files.
     func testArchiveRoundTripsUnicodePaths() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -750,6 +768,10 @@ final class IPAArchiveSigningTests: XCTestCase {
         )
     }
 
+    /// Ensures a malicious ZIP entry cannot write outside the extraction root.
+    ///
+    /// The output assertion also proves validation happens before a signed
+    /// archive can be emitted.
     func testArchiveRejectsParentTraversal() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -783,6 +805,8 @@ final class IPAArchiveSigningTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
+    /// Ensures a relative symlink is rejected when lexical resolution escapes
+    /// the extracted IPA tree.
     func testArchiveRejectsEscapingSymbolicLink() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -832,6 +856,10 @@ private struct IPAArchiveFixture {
     let archiveURL: URL
 }
 
+/// Creates a minimal signable IPA through the production archive boundary.
+///
+/// Optional entry shapes let individual tests cover metadata that is otherwise
+/// easy for archive rewrites to drop.
 private func makeIPAArchiveFixture(
     bundleIdentifier: String,
     includeSymbolicLink: Bool = false,

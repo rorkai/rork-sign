@@ -31,7 +31,12 @@ public extension RorkSigner {
     ///
     /// The implementation uses an isolated temporary workspace because the
     /// underlying bundle signer intentionally operates on a filesystem tree.
-    /// The workspace is removed before this method returns.
+    /// The workspace is removed before this method returns, and only the signed
+    /// archive bytes and archive-relative report paths cross the browser API.
+    ///
+    /// Stored entries remain the default because browser callers usually pass
+    /// the result directly to InstallationProxy, where recompression adds CPU
+    /// work without reducing the USB transfer meaningfully.
     static func signIPA(
         _ ipaData: Data,
         using identity: SigningIdentity,
