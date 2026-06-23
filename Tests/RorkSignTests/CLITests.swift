@@ -414,6 +414,8 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(metadata.appName, "Wrapped Fixture")
     }
 
+    /// Confirms archive structure, rather than the filename extension,
+    /// determines whether metadata extraction follows the IPA path.
     func testMetadataSubcommandTreatsZipLikeIPAArchive() throws {
         let fixture = try makeCLIFixture()
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
@@ -450,6 +452,8 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(metadata.appName, "ZIP Fixture")
     }
 
+    /// Protects the CLI path that accepts an already extracted IPA tree and
+    /// still emits a sealed, compressed, installable archive.
     func testDefaultCommandSignsExtractedIPAFolderAndWritesOutputArchive() throws {
         let fixture = try makeCLIFixture()
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
@@ -492,6 +496,8 @@ final class CLITests: XCTestCase {
         )
     }
 
+    /// Verifies that requesting archive output for a bare app bundle adds the
+    /// required IPA container without changing the bundle-signing behavior.
     func testDefaultCommandSignsAppBundleAndWritesOutputArchive() throws {
         let fixture = try makeCLIFixture()
         let appURL = fixture.directory.appendingPathComponent("Host.app", isDirectory: true)
@@ -1161,6 +1167,8 @@ final class CLITests: XCTestCase {
         XCTAssertTrue(try RorkSigner.inspectMachO(Data(contentsOf: signedAppURL.appendingPathComponent("Host"))).hasCodeSignature)
     }
 
+    /// Ensures caller-selected temporary storage is honored for archive work
+    /// instead of silently falling back to a system directory.
     func testDefaultCommandUsesConfiguredTempFolderForIPAInput() throws {
         let fixture = try makeCLIFixture()
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)

@@ -599,6 +599,8 @@ final class AppSigningTests: XCTestCase {
         XCTAssertEqual(watchInfo["CFBundleIdentifier"] as? String, "com.vendor.com.original.host.watchkitapp")
     }
 
+    /// Protects the root-only metadata contract from being lost while nested
+    /// bundles and resources are rewritten during signing.
     func testAppSigningAppliesRootMetadataOptionsBeforeSigning() throws {
         let fixture = try makeAppSigningFixture()
         addTeardownBlock {

@@ -87,6 +87,8 @@ final class MetadataTests: XCTestCase {
         )
     }
 
+    /// Keeps archive-level identity separate from metadata read from the
+    /// extracted app bundle, including when a custom workspace is used.
     func testIPAMetadataUsesArchiveFilenameAndSize() throws {
         let fixture = try makeMetadataAppFixture()
         let archiveRoot = fixture.rootURL.appendingPathComponent("ArchiveRoot", isDirectory: true)

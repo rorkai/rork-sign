@@ -43,6 +43,8 @@ final class IPAArchiveSigningTests: XCTestCase {
         )
     }
 
+    /// Guards the explicit compression option now that archive serialization
+    /// is provided by the shared native and WASI backend.
     func testAdHocCanWriteDeflatedOutputArchive() throws {
         let fixture = try makeIPAArchiveFixture(bundleIdentifier: "app.rork.archive.compressed")
         addTeardownBlock {
@@ -212,6 +214,8 @@ final class IPAArchiveSigningTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
+    /// Ensures malformed ZIP files are rejected before signing can create an
+    /// output that resembles an IPA but cannot be installed.
     func testIPARejectsArchiveWithoutPayloadDirectory() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
