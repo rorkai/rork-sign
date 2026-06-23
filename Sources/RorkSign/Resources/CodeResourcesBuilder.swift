@@ -171,6 +171,11 @@ private enum NestedResourceBundleScanner {
         return String(path.dropFirst(rootPath.count + 1))
     }
 
+    /// Finds only immediate nested bundles below one signing root.
+    ///
+    /// The caller performs recursion after each nested bundle becomes its own
+    /// sealing boundary, preventing resources from being visited under both the
+    /// parent and child bundle.
     private static func directNestedBundles(in rootURL: URL) throws -> [URL] {
         var bundles: [URL] = []
         try FileManager.default.enumerateDescendants(of: rootURL) { entry in
@@ -413,6 +418,10 @@ private struct BundleResource: Equatable {
 /// Walks the bundle once, classifies resource nodes, and returns a stable order
 /// so generated plist bytes do not depend on filesystem traversal order.
 private enum BundleResourceScanner {
+    /// Collects resources owned by this bundle's seal.
+    ///
+    /// Signature artifacts, executable code, and nested bundles are excluded
+    /// because they have separate signing or sealing contracts.
     static func resources(in bundle: BundleResourceBundle) throws -> [BundleResource] {
         var resources: [BundleResource] = []
         try FileManager.default.enumerateDescendants(of: bundle.url) { entry in

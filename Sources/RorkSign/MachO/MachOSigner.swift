@@ -1098,6 +1098,11 @@ private func signThinMachO(_ data: Data, options: MachOSigningOptions) throws ->
         return max(signatureSize, requestedSignatureSize, existingSignatureSize, compatibleMinimumSize)
     }
 
+    /// Keeps `LC_CODE_SIGNATURE` and `__LINKEDIT` consistent with the signature
+    /// reservation used for the next signing pass.
+    ///
+    /// Exact-width checks prevent a valid 64-bit file offset from being
+    /// truncated when this code runs with 32-bit `Int` on WebAssembly.
     func writeSignatureLayout(signatureSize: Int) throws {
         let newLength = codeLimit + UInt64(signatureSize)
         guard UInt32(exactly: codeLimit) != nil,
@@ -1201,6 +1206,11 @@ private func prepareThinMachOCMSCodeDirectories(
         max(signatureSize, Int(layout.codeSignatureDataSize), compatibleMinimumSize)
     }
 
+    /// Keeps `LC_CODE_SIGNATURE` and `__LINKEDIT` consistent with the ad-hoc
+    /// signature reservation used for the next signing pass.
+    ///
+    /// Exact-width checks prevent a valid 64-bit file offset from being
+    /// truncated when this code runs with 32-bit `Int` on WebAssembly.
     func writeSignatureLayout(signatureSize: Int) throws {
         let newLength = codeLimit + UInt64(signatureSize)
         guard UInt32(exactly: codeLimit) != nil,

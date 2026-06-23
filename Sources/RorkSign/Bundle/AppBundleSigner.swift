@@ -884,6 +884,11 @@ private enum AppBundleContentPruner {
 
 /// Applies root-only `Info.plist` mutations before resources are sealed.
 private enum AppRootInfoRewriter {
+    /// Limits caller-supplied metadata changes to the host app.
+    ///
+    /// Nested bundle identifiers and profiles are rewritten by their dedicated
+    /// signing paths, so applying these options recursively would overwrite
+    /// extension-owned metadata.
     static func apply(options: AppSigningOptions, info: inout MutableInfoPlist) throws {
         if let displayName = nonEmptyTrimmed(options.displayName) {
             info.setString(displayName, forKey: "CFBundleName")
@@ -908,6 +913,11 @@ private enum AppRootInfoRewriter {
 
 /// Rewrites localized display-name strings when they are plist-backed files.
 private enum AppLocalizedNameRewriter {
+    /// Updates localizations that Foundation can decode as property lists.
+    ///
+    /// A bundle may contain strings files in other encodings or syntaxes.
+    /// Leaving those files untouched is safer than attempting a lossy textual
+    /// rewrite while the surrounding resources are being resealed.
     static func apply(displayName: String?, rootBundleURL: URL) throws {
         guard let displayName = nonEmptyTrimmed(displayName) else {
             return
@@ -938,6 +948,7 @@ private enum AppLocalizedNameRewriter {
         }
     }
 
+    /// Rewrites a decoded strings dictionary and preserves unsupported files.
     private static func rewriteStringsFile(at url: URL, displayName: String) throws {
         let data = try Data(contentsOf: url)
         guard let plist = try? PropertyListSerialization.propertyList(
@@ -1146,6 +1157,10 @@ private struct MutableInfoPlist {
         )
     }
 
+    /// Persists metadata through the platform-neutral plist writer.
+    ///
+    /// Browser WASI cannot use Foundation's binary plist stream writer, so the
+    /// shared boundary keeps native and browser signing behavior equivalent.
     func write() throws {
         let data = try PropertyListWriter.data(
             from: dictionary,
