@@ -35,7 +35,7 @@ The corresponding upstream legal texts are reproduced in:
 ### Swift Zip Archive
 
 [Swift Zip Archive](https://github.com/rorkai/swift-zip-archive), revision
-`4c9727b9d60d33192d7ae372f3d4e20dce6ba7a8`, is based on
+`89b8b71477f6764783ef4b3e47c6cc996d3bb7f0`, is based on
 [the upstream project](https://github.com/adam-fowler/swift-zip-archive) and is
 distributed under the Apache License 2.0. It includes a namespaced copy of
 [zlib](https://www.zlib.net/) under the zlib License. The corresponding legal
