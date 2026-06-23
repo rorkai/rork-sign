@@ -1157,10 +1157,10 @@ private struct MutableInfoPlist {
         )
     }
 
-    /// Persists metadata through the platform-neutral plist writer.
+    /// Persists the modified metadata through the shared plist boundary.
     ///
-    /// Browser WASI cannot use Foundation's binary plist stream writer, so the
-    /// shared boundary keeps native and browser signing behavior equivalent.
+    /// The metadata remains open-ended while it is edited, so the writer
+    /// validates the dynamic value graph before Foundation serializes it.
     func write() throws {
         let data = try PropertyListWriter.data(
             from: dictionary,
