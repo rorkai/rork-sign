@@ -23,17 +23,34 @@ private indirect enum PropertyListValue: Encodable {
         type(of: NSNumber(value: true))
     )
 
+    /// Distinguishes Foundation's Boolean box from numeric zero and one.
+    ///
+    /// `objCType` cannot identify this safely because Boolean and signed-byte
+    /// values may both report `"c"`. Comparing against the runtime's own
+    /// Boolean type avoids naming Foundation's private concrete subclass.
+    private static func isBoolean(_ number: NSNumber) -> Bool {
+        ObjectIdentifier(type(of: number)) == Self.booleanNumberType
+    }
+
     /// Converts one Foundation property-list node into a validated value tree.
     ///
     /// Validation happens before Foundation starts encoding so callers receive
     /// the package's domain errors directly instead of errors nested inside an
     /// `EncodingError`.
-    init(_ value: Any) throws {
+    init(validating value: Any) throws {
         switch value {
         case let dictionary as [String: Any]:
-            self = .dictionary(try dictionary.mapValues(PropertyListValue.init))
+            self = .dictionary(
+                try dictionary.mapValues {
+                    try PropertyListValue(validating: $0)
+                }
+            )
         case let array as [Any]:
-            self = .array(try array.map(PropertyListValue.init))
+            self = .array(
+                try array.map {
+                    try PropertyListValue(validating: $0)
+                }
+            )
         case let data as Data:
             self = .data(data)
         case let date as Date:
@@ -41,7 +58,7 @@ private indirect enum PropertyListValue: Encodable {
         case let string as String:
             self = .string(string)
         case let number as NSNumber:
-            self = try PropertyListValue(number)
+            self = try PropertyListValue(validating: number)
         default:
             throw RorkSignError.unsupported(
                 "Property lists cannot encode values of type \(String(describing: type(of: value)))."
@@ -53,8 +70,8 @@ private indirect enum PropertyListValue: Encodable {
     ///
     /// Swift permits numeric zero and one to bridge to `Bool`, so testing with
     /// `as? Bool` would silently turn decoded integer nodes into booleans.
-    private init(_ number: NSNumber) throws {
-        if ObjectIdentifier(type(of: number)) == Self.booleanNumberType {
+    private init(validating number: NSNumber) throws {
+        if Self.isBoolean(number) {
             self = .boolean(number.boolValue)
             return
         }
@@ -82,7 +99,7 @@ private indirect enum PropertyListValue: Encodable {
         switch self {
         case .dictionary(let dictionary):
             var container = encoder.container(keyedBy: PropertyListKey.self)
-            for (key, value) in dictionary.sorted(by: { $0.key < $1.key }) {
+            for (key, value) in dictionary {
                 try container.encode(value, forKey: PropertyListKey(key))
             }
         case .array(let array):
@@ -146,18 +163,18 @@ enum PropertyListWriter {
     /// Encodes one property-list root using Foundation's requested format.
     ///
     /// - Parameters:
-    ///   - propertyList: A dictionary or array containing supported
-    ///     property-list values.
+    ///   - propertyList: A dictionary containing supported property-list
+    ///     values.
     ///   - format: The XML or binary representation to produce.
     /// - Returns: Foundation-encoded property-list data.
     /// - Throws: `RorkSignError.unsupported` when the graph contains a value that
     ///   property lists cannot represent, or a Foundation encoding error.
     static func data(
-        from propertyList: Any,
+        from propertyList: [String: Any],
         format: PropertyListSerialization.PropertyListFormat
     ) throws -> Data {
         let encoder = PropertyListEncoder()
         encoder.outputFormat = format
-        return try encoder.encode(PropertyListValue(propertyList))
+        return try encoder.encode(PropertyListValue(validating: propertyList))
     }
 }
