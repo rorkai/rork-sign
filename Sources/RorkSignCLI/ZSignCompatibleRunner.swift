@@ -2,7 +2,6 @@ import ArgumentParser
 import Foundation
 import Logging
 import RorkSign
-import ZIPFoundation
 
 /// Bridges ZSign-style root command options to the library API.
 ///
@@ -537,18 +536,10 @@ struct ZSignCompatibleRunner {
     /// Writes an extracted archive root back to an IPA file.
     private func writeArchive(archiveRoot: URL, outputURL: URL) throws {
         do {
-            if FileManager.default.fileExists(atPath: outputURL.path) {
-                try FileManager.default.removeItem(at: outputURL)
-            }
-            try FileManager.default.createDirectory(
-                at: outputURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try FileManager.default.zipItem(
-                at: archiveRoot,
+            try IPAArchive.write(
+                contentsOf: archiveRoot,
                 to: outputURL,
-                shouldKeepParent: false,
-                compressionMethod: zipCompressionMethod
+                compressionMode: archiveCompressionMode
             )
         } catch {
             try? FileManager.default.removeItem(at: outputURL)
@@ -728,25 +719,15 @@ struct ZSignCompatibleRunner {
 
     /// Returns the archive compression requested by `-z/--zip_level`.
     ///
-    /// ZIPFoundation exposes stored-vs-deflated output, not numeric Deflate
-    /// levels. We preserve the ZSign CLI shape by mapping level `0` to stored
-    /// entries and any non-zero valid level to Deflate.
+    /// The archive backend exposes stored-vs-deflated output, not numeric
+    /// Deflate levels. We preserve the ZSign CLI shape by mapping level `0` to
+    /// stored entries and any non-zero valid level to Deflate.
     private var archiveCompressionMode: ArchiveCompressionMode {
         switch command.zipLevel {
         case 0, nil:
             return .stored
         default:
             return .deflated
-        }
-    }
-
-    /// ZIPFoundation compression method requested by the compatibility command.
-    private var zipCompressionMethod: CompressionMethod {
-        switch archiveCompressionMode {
-        case .stored:
-            return .none
-        case .deflated:
-            return .deflate
         }
     }
 
@@ -1013,7 +994,10 @@ struct ZSignCompatibleRunner {
 
         try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
         do {
-            try FileManager.default.unzipItem(at: archiveURL, to: workspaceURL)
+            _ = try IPAArchive.extract(
+                at: archiveURL,
+                to: workspaceURL
+            )
         } catch {
             throw RorkSignError.invalidArchive("IPA archive could not be extracted for certificate check.")
         }
@@ -1149,7 +1133,10 @@ struct ZSignCompatibleRunner {
 
         try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
         do {
-            try FileManager.default.unzipItem(at: ipaURL, to: workspaceURL)
+            _ = try IPAArchive.extract(
+                at: ipaURL,
+                to: workspaceURL
+            )
         } catch {
             throw RorkSignError.invalidArchive("Signed IPA archive could not be extracted for debug output.")
         }

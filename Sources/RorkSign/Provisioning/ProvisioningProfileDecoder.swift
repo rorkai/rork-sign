@@ -112,10 +112,9 @@ enum ProvisioningProfileDecoder {
         guard !entitlements.isEmpty else {
             return ""
         }
-        let data = try PropertyListSerialization.data(
-            fromPropertyList: entitlements,
-            format: .xml,
-            options: 0
+        let data = try PropertyListWriter.data(
+            from: entitlements,
+            format: .xml
         )
         return String(decoding: data, as: UTF8.self)
     }

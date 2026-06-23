@@ -41,7 +41,22 @@ struct RorkSignCLIPrintLogHandler: LogHandler {
     }
 
     /// Emits one already-formatted signing diagnostic line.
+    func log(
+        level: Logger.Level,
+        message: Logger.Message,
+        metadata: Logger.Metadata?,
+        source: String,
+        file: String,
+        function: String,
+        line: UInt
+    ) {
+        print(message.description)
+    }
+
+    #if compiler(>=6.2)
+    /// Emits one structured event through the newer SwiftLog handler contract.
     func log(event: LogEvent) {
         print(event.message.description)
     }
+    #endif
 }

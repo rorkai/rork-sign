@@ -537,6 +537,40 @@ final class ObjCFacadeTests: XCTestCase {
             XCTAssertTrue(error.localizedDescription.contains("is not NSData"))
         }
     }
+
+    /// Verifies Objective-C callers can add files that participate in sealing.
+    func testAppSigningOptionsWriteAdditionalBundleFiles() throws {
+        let bundleURL = try makeObjCFacadeBundleFixture(
+            bundleIdentifier: "app.rork.objc.additional-files"
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent())
+        }
+        let options = AppSigningOptionsObjC(
+            bundleIdentifier: "app.rork.objc.additional-files"
+        )
+        options.additionalBundleFiles = [
+            "Signing/credential.p12": Data("credential".utf8),
+        ]
+
+        _ = try Signer().signAppBundleAdHoc(at: bundleURL, options: options)
+
+        XCTAssertEqual(
+            try Data(
+                contentsOf: bundleURL
+                    .appendingPathComponent("Signing/credential.p12")
+            ),
+            Data("credential".utf8)
+        )
+        let codeResources = try parseCodeResources(
+            Data(
+                contentsOf: bundleURL
+                    .appendingPathComponent("_CodeSignature/CodeResources")
+            )
+        )
+        let sealedFiles = try XCTUnwrap(codeResources["files2"] as? [String: Any])
+        XCTAssertNotNil(sealedFiles["Signing/credential.p12"])
+    }
 }
 
 /// Captures Objective-C facade log messages through the logger protocol.

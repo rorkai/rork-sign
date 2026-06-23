@@ -105,7 +105,7 @@ final class BundleSignatureCache {
                 signedMachOBase64: signedMachO.base64EncodedString()
             )
             let data = try encoder.encode(entry)
-            try data.write(to: entryURL(for: key), options: .atomic)
+            try data.writeReplacingItem(at: entryURL(for: key))
         } catch {
             return
         }

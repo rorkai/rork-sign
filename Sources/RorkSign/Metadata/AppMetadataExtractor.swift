@@ -4,7 +4,6 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
-import ZIPFoundation
 
 /// ZSign-compatible app metadata extracted from an app bundle or IPA.
 ///
@@ -102,7 +101,7 @@ enum AppMetadataExtractor {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(report)
-        try data.write(to: url, options: .atomic)
+        try data.writeReplacingItem(at: url)
     }
 
     /// Reads and validates the bundle's `Info.plist`.
@@ -166,22 +165,22 @@ enum AppMetadataExtractor {
 
     /// Selects the largest matching top-level icon file.
     private static func largestIcon(in bundleURL: URL, matching prefixes: [String]) throws -> URL? {
-        let contents = try FileManager.default.contentsOfDirectory(
-            at: bundleURL,
-            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
-            options: [.skipsHiddenFiles]
+        let contents = try FileSystemTraversal.contents(
+            of: bundleURL,
+            options: .skipsHiddenFiles
         )
 
         var best: (url: URL, size: Int64)?
-        for url in contents {
-            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-            guard values.isRegularFile == true,
-                  prefixes.contains(where: { url.lastPathComponent.hasPrefix($0) }) else {
+        for entry in contents {
+            guard entry.kind == .regularFile,
+                  let size = try? fileSize(entry.url),
+                  prefixes.contains(where: {
+                      entry.url.lastPathComponent.hasPrefix($0)
+                  }) else {
                 continue
             }
-            let size = Int64(values.fileSize ?? 0)
             if best == nil || size > best!.size {
-                best = (url, size)
+                best = (entry.url, size)
             }
         }
         return best?.url
@@ -208,7 +207,12 @@ enum AppMetadataExtractor {
 
         do {
             try fileManager.createDirectory(at: archiveRoot, withIntermediateDirectories: true)
-            try fileManager.unzipItem(at: archiveURL, to: archiveRoot)
+            _ = try IPAArchive.extract(
+                at: archiveURL,
+                to: archiveRoot
+            )
+        } catch let error as RorkSignError {
+            throw error
         } catch {
             throw RorkSignError.invalidArchive("IPA archive could not be extracted: \(error.localizedDescription)")
         }
@@ -244,16 +248,15 @@ enum AppMetadataExtractor {
             throw RorkSignError.invalidArchive("IPA archive is missing a Payload directory.")
         }
 
-        let contents = try FileManager.default.contentsOfDirectory(
-            at: payloadURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
+        let appBundles = try FileSystemTraversal.contents(
+            of: payloadURL,
+            options: .skipsHiddenFiles
         )
-        let appBundles = contents
-            .filter { url in
-                url.pathExtension.lowercased() == "app"
-                    && ((try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true)
+            .filter { entry in
+                entry.kind == .directory
+                    && entry.url.pathExtension.lowercased() == "app"
             }
+            .map(\.url)
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
         guard let appURL = appBundles.first else {

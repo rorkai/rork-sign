@@ -1,7 +1,6 @@
 import Foundation
 import RorkSign
 import XCTest
-import ZIPFoundation
 
 final class MetadataTests: XCTestCase {
     func testBundleMetadataWritesZSignJSONAndLargestDeclaredIcon() throws {
@@ -103,7 +102,7 @@ final class MetadataTests: XCTestCase {
         try FileManager.default.createDirectory(at: payloadURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: tempURL, withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: fixture.appURL, to: archivedAppURL)
-        try FileManager.default.zipItem(at: archiveRoot, to: archiveURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRoot, at: archiveURL)
 
         let report = try RorkSigner.extractIPAMetadata(
             at: archiveURL,

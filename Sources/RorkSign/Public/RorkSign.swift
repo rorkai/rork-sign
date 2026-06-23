@@ -5,7 +5,7 @@ import Foundation
 /// The associated strings are intentionally user-readable because this package
 /// is used both as a library and as a command-line tool. They should describe
 /// the invalid artifact or unsupported feature, not an implementation detail.
-public enum RorkSignError: Error, Equatable {
+public enum RorkSignError: Error, Equatable, LocalizedError {
     /// The input is not a supported Mach-O file or its load commands are unsafe.
     case invalidMachO(String)
 
@@ -38,6 +38,27 @@ public enum RorkSignError: Error, Equatable {
 
     /// The requested signing mode is recognized but not implemented yet.
     case unsupported(String)
+
+    /// Returns the actionable reason carried by the error.
+    ///
+    /// Signing errors cross library, CLI, and browser boundaries. Preserving
+    /// the associated message prevents those clients from receiving only an
+    /// opaque enum case and error code.
+    public var errorDescription: String? {
+        switch self {
+        case let .invalidMachO(message),
+             let .invalidEntitlements(message),
+             let .invalidBundle(message),
+             let .invalidArchive(message),
+             let .resourceSealing(message),
+             let .invalidProvisioningProfile(message),
+             let .invalidSigningIdentity(message),
+             let .cmsSigning(message),
+             let .ocsp(message),
+             let .unsupported(message):
+            return message
+        }
+    }
 }
 
 /// Coarse Mach-O container kind.

@@ -4,9 +4,13 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
-import RorkSign
+@testable import RorkSign
 import XCTest
-import ZIPFoundation
+import ZipArchive
+
+#if canImport(RorkSignWeb)
+import RorkSignWeb
+#endif
 
 final class IPAArchiveSigningTests: XCTestCase {
     func testAdHocSignsPayloadAppAndWritesOutputArchive() throws {
@@ -52,9 +56,14 @@ final class IPAArchiveSigningTests: XCTestCase {
             archiveCompressionMode: .deflated
         )
 
-        let archive = try Archive(url: outputURL, accessMode: .read)
-        let executableEntry = try XCTUnwrap(archive["Payload/Host.app/Host"])
-        XCTAssertTrue(executableEntry.isCompressed)
+        try ZipArchiveReader<ZipFileStorage>.withFile(outputURL.path) { reader in
+            let executableEntry = try XCTUnwrap(
+                try reader.readDirectory().first {
+                    $0.filename.string == "Payload/Host.app/Host"
+                }
+            )
+            XCTAssertEqual(executableEntry.compressionMethod, .deflate)
+        }
     }
 
     func testAdHocUsesConfiguredTemporaryDirectory() throws {
@@ -210,7 +219,11 @@ final class IPAArchiveSigningTests: XCTestCase {
         let archiveURL = rootURL.appendingPathComponent("Broken.ipa")
         try FileManager.default.createDirectory(at: archiveRoot, withIntermediateDirectories: true)
         try Data("not an ipa".utf8).write(to: archiveRoot.appendingPathComponent("README.txt"))
-        try FileManager.default.zipItem(at: archiveRoot, to: archiveURL, shouldKeepParent: false)
+        try IPAArchive.write(
+            contentsOf: archiveRoot,
+            to: archiveURL,
+            compressionMode: .stored
+        )
         addTeardownBlock {
             try? FileManager.default.removeItem(at: rootURL)
         }
@@ -227,6 +240,366 @@ final class IPAArchiveSigningTests: XCTestCase {
             )
         }
     }
+
+    #if canImport(RorkSignWeb)
+    func testWebSignerReturnsInstallableArchiveAndPreservesEntryTypes() throws {
+        let signing = try OpenSSLFixture()
+        defer {
+            signing.remove()
+        }
+        let fixture = try makeIPAArchiveFixture(
+            bundleIdentifier: "app.rork.archive.web",
+            includeSymbolicLink: true,
+            additionalInfoPlistValues: [
+                "UIDeviceFamily": [1, 2],
+            ]
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.rootURL)
+        }
+        let profile = try provisioningProfilePlist(
+            teamIdentifier: "TEAMID1234",
+            developerCertificates: [signing.identity.certificateDER],
+            entitlements: [
+                "application-identifier": "TEAMID1234.app.rork.archive.web",
+                "com.apple.developer.team-identifier": "TEAMID1234",
+            ]
+        )
+
+        let signedIPA = try RorkSigner.signIPA(
+            try Data(contentsOf: fixture.archiveURL),
+            using: signing.identity,
+            options: AppSigningOptions(
+                bundleIdentifier: "app.rork.archive.web",
+                rootProvisioningProfile: profile
+            )
+        )
+
+        XCTAssertEqual(signedIPA.appBundlePath, "Payload/Host.app")
+        XCTAssertEqual(
+            signedIPA.embeddedProvisioningProfilePaths,
+            ["Payload/Host.app/embedded.mobileprovision"]
+        )
+
+        let reader = try ZipArchiveReader(buffer: [UInt8](signedIPA.data))
+        let entries = try reader.readDirectory()
+        let executable = try XCTUnwrap(
+            entries.first { $0.filename.string == "Payload/Host.app/Host" }
+        )
+        XCTAssertTrue(
+            executable.externalAttributes.unixAttributes.filePermissions
+                .contains(.ownerExecute)
+        )
+        let symbolicLink = try XCTUnwrap(
+            entries.first { $0.filename.string == "Payload/Host.app/asset-link" }
+        )
+        XCTAssertTrue(
+            symbolicLink.externalAttributes.unixAttributes.contains(
+                .isSymbolicLink
+            )
+        )
+        XCTAssertEqual(
+            String(decoding: try reader.readFile(symbolicLink), as: UTF8.self),
+            "asset.txt"
+        )
+        let infoPlistEntry = try XCTUnwrap(
+            entries.first { $0.filename.string == "Payload/Host.app/Info.plist" }
+        )
+        let infoPlist = try XCTUnwrap(
+            PropertyListSerialization.propertyList(
+                from: Data(try reader.readFile(infoPlistEntry)),
+                options: [],
+                format: nil
+            ) as? [String: Any]
+        )
+        XCTAssertEqual(infoPlist["UIDeviceFamily"] as? [Int], [1, 2])
+    }
+
+    func testWebSignerPreservesEmptyDirectories() throws {
+        let signing = try OpenSSLFixture()
+        defer {
+            signing.remove()
+        }
+        let fixture = try makeIPAArchiveFixture(
+            bundleIdentifier: "app.rork.archive.empty-directory",
+            includeEmptyDirectory: true
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.rootURL)
+        }
+        let profile = try provisioningProfilePlist(
+            teamIdentifier: "TEAMID1234",
+            developerCertificates: [signing.identity.certificateDER],
+            entitlements: [
+                "application-identifier":
+                    "TEAMID1234.app.rork.archive.empty-directory",
+                "com.apple.developer.team-identifier": "TEAMID1234",
+            ]
+        )
+
+        let signedIPA = try RorkSigner.signIPA(
+            try Data(contentsOf: fixture.archiveURL),
+            using: signing.identity,
+            options: AppSigningOptions(
+                bundleIdentifier: "app.rork.archive.empty-directory",
+                rootProvisioningProfile: profile
+            )
+        )
+
+        let reader = try ZipArchiveReader(buffer: [UInt8](signedIPA.data))
+        let entries = try reader.readDirectory()
+        let directory = try XCTUnwrap(
+            entries.first {
+                $0.filename.string == "Payload/Host.app/Empty"
+            }
+        )
+        XCTAssertTrue(directory.isDirectory)
+    }
+    #endif
+
+    #if !os(WASI)
+    func testArchiveExtractionRestoresExecutableMetadataOnNativeFilesystems()
+        throws
+    {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let inputURL = rootURL.appendingPathComponent("Input.ipa")
+        let extractedURL = rootURL.appendingPathComponent(
+            "Extracted",
+            isDirectory: true
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: extractedURL,
+            withIntermediateDirectories: true
+        )
+
+        let modificationDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let writer = ZipArchiveWriter()
+        try writer.writeFile(
+            filename: "Payload/Host.app/Host",
+            contents: Array("executable".utf8),
+            metadata: Zip.EntryMetadata(
+                modificationDate: modificationDate,
+                externalAttributes: .unix([
+                    .isRegularFile,
+                    .permissions([
+                        .ownerReadWriteExecute,
+                        .groupReadExecute,
+                        .otherReadExecute,
+                    ]),
+                ])
+            )
+        )
+        try Data(try writer.finalizeBuffer()).write(to: inputURL)
+
+        _ = try IPAArchive.extract(at: inputURL, to: extractedURL)
+
+        let executableURL = extractedURL.appendingPathComponent(
+            "Payload/Host.app/Host"
+        )
+        let attributes = try FileManager.default.attributesOfItem(
+            atPath: executableURL.path
+        )
+        let permissions = try XCTUnwrap(
+            attributes[.posixPermissions] as? NSNumber
+        )
+        let restoredDate = try XCTUnwrap(
+            attributes[.modificationDate] as? Date
+        )
+        XCTAssertNotEqual(permissions.intValue & 0o100, 0)
+        XCTAssertEqual(
+            restoredDate.timeIntervalSince1970,
+            modificationDate.timeIntervalSince1970,
+            accuracy: 1
+        )
+    }
+    #endif
+
+    func testArchivePreservesMetadataWithoutRestoringItToTheWorkspace()
+        throws
+    {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let inputURL = rootURL.appendingPathComponent("Input.ipa")
+        let extractedURL = rootURL.appendingPathComponent(
+            "Extracted",
+            isDirectory: true
+        )
+        let outputURL = rootURL.appendingPathComponent("Output.ipa")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: extractedURL,
+            withIntermediateDirectories: true
+        )
+
+        let modificationDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let writer = ZipArchiveWriter()
+        try writer.writeFile(
+            filename: "Payload/Host.app/Host",
+            contents: Array("executable".utf8),
+            metadata: Zip.EntryMetadata(
+                modificationDate: modificationDate,
+                externalAttributes: .unix([
+                    .isRegularFile,
+                    .permissions([
+                        .ownerReadWriteExecute,
+                        .groupReadExecute,
+                        .otherReadExecute,
+                    ]),
+                ])
+            )
+        )
+        try Data(try writer.finalizeBuffer()).write(to: inputURL)
+
+        let contents = try IPAArchive.extract(
+            at: inputURL,
+            to: extractedURL,
+            metadataBehavior: .preserveInArchive
+        )
+        try IPAArchive.write(
+            contentsOf: extractedURL,
+            to: outputURL,
+            compressionMode: .stored,
+            preserving: contents
+        )
+
+        let outputReader = try ZipArchiveReader(
+            buffer: [UInt8](try Data(contentsOf: outputURL))
+        )
+        let outputEntry = try XCTUnwrap(
+            try outputReader.readDirectory().first {
+                $0.filename.string == "Payload/Host.app/Host"
+            }
+        )
+        XCTAssertEqual(outputEntry.fileModification, modificationDate)
+        XCTAssertTrue(
+            outputEntry.externalAttributes.unixAttributes.filePermissions
+                .contains(.ownerExecute)
+        )
+    }
+
+    func testArchiveRoundTripsUnicodePaths() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let archiveRootURL = rootURL.appendingPathComponent(
+            "ArchiveRoot",
+            isDirectory: true
+        )
+        let resourceURL = archiveRootURL.appendingPathComponent(
+            "Payload/Host.app/Resources/日本語😀.txt"
+        )
+        let archiveURL = rootURL.appendingPathComponent("Input.ipa")
+        let extractedURL = rootURL.appendingPathComponent(
+            "Extracted",
+            isDirectory: true
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: resourceURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("localized asset".utf8).write(to: resourceURL)
+
+        try FileManager.default.createIPAArchive(
+            contentsOf: archiveRootURL,
+            at: archiveURL
+        )
+        try FileManager.default.extractIPAArchive(
+            at: archiveURL,
+            to: extractedURL
+        )
+
+        let extractedResourceURL = extractedURL.appendingPathComponent(
+            "Payload/Host.app/Resources/日本語😀.txt"
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: extractedResourceURL),
+            Data("localized asset".utf8)
+        )
+    }
+
+    func testArchiveRejectsParentTraversal() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let inputURL = rootURL.appendingPathComponent("Unsafe.ipa")
+        let outputURL = rootURL.appendingPathComponent("Signed.ipa")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+
+        let writer = ZipArchiveWriter()
+        try writer.writeFile(
+            filename: "../outside",
+            contents: Array("unsafe".utf8)
+        )
+        try Data(try writer.finalizeBuffer()).write(to: inputURL)
+
+        XCTAssertThrowsError(
+            try RorkSigner.signIPAAdHoc(
+                at: inputURL,
+                outputURL: outputURL
+            )
+        ) { error in
+            guard case .invalidArchive = error as? RorkSignError else {
+                return XCTFail("Expected an invalid archive error, got \(error).")
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
+    func testArchiveRejectsEscapingSymbolicLink() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let inputURL = rootURL.appendingPathComponent("UnsafeLink.ipa")
+        let outputURL = rootURL.appendingPathComponent("Signed.ipa")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+
+        let writer = ZipArchiveWriter()
+        try writer.writeFile(
+            filename: "Payload/Host.app/link",
+            contents: Array("../../../outside".utf8),
+            metadata: Zip.EntryMetadata(
+                externalAttributes: .unix([
+                    .isSymbolicLink,
+                    .permissions([
+                        .ownerReadWriteExecute,
+                        .groupReadExecute,
+                        .otherReadExecute,
+                    ]),
+                ])
+            )
+        )
+        try Data(try writer.finalizeBuffer()).write(to: inputURL)
+
+        XCTAssertThrowsError(
+            try RorkSigner.signIPAAdHoc(
+                at: inputURL,
+                outputURL: outputURL
+            )
+        ) { error in
+            guard case .invalidArchive = error as? RorkSignError else {
+                return XCTFail("Expected an invalid archive error, got \(error).")
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    }
 }
 
 private struct IPAArchiveFixture {
@@ -234,31 +607,60 @@ private struct IPAArchiveFixture {
     let archiveURL: URL
 }
 
-private func makeIPAArchiveFixture(bundleIdentifier: String) throws -> IPAArchiveFixture {
+private func makeIPAArchiveFixture(
+    bundleIdentifier: String,
+    includeSymbolicLink: Bool = false,
+    includeEmptyDirectory: Bool = false,
+    additionalInfoPlistValues: [String: Any] = [:]
+) throws -> IPAArchiveFixture {
     let rootURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
     let archiveRoot = rootURL.appendingPathComponent("ArchiveRoot", isDirectory: true)
     let appURL = archiveRoot.appendingPathComponent("Payload/Host.app", isDirectory: true)
     try FileManager.default.createDirectory(at: appURL, withIntermediateDirectories: true)
+    let infoPlist: [String: Any] = [
+        "CFBundleIdentifier": bundleIdentifier,
+        "CFBundleExecutable": "Host",
+    ].merging(additionalInfoPlistValues) { _, additionalValue in
+        additionalValue
+    }
     try writeInfoPlist(
-        [
-            "CFBundleIdentifier": bundleIdentifier,
-            "CFBundleExecutable": "Host",
-        ],
+        infoPlist,
         to: appURL.appendingPathComponent("Info.plist")
     )
-    try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
+    let executableURL = appURL.appendingPathComponent("Host")
+    try Fixtures.machO64WithCodeSignature().write(to: executableURL)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o755],
+        ofItemAtPath: executableURL.path
+    )
     try Data("asset".utf8).write(to: appURL.appendingPathComponent("asset.txt"))
+    if includeSymbolicLink {
+        try FileManager.default.createSymbolicLink(
+            atPath: appURL.appendingPathComponent("asset-link").path,
+            withDestinationPath: "asset.txt"
+        )
+    }
+    if includeEmptyDirectory {
+        try FileManager.default.createDirectory(
+            at: appURL.appendingPathComponent("Empty", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+    }
 
     let archiveURL = rootURL.appendingPathComponent("Input.ipa")
-    try FileManager.default.zipItem(at: archiveRoot, to: archiveURL, shouldKeepParent: false)
+    try IPAArchive.write(
+        contentsOf: archiveRoot,
+        to: archiveURL,
+        compressionMode: .stored
+    )
     return IPAArchiveFixture(rootURL: rootURL, archiveURL: archiveURL)
 }
 
 private func unzipArchive(_ archiveURL: URL, under rootURL: URL) throws -> URL {
     let outputURL = rootURL.appendingPathComponent("Extracted-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
-    try FileManager.default.unzipItem(at: archiveURL, to: outputURL)
+    _ = try IPAArchive.extract(at: archiveURL, to: outputURL)
     return outputURL
 }
 

@@ -645,6 +645,167 @@ final class AppSigningTests: XCTestCase {
         XCTAssertEqual(localizedInfo["CFBundleDisplayName"] as? String, "Signed Fixture")
     }
 
+    func testAppSigningWritesAdditionalBundleFilesBeforeSealingResources() throws {
+        let fixture = try makeAppSigningFixture()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
+        }
+        let certificateURL = fixture.bundleURL.appendingPathComponent("dev-signing-cert.p12")
+        try Data("stale certificate".utf8).write(to: certificateURL)
+
+        try RorkSigner.signBundle(
+            at: fixture.bundleURL,
+            options: AppSigningOptions(
+                bundleIdentifier: "app.rork.additional-files",
+                additionalBundleFiles: [
+                    "dev-signing-cert.p12": Data("current certificate".utf8),
+                    "Signing/credential-password.txt": Data("secret".utf8),
+                ]
+            )
+        )
+
+        XCTAssertEqual(
+            try Data(contentsOf: certificateURL),
+            Data("current certificate".utf8)
+        )
+        XCTAssertEqual(
+            try Data(
+                contentsOf: fixture.bundleURL
+                    .appendingPathComponent("Signing/credential-password.txt")
+            ),
+            Data("secret".utf8)
+        )
+
+        let codeResources = try parseCodeResources(
+            Data(
+                contentsOf: fixture.bundleURL
+                    .appendingPathComponent("_CodeSignature/CodeResources")
+            )
+        )
+        let sealedFiles = try XCTUnwrap(codeResources["files2"] as? [String: Any])
+        XCTAssertNotNil(sealedFiles["dev-signing-cert.p12"])
+        XCTAssertNotNil(sealedFiles["Signing/credential-password.txt"])
+    }
+
+    func testAppSigningRejectsAdditionalBundleFileOutsideRootBeforeWritingFiles() throws {
+        let fixture = try makeAppSigningFixture()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
+        }
+        let validFileURL = fixture.bundleURL.appendingPathComponent("valid.txt")
+
+        XCTAssertThrowsError(
+            try RorkSigner.signBundle(
+                at: fixture.bundleURL,
+                options: AppSigningOptions(
+                    bundleIdentifier: "app.rork.additional-files",
+                    additionalBundleFiles: [
+                        "../escaped.txt": Data("escaped".utf8),
+                        "valid.txt": Data("valid".utf8),
+                    ]
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? RorkSignError,
+                .invalidBundle(
+                    "Additional bundle file path must remain inside the root app bundle: ../escaped.txt."
+                )
+            )
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: validFileURL.path))
+        XCTAssertEqual(
+            try infoPlist(at: fixture.bundleURL)["CFBundleIdentifier"] as? String,
+            "com.original.host"
+        )
+    }
+
+    func testAppSigningRejectsAdditionalBundleFileThroughSymbolicLinkBeforeWritingFiles() throws {
+        let fixture = try makeAppSigningFixture()
+        let fixtureRootURL = fixture.bundleURL.deletingLastPathComponent()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixtureRootURL)
+        }
+        let linkURL = fixture.bundleURL.appendingPathComponent("Signing")
+        let escapedFileURL = fixtureRootURL.appendingPathComponent(
+            "escaped.txt"
+        )
+        let validFileURL = fixture.bundleURL.appendingPathComponent("valid.txt")
+        try FileManager.default.createSymbolicLink(
+            atPath: linkURL.path,
+            withDestinationPath: ".."
+        )
+
+        XCTAssertThrowsError(
+            try RorkSigner.signBundle(
+                at: fixture.bundleURL,
+                options: AppSigningOptions(
+                    bundleIdentifier: "app.rork.additional-files",
+                    additionalBundleFiles: [
+                        "Signing/escaped.txt": Data("escaped".utf8),
+                        "valid.txt": Data("valid".utf8),
+                    ]
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? RorkSignError,
+                .invalidBundle(
+                    "Additional bundle file path must remain inside the root app bundle: Signing/escaped.txt."
+                )
+            )
+        }
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: escapedFileURL.path)
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: validFileURL.path))
+        XCTAssertEqual(
+            try infoPlist(at: fixture.bundleURL)["CFBundleIdentifier"] as? String,
+            "com.original.host"
+        )
+    }
+
+    func testAppSigningRejectsConflictingAdditionalBundleFilePathsBeforeWritingFiles() throws {
+        let fixture = try makeAppSigningFixture()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(
+                at: fixture.bundleURL.deletingLastPathComponent()
+            )
+        }
+        let signingURL = fixture.bundleURL.appendingPathComponent("Signing")
+        let validFileURL = fixture.bundleURL.appendingPathComponent("valid.txt")
+
+        XCTAssertThrowsError(
+            try RorkSigner.signBundle(
+                at: fixture.bundleURL,
+                options: AppSigningOptions(
+                    bundleIdentifier: "app.rork.additional-files",
+                    additionalBundleFiles: [
+                        "Signing": Data("file".utf8),
+                        "Signing/credential.txt": Data("credential".utf8),
+                        "valid.txt": Data("valid".utf8),
+                    ]
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? RorkSignError,
+                .invalidBundle(
+                    "Additional bundle file path must remain inside the root app bundle: Signing/credential.txt."
+                )
+            )
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: signingURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: validFileURL.path))
+        XCTAssertEqual(
+            try infoPlist(at: fixture.bundleURL)["CFBundleIdentifier"] as? String,
+            "com.original.host"
+        )
+    }
+
     func testAppSigningCanRemoveExtensionsAndWatchAppsBeforeSigning() throws {
         let fixture = try makeAppSigningFixture(includeWatchApp: true)
         addTeardownBlock {

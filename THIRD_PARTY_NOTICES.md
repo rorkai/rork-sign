@@ -14,8 +14,9 @@ preserved under [ThirdPartyLicenses](ThirdPartyLicenses).
   revision `6a52f3251125d74daf04fcbd5e6f08a75d074382`
 - [Swift ASN.1 1.7.1](https://github.com/apple/swift-asn1), revision
   `a9a5efd40eaf558a2bcd48d64b1d1646be686008`
-- [Swift Crypto 4.5.0](https://github.com/apple/swift-crypto), revision
-  `1b6b2e274e85105bfa155183145a1dcfd63331f1`
+- [Swift Crypto](https://github.com/rorkai/swift-crypto), revision
+  `b6c710cd588404890ab173d82b8a8fc9588ee382`, based on upstream 4.5.0
+  revision `1b6b2e274e85105bfa155183145a1dcfd63331f1`
 - [Swift Log 1.13.2](https://github.com/apple/swift-log), revision
   `92448c359f00ebe36ae97d3bd9086f13c7692b5a`
 
@@ -31,12 +32,18 @@ The corresponding upstream legal texts are reproduced in:
 
 ## Other Components
 
-### ZIP Foundation 0.9.20
+### Swift Zip Archive
 
-[ZIP Foundation](https://github.com/weichsel/ZIPFoundation), revision
-`22787ffb59de99e5dc1fbfe80b19c97a904ad48d`, is distributed under the MIT
-License. The complete license text is reproduced in
-[ZIPFoundation-LICENSE.txt](ThirdPartyLicenses/ZIPFoundation-LICENSE.txt).
+[Swift Zip Archive](https://github.com/rorkai/swift-zip-archive), revision
+`4c9727b9d60d33192d7ae372f3d4e20dce6ba7a8`, is based on
+[the upstream project](https://github.com/adam-fowler/swift-zip-archive) and is
+distributed under the Apache License 2.0. It includes a namespaced copy of
+[zlib](https://www.zlib.net/) under the zlib License. The corresponding legal
+and attribution texts are reproduced in:
+
+- [SwiftZipArchive-LICENSE.txt](ThirdPartyLicenses/SwiftZipArchive-LICENSE.txt)
+- [SwiftZipArchive-NOTICE.txt](ThirdPartyLicenses/SwiftZipArchive-NOTICE.txt)
+- [Zlib-LICENSE.txt](ThirdPartyLicenses/Zlib-LICENSE.txt)
 
 ### BoringSSL
 

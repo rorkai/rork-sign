@@ -1,5 +1,4 @@
 import Foundation
-import ZIPFoundation
 
 /// Signs app bundles stored inside IPA archives.
 ///
@@ -112,11 +111,22 @@ enum IPAArchiveSigner {
             try? fileManager.removeItem(at: workspace)
         }
 
+        let extractedArchive: IPAArchive.Contents
         do {
-            try fileManager.createDirectory(at: archiveRoot, withIntermediateDirectories: true)
-            try fileManager.unzipItem(at: archiveURL, to: archiveRoot)
+            try fileManager.createDirectory(
+                at: archiveRoot,
+                withIntermediateDirectories: true
+            )
+            extractedArchive = try IPAArchive.extract(
+                at: archiveURL,
+                to: archiveRoot
+            )
+        } catch let error as RorkSignError {
+            throw error
         } catch {
-            throw RorkSignError.invalidArchive("IPA archive could not be extracted: \(error.localizedDescription)")
+            throw RorkSignError.invalidArchive(
+                "IPA archive could not be extracted: \(error.localizedDescription)"
+            )
         }
 
         let appURL = try payloadAppBundle(in: archiveRoot)
@@ -129,18 +139,11 @@ enum IPAArchiveSigner {
         )
 
         do {
-            if fileManager.fileExists(atPath: outputURL.path) {
-                try fileManager.removeItem(at: outputURL)
-            }
-            try fileManager.createDirectory(
-                at: outputURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try fileManager.zipItem(
-                at: archiveRoot,
+            try IPAArchive.write(
+                contentsOf: archiveRoot,
                 to: outputURL,
-                shouldKeepParent: false,
-                compressionMethod: archiveCompressionMode.zipCompressionMethod
+                compressionMode: archiveCompressionMode,
+                preserving: extractedArchive
             )
         } catch {
             try? fileManager.removeItem(at: outputURL)
@@ -159,16 +162,16 @@ enum IPAArchiveSigner {
             throw RorkSignError.invalidArchive("IPA archive is missing a Payload directory.")
         }
 
-        let contents = try FileManager.default.contentsOfDirectory(
-            at: payloadURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
+        let payloadEntries = try FileSystemTraversal.contents(
+            of: payloadURL,
+            options: .skipsHiddenFiles
         )
-        let appBundles = contents
-            .filter { url in
-                url.pathExtension.lowercased() == "app"
-                    && ((try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true)
+        let appBundles = payloadEntries
+            .filter { entry in
+                entry.kind == .directory
+                    && entry.url.pathExtension.lowercased() == "app"
             }
+            .map(\.url)
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
         guard let appURL = appBundles.first else {
@@ -226,17 +229,5 @@ enum IPAArchiveSigner {
             }
         }
         return rootURL
-    }
-}
-
-extension ArchiveCompressionMode {
-    /// ZIPFoundation compression method for this public archive mode.
-    var zipCompressionMethod: CompressionMethod {
-        switch self {
-        case .stored:
-            return .none
-        case .deflated:
-            return .deflate
-        }
     }
 }
