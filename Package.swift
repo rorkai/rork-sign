@@ -51,7 +51,7 @@ let package = Package(
         swiftLog,
         .package(
             url: "https://github.com/rorkai/swift-zip-archive.git",
-            revision: "89b8b71477f6764783ef4b3e47c6cc996d3bb7f0"
+            revision: "f43a4dbd56a5395ec59d9857e24b2537ece1854a"
         ),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
     ],

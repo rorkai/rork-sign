@@ -1,5 +1,5 @@
 {
-  "originHash" : "e11ce8760f41cb743266d964bc8aaea1efbf3e6b05e8be0ed342d2449c060f15",
+  "originHash" : "5166347ce74e79521483137097e2e1103099c9d5e5c8a98808ed899dadcca8d3",
   "pins" : [
     {
       "identity" : "swift-argument-parser",
@@ -24,7 +24,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/rorkai/swift-crypto.git",
       "state" : {
-        "revision" : "b6c710cd588404890ab173d82b8a8fc9588ee382"
+        "revision" : "f171fca4c1718d685c495350fe9136a3fda6f262"
       }
     },
     {
@@ -50,7 +50,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/rorkai/swift-zip-archive.git",
       "state" : {
-        "revision" : "89b8b71477f6764783ef4b3e47c6cc996d3bb7f0"
+        "revision" : "f43a4dbd56a5395ec59d9857e24b2537ece1854a"
       }
     }
   ],
