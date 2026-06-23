@@ -82,7 +82,7 @@ private indirect enum PropertyListValue: Encodable {
         switch self {
         case .dictionary(let dictionary):
             var container = encoder.container(keyedBy: PropertyListKey.self)
-            for (key, value) in dictionary {
+            for (key, value) in dictionary.sorted(by: { $0.key < $1.key }) {
                 try container.encode(value, forKey: PropertyListKey(key))
             }
         case .array(let array):

@@ -91,6 +91,7 @@ final class PropertyListWriterTests: XCTestCase {
             from: [
                 "boolean": NSNumber(value: true),
                 "integer": NSNumber(value: 1),
+                "smallInteger": NSNumber(value: Int8(1)),
             ],
             format: .xml
         )
@@ -103,13 +104,23 @@ final class PropertyListWriterTests: XCTestCase {
         )
         let boolean = try XCTUnwrap(decoded["boolean"] as? NSNumber)
         let integer = try XCTUnwrap(decoded["integer"] as? NSNumber)
+        let smallInteger = try XCTUnwrap(decoded["smallInteger"] as? NSNumber)
+        let booleanNumberType = ObjectIdentifier(
+            type(of: NSNumber(value: true))
+        )
 
         XCTAssertTrue(boolean.boolValue)
+        XCTAssertEqual(ObjectIdentifier(type(of: boolean)), booleanNumberType)
         XCTAssertNotEqual(
-            String(cString: boolean.objCType),
-            String(cString: integer.objCType)
+            ObjectIdentifier(type(of: integer)),
+            booleanNumberType
+        )
+        XCTAssertNotEqual(
+            ObjectIdentifier(type(of: smallInteger)),
+            booleanNumberType
         )
         XCTAssertEqual(integer.intValue, 1)
+        XCTAssertEqual(smallInteger.int8Value, 1)
     }
 
     /// Ensures unsupported runtime values fail explicitly instead of producing
