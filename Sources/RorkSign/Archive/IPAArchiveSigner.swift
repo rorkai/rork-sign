@@ -156,9 +156,7 @@ enum IPAArchiveSigner {
     /// Returns the only top-level app bundle inside `Payload`.
     private static func payloadAppBundle(in archiveRoot: URL) throws -> URL {
         let payloadURL = archiveRoot.appendingPathComponent("Payload", isDirectory: true)
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: payloadURL.path, isDirectory: &isDirectory),
-              isDirectory.boolValue else {
+        guard (try? FileManager.default.entry(at: payloadURL).kind) == .directory else {
             throw RorkSignError.invalidArchive("IPA archive is missing a Payload directory.")
         }
 
