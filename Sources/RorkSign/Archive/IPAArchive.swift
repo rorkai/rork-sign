@@ -264,7 +264,7 @@ package enum IPAArchive {
         rootURL: URL,
         to items: inout [ArchivedItem]
     ) throws {
-        for entry in try FileSystemTraversal.contents(of: directoryURL) {
+        for entry in try FileManager.default.entries(in: directoryURL) {
             let relativePath = try relativePath(
                 for: entry.url,
                 under: rootURL

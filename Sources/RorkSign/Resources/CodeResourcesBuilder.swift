@@ -173,7 +173,7 @@ private enum NestedResourceBundleScanner {
 
     private static func directNestedBundles(in rootURL: URL) throws -> [URL] {
         var bundles: [URL] = []
-        try FileSystemTraversal.walk(descendantsOf: rootURL) { entry in
+        try FileManager.default.enumerateDescendants(of: rootURL) { entry in
             let relativePath = try relativePath(
                 for: entry.url,
                 under: rootURL
@@ -181,7 +181,7 @@ private enum NestedResourceBundleScanner {
             if shouldSkip(relativePath: relativePath) {
                 return entry.kind == .directory
                     ? .skipDescendants
-                    : .descend
+                    : .visitDescendants
             }
             guard
                 entry.kind == .directory,
@@ -189,7 +189,7 @@ private enum NestedResourceBundleScanner {
                     entry.url.pathExtension.lowercased()
                 )
             else {
-                return .descend
+                return .visitDescendants
             }
             bundles.append(entry.url)
             return .skipDescendants
@@ -415,7 +415,7 @@ private struct BundleResource: Equatable {
 private enum BundleResourceScanner {
     static func resources(in bundle: BundleResourceBundle) throws -> [BundleResource] {
         var resources: [BundleResource] = []
-        try FileSystemTraversal.walk(descendantsOf: bundle.url) { entry in
+        try FileManager.default.enumerateDescendants(of: bundle.url) { entry in
             let relativePath = try relativePath(
                 for: entry.url,
                 under: bundle.url
@@ -423,12 +423,12 @@ private enum BundleResourceScanner {
             if shouldSkip(relativePath: relativePath, bundle: bundle) {
                 return entry.kind == .directory
                     ? .skipDescendants
-                    : .descend
+                    : .visitDescendants
             }
 
             switch entry.kind {
             case .directory:
-                return .descend
+                return .visitDescendants
             case .symbolicLink:
                 let target = try FileManager.default
                     .destinationOfSymbolicLink(atPath: entry.url.path)
@@ -448,7 +448,7 @@ private enum BundleResourceScanner {
                     )
                 )
             }
-            return .descend
+            return .visitDescendants
         }
 
         return resources.sorted { $0.relativePath < $1.relativePath }

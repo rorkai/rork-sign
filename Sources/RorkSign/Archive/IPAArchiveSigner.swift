@@ -162,8 +162,8 @@ enum IPAArchiveSigner {
             throw RorkSignError.invalidArchive("IPA archive is missing a Payload directory.")
         }
 
-        let payloadEntries = try FileSystemTraversal.contents(
-            of: payloadURL,
+        let payloadEntries = try FileManager.default.entries(
+            in: payloadURL,
             options: .skipsHiddenFiles
         )
         let appBundles = payloadEntries

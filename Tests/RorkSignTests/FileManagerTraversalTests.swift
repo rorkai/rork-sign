@@ -2,8 +2,8 @@ import Foundation
 @testable import RorkSign
 import XCTest
 
-final class FileSystemTraversalTests: XCTestCase {
-    func testContentsClassifiesDirectoriesAndRegularFiles() throws {
+final class FileManagerTraversalTests: XCTestCase {
+    func testEntriesClassifyDirectoriesAndRegularFiles() throws {
         let rootURL = try makeTemporaryDirectory()
         defer {
             try? FileManager.default.removeItem(at: rootURL)
@@ -20,7 +20,7 @@ final class FileSystemTraversalTests: XCTestCase {
         )
         try Data("plist".utf8).write(to: fileURL)
 
-        let entries = try FileSystemTraversal.contents(of: rootURL)
+        let entries = try FileManager.default.entries(in: rootURL)
         XCTAssertEqual(
             Dictionary(
                 uniqueKeysWithValues: entries.map {
@@ -34,7 +34,7 @@ final class FileSystemTraversalTests: XCTestCase {
         )
     }
 
-    func testWalkCanSkipDirectoryDescendants() throws {
+    func testEnumerationCanSkipDirectoryDescendants() throws {
         let rootURL = try makeTemporaryDirectory()
         defer {
             try? FileManager.default.removeItem(at: rootURL)
@@ -56,17 +56,17 @@ final class FileSystemTraversalTests: XCTestCase {
         )
 
         var visitedPaths: [String] = []
-        try FileSystemTraversal.walk(descendantsOf: rootURL) { entry in
+        try FileManager.default.enumerateDescendants(of: rootURL) { entry in
             visitedPaths.append(entry.url.lastPathComponent)
             return entry.url.lastPathComponent == "Nested.framework"
                 ? .skipDescendants
-                : .descend
+                : .visitDescendants
         }
 
         XCTAssertEqual(visitedPaths, ["Nested.framework", "Root"])
     }
 
-    func testWalkDoesNotDescendThroughSymbolicLinks() throws {
+    func testEnumerationDoesNotDescendThroughSymbolicLinks() throws {
         let rootURL = try makeTemporaryDirectory()
         let targetURL = try makeTemporaryDirectory()
         defer {
@@ -84,9 +84,9 @@ final class FileSystemTraversalTests: XCTestCase {
         )
 
         var entries: [String: FileSystemEntry.Kind] = [:]
-        try FileSystemTraversal.walk(descendantsOf: rootURL) { entry in
+        try FileManager.default.enumerateDescendants(of: rootURL) { entry in
             entries[entry.url.lastPathComponent] = entry.kind
-            return .descend
+            return .visitDescendants
         }
 
         XCTAssertEqual(entries["Link"], .symbolicLink)

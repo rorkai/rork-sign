@@ -1177,7 +1177,7 @@ private enum BundleCodeScanner {
     /// Finds nested bundles without descending into their contents.
     static func nestedBundles(in bundleURL: URL) throws -> [URL] {
         var bundles: [URL] = []
-        try FileSystemTraversal.walk(descendantsOf: bundleURL) { entry in
+        try FileManager.default.enumerateDescendants(of: bundleURL) { entry in
             let relativePath = try BundlePath.relativePath(
                 for: entry.url,
                 under: bundleURL
@@ -1185,13 +1185,13 @@ private enum BundleCodeScanner {
             if shouldSkip(relativePath: relativePath) {
                 return entry.kind == .directory
                     ? .skipDescendants
-                    : .descend
+                    : .visitDescendants
             }
             guard
                 entry.kind == .directory,
                 isNestedBundle(entry.url)
             else {
-                return .descend
+                return .visitDescendants
             }
             bundles.append(entry.url)
             return .skipDescendants
@@ -1202,7 +1202,7 @@ private enum BundleCodeScanner {
     /// Finds loose Mach-O files owned by the current bundle.
     static func standaloneCodeFiles(in bundle: SigningBundle) throws -> [URL] {
         var codeFiles: [URL] = []
-        try FileSystemTraversal.walk(descendantsOf: bundle.url) { entry in
+        try FileManager.default.enumerateDescendants(of: bundle.url) { entry in
             let relativePath = try BundlePath.relativePath(
                 for: entry.url,
                 under: bundle.url
@@ -1210,7 +1210,7 @@ private enum BundleCodeScanner {
             if shouldSkip(relativePath: relativePath) {
                 return entry.kind == .directory
                     ? .skipDescendants
-                    : .descend
+                    : .visitDescendants
             }
             if entry.kind == .directory, isNestedBundle(entry.url) {
                 return .skipDescendants
@@ -1218,17 +1218,17 @@ private enum BundleCodeScanner {
             if let executableURL = bundle.executableURL,
                entry.url.standardizedFileURL.path
                 == executableURL.standardizedFileURL.path {
-                return .descend
+                return .visitDescendants
             }
 
             guard
                 entry.kind == .regularFile,
                 try isMachO(entry.url)
             else {
-                return .descend
+                return .visitDescendants
             }
             codeFiles.append(entry.url)
-            return .descend
+            return .visitDescendants
         }
         return codeFiles.sorted { $0.path < $1.path }
     }

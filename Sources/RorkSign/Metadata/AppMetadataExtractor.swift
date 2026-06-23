@@ -165,8 +165,8 @@ enum AppMetadataExtractor {
 
     /// Selects the largest matching top-level icon file.
     private static func largestIcon(in bundleURL: URL, matching prefixes: [String]) throws -> URL? {
-        let contents = try FileSystemTraversal.contents(
-            of: bundleURL,
+        let contents = try FileManager.default.entries(
+            in: bundleURL,
             options: .skipsHiddenFiles
         )
 
@@ -248,8 +248,8 @@ enum AppMetadataExtractor {
             throw RorkSignError.invalidArchive("IPA archive is missing a Payload directory.")
         }
 
-        let appBundles = try FileSystemTraversal.contents(
-            of: payloadURL,
+        let appBundles = try FileManager.default.entries(
+            in: payloadURL,
             options: .skipsHiddenFiles
         )
             .filter { entry in

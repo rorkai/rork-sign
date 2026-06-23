@@ -452,7 +452,7 @@ private enum AdditionalBundleFileWriter {
 
             let kind: FileSystemEntry.Kind
             do {
-                kind = try FileSystemTraversal.entry(at: candidateURL).kind
+                kind = try FileManager.default.entry(at: candidateURL).kind
             } catch {
                 throw invalidPath(file.relativePath)
             }
@@ -700,15 +700,15 @@ private enum AppBundleIdentityRewriter {
     /// follow the rewritten root app identifier.
     private static func nestedRewritableBundles(in rootBundleURL: URL) throws -> [URL] {
         var bundles: [URL] = []
-        try FileSystemTraversal.walk(descendantsOf: rootBundleURL) { entry in
+        try FileManager.default.enumerateDescendants(of: rootBundleURL) { entry in
             guard
                 try relativePath(for: entry.url, under: rootBundleURL)
                     != "Info.plist"
             else {
-                return .descend
+                return .visitDescendants
             }
             guard entry.kind == .directory else {
-                return .descend
+                return .visitDescendants
             }
             guard
                 isProvisionedBundle(entry.url),
@@ -718,10 +718,10 @@ private enum AppBundleIdentityRewriter {
                         .path
                 )
             else {
-                return .descend
+                return .visitDescendants
             }
             bundles.append(entry.url)
-            return .descend
+            return .visitDescendants
         }
         return bundles.sorted { $0.path < $1.path }
     }
@@ -909,12 +909,12 @@ private enum AppLocalizedNameRewriter {
             return
         }
 
-        try FileSystemTraversal.walk(
-            descendantsOf: rootBundleURL,
+        try FileManager.default.enumerateDescendants(
+            of: rootBundleURL,
             options: .skipsHiddenFiles
         ) { entry in
             if entry.kind == .directory, entry.url.pathExtension == "lproj" {
-                return .descend
+                return .visitDescendants
             }
             if entry.kind == .directory {
                 return .skipDescendants
@@ -924,13 +924,13 @@ private enum AppLocalizedNameRewriter {
                 entry.url.lastPathComponent == "InfoPlist.strings",
                 entry.url.deletingLastPathComponent().pathExtension == "lproj"
             else {
-                return .descend
+                return .visitDescendants
             }
             try rewriteStringsFile(
                 at: entry.url,
                 displayName: displayName
             )
-            return .descend
+            return .visitDescendants
         }
     }
 

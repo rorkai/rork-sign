@@ -1,11 +1,10 @@
 import Foundation
 
-/// A filesystem entry classified without requiring URL resource metadata.
+/// A filesystem entry classified consistently across native and WASI hosts.
 ///
-/// Browser-hosted WASI filesystems support ordinary path operations but may
-/// omit `URLResourceValues` such as `isDirectory`. Keeping the classification
-/// beside the URL gives archive and signing code one portable contract while
-/// preserving native symbolic-link handling.
+/// Keeping the classification beside the URL lets signing code distinguish
+/// directories, regular files, and symbolic links without depending on the
+/// metadata capabilities of the current Foundation implementation.
 struct FileSystemEntry {
     /// The entry types relevant to bundle traversal and resource sealing.
     enum Kind: Equatable {
@@ -18,80 +17,81 @@ struct FileSystemEntry {
     let kind: Kind
 }
 
-/// Traverses directory trees using filesystem operations available on native
-/// platforms and WASI.
+/// Controls filtering while enumerating a filesystem tree.
+struct FileTraversalOptions: OptionSet {
+    let rawValue: Int
+
+    /// Omits dot-prefixed entries and native entries marked as hidden.
+    static let skipsHiddenFiles = Self(rawValue: 1 << 0)
+}
+
+/// Determines whether descendant enumeration enters a visited directory.
+enum FileTraversalDecision {
+    case visitDescendants
+    case skipDescendants
+}
+
+/// Provides deterministic filesystem traversal on native and browser-hosted
+/// WASI platforms.
 ///
 /// `FileManager.DirectoryEnumerator` and directory-related URL resource values
 /// are not consistently implemented by browser WASI hosts. Explicit recursion
 /// through `contentsOfDirectory` keeps traversal behavior predictable and lets
 /// callers prevent descent into nested bundles or generated metadata.
-enum FileSystemTraversal {
-    /// Controls filtering applied while reading each directory.
-    struct Options: OptionSet {
-        let rawValue: Int
-
-        /// Omits dot-prefixed entries and native entries marked as hidden.
-        static let skipsHiddenFiles = Self(rawValue: 1 << 0)
-    }
-
-    /// Determines whether traversal enters a visited directory.
-    enum Action {
-        case descend
-        case skipDescendants
-    }
-
+extension FileManager {
     /// Returns the immediate children of a directory in stable path order.
     ///
     /// Symbolic links are classified before the path-based directory fallback,
     /// which prevents traversal from following a link to a directory.
-    static func contents(
-        of directoryURL: URL,
-        options: Options = []
+    func entries(
+        in directoryURL: URL,
+        options: FileTraversalOptions = []
     ) throws -> [FileSystemEntry] {
-        try FileManager.default.contentsOfDirectory(atPath: directoryURL.path)
+        try contentsOfDirectory(atPath: directoryURL.path)
             .map { directoryURL.appendingPathComponent($0) }
             .filter {
                 !options.contains(.skipsHiddenFiles) || !isHidden($0)
             }
-            .map(entry(at:))
+            .map { try entry(at: $0) }
             .sorted { $0.url.path < $1.url.path }
     }
 
-    /// Visits every descendant depth-first and allows callers to prune
-    /// individual directory subtrees.
+    /// Enumerates every descendant depth-first while allowing the caller to
+    /// prune individual directory subtrees.
     ///
-    /// The visitor's action is ignored for regular files and symbolic links
+    /// The returned decision is ignored for regular files and symbolic links
     /// because neither has descendants owned by this traversal.
-    static func walk(
-        descendantsOf rootURL: URL,
-        options: Options = [],
-        _ visit: (FileSystemEntry) throws -> Action
+    func enumerateDescendants(
+        of rootURL: URL,
+        options: FileTraversalOptions = [],
+        using body: (FileSystemEntry) throws -> FileTraversalDecision
     ) throws {
-        for entry in try contents(of: rootURL, options: options) {
-            let action = try visit(entry)
-            guard entry.kind == .directory, action == .descend else {
+        for entry in try entries(in: rootURL, options: options) {
+            let decision = try body(entry)
+            guard entry.kind == .directory, decision == .visitDescendants else {
                 continue
             }
-            try walk(
-                descendantsOf: entry.url,
+            try enumerateDescendants(
+                of: entry.url,
                 options: options,
-                visit
+                using: body
             )
         }
     }
 
-    /// Classifies an entry using the metadata APIs supported by the platform.
-    static func entry(at url: URL) throws -> FileSystemEntry {
+    /// Classifies a path without following symbolic links.
+    func entry(at url: URL) throws -> FileSystemEntry {
         #if os(WASI)
-        try wasiEntry(at: url)
+        try classifyWASIEntry(at: url)
         #else
-        try nativeEntry(at: url)
+        try classifyNativeEntry(at: url)
         #endif
     }
 
     #if !os(WASI)
-    /// Uses native URL metadata so symbolic links are never followed.
-    private static func nativeEntry(at url: URL) throws -> FileSystemEntry {
+    /// Prefers native URL metadata, then falls back to filesystem attributes
+    /// when a Foundation implementation omits individual resource values.
+    private func classifyNativeEntry(at url: URL) throws -> FileSystemEntry {
         let resourceValues = try? url.resourceValues(
             forKeys: [
                 .isDirectoryKey,
@@ -116,9 +116,7 @@ enum FileSystemTraversal {
             )
         }
 
-        let attributes = try FileManager.default.attributesOfItem(
-            atPath: url.path
-        )
+        let attributes = try attributesOfItem(atPath: url.path)
         switch attributes[.type] as? FileAttributeType {
         case .typeSymbolicLink:
             return FileSystemEntry(url: url, kind: .symbolicLink)
@@ -139,11 +137,10 @@ enum FileSystemTraversal {
         )
     }
     #else
-    /// Uses path operations because browser WASI omits URL resource metadata.
-    private static func wasiEntry(at url: URL) throws -> FileSystemEntry {
-        let attributes = try? FileManager.default.attributesOfItem(
-            atPath: url.path
-        )
+    /// Preserves symbolic links before using path probes to distinguish the
+    /// remaining entry kinds.
+    private func classifyWASIEntry(at url: URL) throws -> FileSystemEntry {
+        let attributes = try? attributesOfItem(atPath: url.path)
         if attributes?[.type] as? FileAttributeType == .typeSymbolicLink {
             return FileSystemEntry(url: url, kind: .symbolicLink)
         }
@@ -158,7 +155,7 @@ enum FileSystemTraversal {
         }
 
         var isDirectory: ObjCBool = false
-        let exists = FileManager.default.fileExists(
+        let exists = fileExists(
             atPath: url.path,
             isDirectory: &isDirectory
         )
@@ -179,7 +176,7 @@ enum FileSystemTraversal {
         // `isDirectory` out-parameter false. A directory-qualified URL lets
         // Foundation preserve that distinction while opening the entry.
         let candidateDirectoryURL = directoryURL(for: url)
-        let directoryContents = try? FileManager.default.contentsOfDirectory(
+        let directoryContents = try? contentsOfDirectory(
             atPath: candidateDirectoryURL.path
         )
         if directoryContents != nil {
@@ -195,8 +192,9 @@ enum FileSystemTraversal {
     }
     #endif
 
-    /// Combines portable dot-file detection with native hidden metadata.
-    private static func isHidden(_ url: URL) -> Bool {
+    /// Treats dot-prefixed paths consistently while preserving the native
+    /// filesystem's hidden attribute where Foundation exposes it.
+    private func isHidden(_ url: URL) -> Bool {
         if url.lastPathComponent.hasPrefix(".") {
             return true
         }
@@ -208,9 +206,9 @@ enum FileSystemTraversal {
         #endif
     }
 
-    /// Reconstructs a file URL with the directory path marker required by
-    /// browser WASI Foundation.
-    private static func directoryURL(for url: URL) -> URL {
+    /// Preserves directory intent for Foundation implementations that use a
+    /// trailing path marker when resolving browser-hosted WASI directories.
+    private func directoryURL(for url: URL) -> URL {
         URL(fileURLWithPath: url.path, isDirectory: true)
     }
 }
