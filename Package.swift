@@ -15,17 +15,6 @@ let platformCryptoDependencies: [Target.Dependency] = [
 ]
 #endif
 
-// New swift-log manifests track the Swift toolchain that introduced their
-// package features. These ranges let each supported compiler select the newest
-// source-compatible release it can evaluate.
-#if compiler(>=6.2)
-let swiftLog: Package.Dependency = .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0")
-#elseif compiler(>=6.1)
-let swiftLog: Package.Dependency = .package(url: "https://github.com/apple/swift-log.git", "1.6.0"..<"1.11.0")
-#else
-let swiftLog: Package.Dependency = .package(url: "https://github.com/apple/swift-log.git", "1.6.0"..<"1.10.0")
-#endif
-
 let package = Package(
     name: "rork-sign",
     platforms: [
@@ -48,7 +37,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0"),
-        swiftLog,
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
         .package(
             url: "https://github.com/rorkai/swift-zip-archive.git",
             revision: "f43a4dbd56a5395ec59d9857e24b2537ece1854a"
