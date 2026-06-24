@@ -25,6 +25,16 @@ package enum IPAArchive {
         let kind: ItemKind
     }
 
+    /// ZIP entry whose lexical path and filesystem shape are safe to inspect.
+    ///
+    /// Extraction validates the complete entry hierarchy before creating files
+    /// so archive order cannot redirect a later write through a symbolic link.
+    private struct ValidatedArchiveEntry {
+        let header: Zip.FileHeader
+        let relativePath: String
+        let kind: ItemKind
+    }
+
     /// Controls whether ZIP metadata is restored on extracted files.
     ///
     /// Browser WASI filesystems do not reliably preserve POSIX metadata, so
@@ -158,33 +168,30 @@ package enum IPAArchive {
         to rootURL: URL,
         metadataRestoration: MetadataRestoration
     ) throws -> Extraction {
-        let entries = try reader.readDirectory()
+        let entries = try validatedEntries(
+            from: reader.readDirectory()
+        )
         var entriesByPath: [String: PreservedEntry] = [:]
         var directoriesToRestore: [(entry: Zip.FileHeader, url: URL)] = []
 
         for entry in entries {
-            let relativePath = try validatedArchivePath(entry.filename.string)
-            guard !relativePath.isEmpty else {
-                continue
-            }
-
-            entriesByPath[relativePath] = PreservedEntry(
+            entriesByPath[entry.relativePath] = PreservedEntry(
                 metadata: Zip.EntryMetadata(
-                    modificationDate: entry.fileModification,
-                    externalAttributes: entry.externalAttributes,
-                    comment: entry.comment
+                    modificationDate: entry.header.fileModification,
+                    externalAttributes: entry.header.externalAttributes,
+                    comment: entry.header.comment
                 ),
-                kind: itemKind(for: entry)
+                kind: entry.kind
             )
 
             let destinationURL = try destinationURL(
-                for: relativePath,
+                for: entry.relativePath,
                 under: rootURL,
-                isDirectory: entry.isDirectory
+                isDirectory: entry.kind == .directory
             )
-            if entry.isDirectory {
+            if entry.kind == .directory {
                 try createDirectory(at: destinationURL)
-                directoriesToRestore.append((entry, destinationURL))
+                directoriesToRestore.append((entry.header, destinationURL))
                 continue
             }
 
@@ -192,17 +199,17 @@ package enum IPAArchive {
                 at: destinationURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            let bytes = try reader.readFile(entry)
-            if entry.externalAttributes.unixAttributes.contains(.isSymbolicLink) {
+            let bytes = try reader.readFile(entry.header)
+            if entry.kind == .symbolicLink {
                 try createSymbolicLink(
                     at: destinationURL,
-                    archivePath: relativePath,
+                    archivePath: entry.relativePath,
                     bytes: bytes
                 )
             } else {
                 try Data(bytes).write(to: destinationURL)
                 try restoreFileMetadata(
-                    from: entry,
+                    from: entry.header,
                     to: destinationURL,
                     metadataRestoration: metadataRestoration
                 )
@@ -220,6 +227,63 @@ package enum IPAArchive {
         }
 
         return Extraction(entriesByPath: entriesByPath)
+    }
+
+    /// Validates archive paths and their hierarchy before extraction mutates disk.
+    ///
+    /// ZIP paths are compared case-insensitively because common signing hosts
+    /// use case-insensitive filesystems. Rejecting duplicate paths and entries
+    /// below archive symlinks keeps extraction behavior independent of the host
+    /// filesystem and central-directory order.
+    private static func validatedEntries(
+        from headers: [Zip.FileHeader]
+    ) throws -> [ValidatedArchiveEntry] {
+        let entries = try headers.map { header in
+            ValidatedArchiveEntry(
+                header: header,
+                relativePath: try validatedArchivePath(
+                    header.filename.string
+                ),
+                kind: itemKind(for: header)
+            )
+        }
+
+        var paths: Set<String> = []
+        var symbolicLinkPaths: Set<String> = []
+        for entry in entries {
+            let path = extractionComparisonPath(entry.relativePath)
+            guard paths.insert(path).inserted else {
+                throw RorkSignError.invalidArchive(
+                    "IPA archive contains a duplicate entry path: \(entry.relativePath)."
+                )
+            }
+            if entry.kind == .symbolicLink {
+                symbolicLinkPaths.insert(path)
+            }
+        }
+
+        for entry in entries {
+            var ancestorComponents: [Substring] = []
+            for component in entry.relativePath.split(separator: "/").dropLast() {
+                ancestorComponents.append(component)
+                let ancestorPath = extractionComparisonPath(
+                    ancestorComponents.joined(separator: "/")
+                )
+                guard !symbolicLinkPaths.contains(ancestorPath) else {
+                    throw RorkSignError.invalidArchive(
+                        "IPA archive entry traverses a symbolic link: \(entry.relativePath)."
+                    )
+                }
+            }
+        }
+        return entries
+    }
+
+    /// Normalizes one archive path for comparisons on extraction filesystems.
+    private static func extractionComparisonPath<S: StringProtocol>(
+        _ path: S
+    ) -> String {
+        path.lowercased()
     }
 
     /// Rebuilds an IPA while retaining compatible metadata captured during extraction.

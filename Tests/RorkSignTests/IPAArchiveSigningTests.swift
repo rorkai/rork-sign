@@ -1002,6 +1002,67 @@ final class IPAArchiveSigningTests: XCTestCase {
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
     }
+
+    /// Ensures archive ordering cannot redirect a later entry through a
+    /// previously extracted symbolic link.
+    func testArchiveRejectsEntryBelowEarlierSymbolicLink() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let inputURL = rootURL.appendingPathComponent("UnsafeLinkChild.ipa")
+        let extractedURL = rootURL.appendingPathComponent(
+            "Extracted",
+            isDirectory: true
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+
+        try archiveWithSymlinkDescendant().write(to: inputURL)
+
+        XCTAssertThrowsError(
+            try IPAArchive.extract(at: inputURL, to: extractedURL)
+        ) { error in
+            guard case .invalidArchive = error as? RorkSignError else {
+                return XCTFail("Expected an invalid archive error, got \(error).")
+            }
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: extractedURL
+                    .appendingPathComponent(
+                        "Payload/Host.app/redirected.txt"
+                    )
+                    .path
+            )
+        )
+    }
+}
+
+/// Returns a malformed ZIP whose final entry is below an earlier symlink.
+///
+/// The production writer correctly refuses to create this hierarchy, so the
+/// fixed fixture preserves the hostile entry order needed to exercise the
+/// extractor's independent trust boundary.
+private func archiveWithSymlinkDescendant() throws -> Data {
+    let encodedArchive = [
+        "UEsDBBQAAAAAAPiS2FzWMHxaBQAAAAUAAAAbAAAAUGF5bG9hZC9Ib3N0LmFwcC9JbmZvLnBsaXN0cGxpc3RQSwME",
+        "FAAAAAAAAAAhAI1yghUIAAAACAAAAAwAAABQYXlsb2FkL0xpbmtIb3N0LmFwcFBLAwQUAAAAAAD4kthceqhLcgoA",
+        "AAAKAAAAGwAAAFBheWxvYWQvTGluay9yZWRpcmVjdGVkLnR4dHJlZGlyZWN0ZWRQSwECFAMUAAAAAAD4kthc1jB8",
+        "WgUAAAAFAAAAGwAAAAAAAAAAAAAAgAEAAAAAUGF5bG9hZC9Ib3N0LmFwcC9JbmZvLnBsaXN0UEsBAhQDFAAAAAAA",
+        "AAAhAI1yghUIAAAACAAAAAwAAAAAAAAAAAAAAP+hPgAAAFBheWxvYWQvTGlua1BLAQIUAxQAAAAAAPiS2Fx6qEty",
+        "CgAAAAoAAAAbAAAAAAAAAAAAAACAAXAAAABQYXlsb2FkL0xpbmsvcmVkaXJlY3RlZC50eHRQSwUGAAAAAAMAAwDM",
+        "AAAAswAAAAAA",
+    ].joined()
+    guard let data = Data(base64Encoded: encodedArchive) else {
+        throw RorkSignError.invalidArchive(
+            "The symbolic-link traversal fixture is invalid."
+        )
+    }
+    return data
 }
 
 private struct IPAArchiveFixture {
