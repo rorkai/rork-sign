@@ -47,7 +47,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/rorkai/swift-crypto.git",
-            revision: "f171fca4c1718d685c495350fe9136a3fda6f262"
+            exact: "4.5.0-rork.1"
         ),
         .package(
             url: "https://github.com/apple/swift-log.git",
@@ -55,7 +55,7 @@ let package = Package(
         ),
         .package(
             url: "https://github.com/rorkai/swift-zip-archive.git",
-            revision: "f43a4dbd56a5395ec59d9857e24b2537ece1854a"
+            exact: "0.8.1-rork.1"
         ),
         .package(
             url: "https://github.com/apple/swift-argument-parser.git",
