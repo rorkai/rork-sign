@@ -1223,7 +1223,7 @@ private enum BundleCodeScanner {
 
             guard
                 entry.kind == .regularFile,
-                try isMachO(entry.url)
+                try MachOFile.isMachO(at: entry.url)
             else {
                 return .visitDescendants
             }
@@ -1248,9 +1248,13 @@ private enum BundleCodeScanner {
             || pathComponents.contains(where: { $0.hasSuffix(".dSYM") })
             || pathComponents.contains(where: { $0 == "_WatchKitStub" })
     }
+}
 
-    /// Checks only the magic; full validation happens when the Mach-O is signed.
-    private static func isMachO(_ url: URL) throws -> Bool {
+/// Identifies Mach-O files without performing full structural validation.
+enum MachOFile {
+    /// Checks only the leading magic because complete validation belongs to the
+    /// signing or inspection operation that later consumes the file.
+    static func isMachO(at url: URL) throws -> Bool {
         let handle = try FileHandle(forReadingFrom: url)
         defer {
             try? handle.close()

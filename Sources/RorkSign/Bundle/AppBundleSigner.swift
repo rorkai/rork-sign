@@ -92,7 +92,9 @@ public struct AppSigningOptions: Equatable {
     /// such as runtime credentials or configuration files. Parent directories
     /// are created as needed, and an existing file at the same relative path is
     /// replaced before resources are sealed. Paths must remain relative to the
-    /// root app bundle and cannot contain empty, `.` or `..` components.
+    /// root app bundle, cannot contain empty, `.` or `..` components, and cannot
+    /// replace bundle metadata, provisioning profiles, signatures, or Mach-O
+    /// files owned by the signing process.
     public var additionalBundleFiles: [String: Data]
 
     /// Whether selected provisioning profiles are embedded before resource sealing.
@@ -357,6 +359,7 @@ private enum AdditionalBundleFileWriter {
                 in: rootBundleURL
             )
         }
+        try validateCallerOwnedDestinations(in: files)
 
         for file in files {
             try FileManager.default.createDirectory(
@@ -364,6 +367,30 @@ private enum AdditionalBundleFileWriter {
                 withIntermediateDirectories: true
             )
             try file.data.writeReplacingItem(at: file.url)
+        }
+    }
+
+    /// Prevents resource injection from replacing inputs and outputs controlled
+    /// by bundle signing.
+    private static func validateCallerOwnedDestinations(
+        in files: [PendingFile]
+    ) throws {
+        for file in files {
+            let normalizedComponents = file.components.map {
+                $0.lowercased()
+            }
+            let finalComponent = normalizedComponents.last
+            if normalizedComponents.contains("_codesignature")
+                || finalComponent == "info.plist"
+                || finalComponent == "embedded.mobileprovision"
+            {
+                throw signerOwnedPathError(file.relativePath)
+            }
+            if FileManager.default.fileExists(atPath: file.url.path),
+               try MachOFile.isMachO(at: file.url)
+            {
+                throw signerOwnedPathError(file.relativePath)
+            }
         }
     }
 
@@ -413,17 +440,35 @@ private enum AdditionalBundleFileWriter {
     private static func validatePathConflicts(
         in files: [PendingFile]
     ) throws {
-        let requestedPaths = Set(files.map(\.relativePath))
+        var requestedPaths: Set<String> = []
+        for file in files {
+            let path = pathForComparison(file.components)
+            guard requestedPaths.insert(path).inserted else {
+                throw invalidPath(file.relativePath)
+            }
+        }
+
         for file in files {
             var ancestorComponents: [String] = []
             for component in file.components.dropLast() {
                 ancestorComponents.append(component)
-                let ancestorPath = ancestorComponents.joined(separator: "/")
+                let ancestorPath = pathForComparison(ancestorComponents)
                 guard !requestedPaths.contains(ancestorPath) else {
                     throw invalidPath(file.relativePath)
                 }
             }
         }
+    }
+
+    /// Normalizes requested paths before comparing them as one write set.
+    ///
+    /// App bundles are commonly prepared on case-insensitive filesystems, so
+    /// allowing case-only differences would make preflight behavior depend on
+    /// the host that performs signing.
+    private static func pathForComparison(
+        _ components: [String]
+    ) -> String {
+        components.map { $0.lowercased() }.joined(separator: "/")
     }
 
     /// Rejects links and non-directory ancestors before any write begins.
@@ -478,6 +523,15 @@ private enum AdditionalBundleFileWriter {
     private static func invalidPath(_ relativePath: String) -> RorkSignError {
         .invalidBundle(
             "Additional bundle file path must remain inside the root app bundle: \(relativePath)."
+        )
+    }
+
+    /// Produces one stable public error for attempts to replace signing inputs.
+    private static func signerOwnedPathError(
+        _ relativePath: String
+    ) -> RorkSignError {
+        .invalidBundle(
+            "Additional bundle file path is owned by the signing process: \(relativePath)."
         )
     }
 }

@@ -37,6 +37,10 @@ public extension RorkSigner {
     /// Stored entries remain the default because browser callers usually pass
     /// the result directly to InstallationProxy, where recompression adds CPU
     /// work without reducing the USB transfer meaningfully.
+    ///
+    /// This synchronous operation performs archive extraction, code signing,
+    /// and repacking. Browser applications should invoke it from a Web Worker so
+    /// signing does not block rendering or user input on the main thread.
     static func signIPA(
         _ ipaData: Data,
         using identity: SigningIdentity,

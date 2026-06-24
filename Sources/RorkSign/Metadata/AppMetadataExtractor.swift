@@ -86,9 +86,12 @@ enum AppMetadataExtractor {
         timestamp: Date,
         temporaryDirectory: URL?
     ) throws -> AppMetadataReport {
-        try withExtractedPayloadApp(archiveURL: archiveURL, temporaryDirectory: temporaryDirectory) { _, appURL in
+        try IPAArchive.withExtractedPayloadApp(
+            from: archiveURL,
+            temporaryDirectory: temporaryDirectory
+        ) { payload in
             try extractBundleMetadata(
-                bundleURL: appURL,
+                bundleURL: payload.appBundleURL,
                 outputDirectory: outputDirectory,
                 sourceArchiveURL: archiveURL,
                 timestamp: timestamp
@@ -165,6 +168,23 @@ enum AppMetadataExtractor {
 
     /// Selects the largest matching top-level icon file.
     private static func largestIcon(in bundleURL: URL, matching prefixes: [String]) throws -> URL? {
+        try largestIcon(
+            in: bundleURL,
+            matching: prefixes,
+            fileSize: fileSize
+        )
+    }
+
+    /// Selects the largest readable icon matching the bundle declarations.
+    ///
+    /// Icon declarations are advisory metadata and can contain stale or
+    /// unreadable candidates. Skipping those candidates preserves metadata
+    /// extraction when another declared icon remains usable.
+    static func largestIcon(
+        in bundleURL: URL,
+        matching prefixes: [String],
+        fileSize: (URL) throws -> Int64
+    ) throws -> URL? {
         let contents = try FileManager.default.entries(
             in: bundleURL,
             options: .skipsHiddenFiles
@@ -173,97 +193,23 @@ enum AppMetadataExtractor {
         var best: (url: URL, size: Int64)?
         for entry in contents {
             guard entry.kind == .regularFile,
-                  let size = try? fileSize(entry.url),
                   prefixes.contains(where: {
                       entry.url.lastPathComponent.hasPrefix($0)
                   }) else {
                 continue
             }
-            if best == nil || size > best!.size {
-                best = (entry.url, size)
+            let size: Int64
+            do {
+                size = try fileSize(entry.url)
+            } catch {
+                continue
             }
+            if let best, best.size >= size {
+                continue
+            }
+            best = (entry.url, size)
         }
         return best?.url
-    }
-
-    /// Extracts an IPA into a temporary workspace and passes its payload app to `body`.
-    private static func withExtractedPayloadApp<T>(
-        archiveURL: URL,
-        temporaryDirectory: URL?,
-        body: (_ archiveRoot: URL, _ appURL: URL) throws -> T
-    ) throws -> T {
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: archiveURL.path) else {
-            throw RorkSignError.invalidArchive("IPA archive does not exist: \(archiveURL.path).")
-        }
-
-        let workspaceRoot = try workspaceRootDirectory(temporaryDirectory)
-        let workspace = workspaceRoot
-            .appendingPathComponent("rork-sign-metadata-\(UUID().uuidString)", isDirectory: true)
-        let archiveRoot = workspace.appendingPathComponent("ArchiveRoot", isDirectory: true)
-        defer {
-            try? fileManager.removeItem(at: workspace)
-        }
-
-        do {
-            try fileManager.createDirectory(at: archiveRoot, withIntermediateDirectories: true)
-            _ = try IPAArchive.extract(
-                at: archiveURL,
-                to: archiveRoot
-            )
-        } catch let error as RorkSignError {
-            throw error
-        } catch {
-            throw RorkSignError.invalidArchive("IPA archive could not be extracted: \(error.localizedDescription)")
-        }
-
-        return try body(archiveRoot, try payloadAppBundle(in: archiveRoot))
-    }
-
-    /// Returns a usable parent directory for temporary metadata extraction.
-    private static func workspaceRootDirectory(_ temporaryDirectory: URL?) throws -> URL {
-        let fileManager = FileManager.default
-        let rootURL = temporaryDirectory ?? fileManager.temporaryDirectory
-        var isDirectory: ObjCBool = false
-        if fileManager.fileExists(atPath: rootURL.path, isDirectory: &isDirectory) {
-            guard isDirectory.boolValue else {
-                throw RorkSignError.invalidArchive("Temporary path is not a directory: \(rootURL.path).")
-            }
-        } else {
-            do {
-                try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
-            } catch {
-                throw RorkSignError.invalidArchive("Temporary directory could not be created: \(error.localizedDescription)")
-            }
-        }
-        return rootURL
-    }
-
-    /// Finds the single app bundle inside an extracted IPA payload.
-    private static func payloadAppBundle(in archiveRoot: URL) throws -> URL {
-        let payloadURL = archiveRoot.appendingPathComponent("Payload", isDirectory: true)
-        guard (try? FileManager.default.entry(at: payloadURL).kind) == .directory else {
-            throw RorkSignError.invalidArchive("IPA archive is missing a Payload directory.")
-        }
-
-        let appBundles = try FileManager.default.entries(
-            in: payloadURL,
-            options: .skipsHiddenFiles
-        )
-            .filter { entry in
-                entry.kind == .directory
-                    && entry.url.pathExtension.lowercased() == "app"
-            }
-            .map(\.url)
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-
-        guard let appURL = appBundles.first else {
-            throw RorkSignError.invalidArchive("IPA archive has no app bundle in Payload.")
-        }
-        guard appBundles.count == 1 else {
-            throw RorkSignError.invalidArchive("IPA archive contains multiple app bundles in Payload.")
-        }
-        return appURL
     }
 
     /// Reads file size through attributes available on native and WASI hosts.

@@ -468,16 +468,16 @@ final class IPAArchiveSigningTests: XCTestCase {
         )
         try Data(try writer.finalizeBuffer()).write(to: inputURL)
 
-        let contents = try IPAArchive.extract(
+        let extraction = try IPAArchive.extract(
             at: inputURL,
             to: extractedURL,
-            metadataBehavior: .preserveInArchive
+            metadataRestoration: .skip
         )
         try IPAArchive.write(
             contentsOf: extractedURL,
             to: outputURL,
             compressionMode: .stored,
-            preserving: contents
+            preservingMetadataFrom: extraction
         )
 
         let outputReader = try ZipArchiveReader(
@@ -586,6 +586,155 @@ final class IPAArchiveSigningTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: markerURL.path))
     }
 
+    /// Preserves a caller-owned archive when serialization fails before the
+    /// staged replacement can be committed.
+    func testArchiveWritePreservesExistingDestinationWhenStagingFails()
+        throws
+    {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let outputURL = rootURL.appendingPathComponent("Output.ipa")
+        let originalOutput = Data("existing archive".utf8)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+        try originalOutput.write(to: outputURL)
+        let stagingError = NSError(
+            domain: "RorkSignTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "staging failed"]
+        )
+
+        XCTAssertThrowsError(
+            try IPAArchive.writeArchive(
+                to: outputURL
+            ) { stagedArchiveURL in
+                try Data("partial archive".utf8).write(
+                    to: stagedArchiveURL
+                )
+                throw stagingError
+            }
+        ) { error in
+            XCTAssertEqual(
+                error as NSError,
+                stagingError
+            )
+        }
+        XCTAssertEqual(try Data(contentsOf: outputURL), originalOutput)
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: rootURL.path),
+            [outputURL.lastPathComponent]
+        )
+    }
+
+    /// Confirms a completed archive replaces the previous destination only
+    /// after serialization succeeds.
+    func testArchiveWriteReplacesExistingDestinationAfterFinalization()
+        throws
+    {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let sourceURL = rootURL.appendingPathComponent(
+            "ArchiveRoot",
+            isDirectory: true
+        )
+        let outputURL = rootURL.appendingPathComponent("Output.ipa")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: sourceURL,
+            withIntermediateDirectories: true
+        )
+        try Data("source".utf8).write(
+            to: sourceURL.appendingPathComponent("source.txt")
+        )
+        try Data("existing archive".utf8).write(to: outputURL)
+
+        try IPAArchive.write(
+            contentsOf: sourceURL,
+            to: outputURL,
+            compressionMode: .stored
+        )
+
+        try ZipArchiveReader<ZipFileStorage>.withFile(
+            outputURL.path
+        ) { reader in
+            let entry = try XCTUnwrap(
+                try reader.readDirectory().first {
+                    $0.filename.string == "source.txt"
+                }
+            )
+            XCTAssertEqual(
+                try reader.readFile(entry),
+                Array("source".utf8)
+            )
+        }
+    }
+
+    /// A failed backup restoration must remain visible alongside the archive
+    /// replacement error that triggered it.
+    func testBackupArchiveReplacementReportsCommitAndRestorationFailures()
+        throws
+    {
+        let rootURL = URL(fileURLWithPath: "/archive-test")
+        let archiveURL = rootURL.appendingPathComponent("Output.ipa")
+        let stagedArchiveURL = rootURL.appendingPathComponent("Staged.ipa")
+        let backupURL = rootURL.appendingPathComponent("Backup.ipa")
+        let commitError = NSError(
+            domain: "RorkSignTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "commit failed"]
+        )
+        let restorationError = NSError(
+            domain: "RorkSignTests",
+            code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "restoration failed"]
+        )
+
+        XCTAssertThrowsError(
+            try IPAArchive.replaceArchive(
+                at: archiveURL,
+                with: stagedArchiveURL,
+                backingUpOriginalTo: backupURL,
+                moveItem: { sourceURL, destinationURL in
+                    if sourceURL == archiveURL,
+                       destinationURL == backupURL
+                    {
+                        return
+                    }
+                    if sourceURL == stagedArchiveURL,
+                       destinationURL == archiveURL
+                    {
+                        throw commitError
+                    }
+                    if sourceURL == backupURL,
+                       destinationURL == archiveURL
+                    {
+                        throw restorationError
+                    }
+                    XCTFail(
+                        "Unexpected move from \(sourceURL.path) to \(destinationURL.path)."
+                    )
+                },
+                removeItem: { url in
+                    XCTFail("Unexpected removal of \(url.path).")
+                }
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? RorkSignError,
+                .invalidArchive(
+                    "Archive replacement failed: commit failed. The previous archive could not be restored from \(backupURL.path): restoration failed"
+                )
+            )
+        }
+    }
+
     /// Ensures preserved metadata is reused only when an entry keeps the same
     /// filesystem kind across signing.
     func testArchiveDoesNotReuseSymlinkMetadataForReplacementFile() throws {
@@ -622,10 +771,10 @@ final class IPAArchiveSigningTests: XCTestCase {
             compressionMode: .stored
         )
 
-        let contents = try IPAArchive.extract(
+        let extraction = try IPAArchive.extract(
             at: inputURL,
             to: extractedURL,
-            metadataBehavior: .preserveInArchive
+            metadataRestoration: .skip
         )
         let extractedLinkURL = extractedURL.appendingPathComponent("Current")
         try FileManager.default.removeItem(at: extractedLinkURL)
@@ -634,7 +783,7 @@ final class IPAArchiveSigningTests: XCTestCase {
             contentsOf: extractedURL,
             to: outputURL,
             compressionMode: .stored,
-            preserving: contents
+            preservingMetadataFrom: extraction
         )
 
         let reader = try ZipArchiveReader(

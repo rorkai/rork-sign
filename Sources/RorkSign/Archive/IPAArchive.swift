@@ -30,22 +30,26 @@ package enum IPAArchive {
     /// Browser WASI filesystems do not reliably preserve POSIX metadata, so
     /// signing keeps the original archive values separately and reapplies them
     /// when the IPA is rebuilt.
-    package enum ExtractedMetadataBehavior {
-        case preserveInArchive
-        case restoreToFileSystem
+    package enum MetadataRestoration {
+        /// Keeps workspace-default metadata on extracted files.
+        ///
+        /// Original archive metadata remains available in ``Extraction`` for
+        /// repacking even when it is not applied to the temporary filesystem.
+        case skip
+
+        /// Applies archived permissions and modification dates after extraction.
+        case restore
 
         /// Uses the filesystem only when it can reliably preserve ZIP metadata.
-        package static var platformDefault: Self {
-            #if os(WASI)
-            .preserveInArchive
-            #else
-            .restoreToFileSystem
-            #endif
-        }
+        #if os(WASI)
+        package static let platformDefault: Self = .skip
+        #else
+        package static let platformDefault: Self = .restore
+        #endif
     }
 
-    /// Metadata captured while extracting an archive.
-    package struct Contents {
+    /// Archive metadata captured during extraction and reusable when repacking.
+    package struct Extraction {
         fileprivate let entriesByPath: [String: PreservedEntry]
 
         /// Represents a directory tree that was not extracted from an archive.
@@ -56,15 +60,15 @@ package enum IPAArchive {
     package static func extract(
         at archiveURL: URL,
         to rootURL: URL,
-        metadataBehavior: ExtractedMetadataBehavior = .platformDefault
-    ) throws -> Contents {
+        metadataRestoration: MetadataRestoration = .platformDefault
+    ) throws -> Extraction {
         #if os(WASI)
         let data = try Data(contentsOf: archiveURL)
         let reader = try ZipArchiveReader(buffer: [UInt8](data))
         return try extract(
             using: reader,
             to: rootURL,
-            metadataBehavior: metadataBehavior
+            metadataRestoration: metadataRestoration
         )
         #else
         return try ZipArchiveReader<ZipFileStorage>.withFile(
@@ -73,18 +77,87 @@ package enum IPAArchive {
             try extract(
                 using: reader,
                 to: rootURL,
-                metadataBehavior: metadataBehavior
+                metadataRestoration: metadataRestoration
             )
         }
         #endif
+    }
+
+    /// Paths and archive metadata valid for the lifetime of one IPA workspace.
+    package struct PayloadExtraction {
+        /// Root directory containing every extracted IPA entry.
+        package let archiveRootURL: URL
+
+        /// The single top-level app bundle found inside `Payload`.
+        package let appBundleURL: URL
+
+        /// Original ZIP metadata available when the archive is rebuilt.
+        package let archiveMetadata: Extraction
+    }
+
+    /// Extracts one IPA, finds its payload app, and removes the workspace after
+    /// `body` returns.
+    ///
+    /// Centralizing the lifecycle keeps signing and metadata inspection aligned
+    /// on archive validation, payload selection, and cleanup behavior.
+    package static func withExtractedPayloadApp<Result>(
+        from archiveURL: URL,
+        temporaryDirectory: URL?,
+        _ body: (PayloadExtraction) throws -> Result
+    ) throws -> Result {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: archiveURL.path) else {
+            throw RorkSignError.invalidArchive(
+                "IPA archive does not exist: \(archiveURL.path)."
+            )
+        }
+
+        let workspaceRoot = try workspaceRootDirectory(temporaryDirectory)
+        let workspaceURL = workspaceRoot.appendingPathComponent(
+            "rork-sign-ipa-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let archiveRootURL = workspaceURL.appendingPathComponent(
+            "ArchiveRoot",
+            isDirectory: true
+        )
+        defer {
+            try? fileManager.removeItem(at: workspaceURL)
+        }
+
+        let extraction: Extraction
+        do {
+            try fileManager.createDirectory(
+                at: archiveRootURL,
+                withIntermediateDirectories: true
+            )
+            extraction = try extract(
+                at: archiveURL,
+                to: archiveRootURL
+            )
+        } catch let error as RorkSignError {
+            throw error
+        } catch {
+            throw RorkSignError.invalidArchive(
+                "IPA archive could not be extracted: \(error.localizedDescription)"
+            )
+        }
+
+        return try body(
+            PayloadExtraction(
+                archiveRootURL: archiveRootURL,
+                appBundleURL: try payloadAppBundle(in: archiveRootURL),
+                archiveMetadata: extraction
+            )
+        )
     }
 
     /// Extracts entries from one reader after its storage has been selected.
     private static func extract<Storage: ZipReadableStorage>(
         using reader: ZipArchiveReader<Storage>,
         to rootURL: URL,
-        metadataBehavior: ExtractedMetadataBehavior
-    ) throws -> Contents {
+        metadataRestoration: MetadataRestoration
+    ) throws -> Extraction {
         let entries = try reader.readDirectory()
         var entriesByPath: [String: PreservedEntry] = [:]
         var directoriesToRestore: [(entry: Zip.FileHeader, url: URL)] = []
@@ -131,7 +204,7 @@ package enum IPAArchive {
                 try restoreFileMetadata(
                     from: entry,
                     to: destinationURL,
-                    metadataBehavior: metadataBehavior
+                    metadataRestoration: metadataRestoration
                 )
             }
         }
@@ -142,19 +215,24 @@ package enum IPAArchive {
             try restoreFileMetadata(
                 from: directory.entry,
                 to: directory.url,
-                metadataBehavior: metadataBehavior
+                metadataRestoration: metadataRestoration
             )
         }
 
-        return Contents(entriesByPath: entriesByPath)
+        return Extraction(entriesByPath: entriesByPath)
     }
 
-    /// Rebuilds an IPA while preserving metadata for entries that already existed.
+    /// Rebuilds an IPA while retaining compatible metadata captured during extraction.
+    ///
+    /// Metadata is reused only when an entry still has the same path and kind,
+    /// preventing a replacement file from inheriting attributes that belonged
+    /// to a symbolic link or directory. The destination is replaced only after
+    /// the new archive has been fully serialized.
     package static func write(
         contentsOf rootURL: URL,
         to archiveURL: URL,
         compressionMode: ArchiveCompressionMode,
-        preserving originalContents: Contents = .empty
+        preservingMetadataFrom extraction: Extraction = .empty
     ) throws {
         let fileManager = FileManager.default
         try validateArchiveDestination(
@@ -162,49 +240,81 @@ package enum IPAArchive {
             outside: rootURL,
             fileManager: fileManager
         )
-        if fileManager.fileExists(atPath: archiveURL.path) {
-            try fileManager.removeItem(at: archiveURL)
-        }
         try fileManager.createDirectory(
             at: archiveURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
 
         let items = try archivedItems(under: rootURL)
-        #if os(WASI)
-        let writer = ZipArchiveWriter(
-            configuration: compressionMode.writerConfiguration
-        )
-        try write(
-            items,
-            preserving: originalContents,
-            using: writer
-        )
-        let bytes = try writer.finalizeBuffer()
-        try Data(bytes).write(to: archiveURL)
-        #else
-        try ZipArchiveWriter<ZipFileStorage>.withFile(
-            archiveURL.path,
-            options: .create,
-            configuration: compressionMode.writerConfiguration
-        ) { writer in
-            try write(
-                items,
-                preserving: originalContents,
-                using: writer
+        try writeArchive(
+            to: archiveURL,
+            fileManager: fileManager
+        ) { stagedArchiveURL in
+            #if os(WASI)
+            let writer = ZipArchiveWriter(
+                configuration: compressionMode.writerConfiguration
             )
+            try writeEntries(
+                items,
+                to: writer,
+                preservingMetadataFrom: extraction
+            )
+            let bytes = try writer.finalizeBuffer()
+            try Data(bytes).write(to: stagedArchiveURL)
+            #else
+            try ZipArchiveWriter<ZipFileStorage>.withFile(
+                stagedArchiveURL.path,
+                options: .create,
+                configuration: compressionMode.writerConfiguration
+            ) { writer in
+                try writeEntries(
+                    items,
+                    to: writer,
+                    preservingMetadataFrom: extraction
+                )
+            }
+            #endif
         }
-        #endif
     }
 
-    /// Writes entries after the destination storage has been selected.
-    private static func write<Storage: ZipWriteableStorage>(
+    /// Writes a complete archive to a sibling staging file before committing it.
+    ///
+    /// Staging protects a caller-owned destination from serialization failures.
+    /// The temporary sibling is removed regardless of whether serialization or
+    /// the final replacement succeeds.
+    static func writeArchive(
+        to archiveURL: URL,
+        fileManager: FileManager = .default,
+        _ writeStagedArchive: (URL) throws -> Void
+    ) throws {
+        let stagedArchiveURL = archiveURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(
+                ".\(archiveURL.lastPathComponent).\(UUID().uuidString).tmp"
+            )
+        defer {
+            try? fileManager.removeItem(at: stagedArchiveURL)
+        }
+
+        try writeStagedArchive(stagedArchiveURL)
+        try replaceArchive(
+            at: archiveURL,
+            with: stagedArchiveURL,
+            fileManager: fileManager
+        )
+    }
+
+    /// Writes normalized entries while retaining metadata only for unchanged kinds.
+    ///
+    /// Checking both path and kind prevents stale ZIP attributes from crossing
+    /// a structural change, such as replacing a symbolic link with a regular file.
+    private static func writeEntries<Storage: ZipWriteableStorage>(
         _ items: [ArchivedItem],
-        preserving originalContents: Contents,
-        using writer: ZipArchiveWriter<Storage>
+        to writer: ZipArchiveWriter<Storage>,
+        preservingMetadataFrom extraction: Extraction
     ) throws {
         for item in items {
-            let originalEntry = originalContents.entriesByPath[
+            let originalEntry = extraction.entriesByPath[
                 item.relativePath
             ]
             let metadata: Zip.EntryMetadata
@@ -421,9 +531,9 @@ package enum IPAArchive {
 
     /// Rejects destinations that could remove source content or a directory.
     ///
-    /// Archive output is caller-controlled. Preflighting before `removeItem`
-    /// keeps an existing in-tree file or directory intact when the request is
-    /// invalid, including when an ancestor resolves through a symbolic link.
+    /// Archive output is caller-controlled. Rejecting in-tree destinations and
+    /// directories before staging prevents replacement from mutating source
+    /// content, including when an ancestor resolves through a symbolic link.
     private static func validateArchiveDestination(
         _ archiveURL: URL,
         outside rootURL: URL,
@@ -459,6 +569,159 @@ package enum IPAArchive {
         }
     }
 
+    /// Commits a fully serialized sibling archive without exposing partial data.
+    ///
+    /// Native Foundation provides direct item replacement. WASI does not, so it
+    /// keeps the previous archive under a temporary sibling name until the new
+    /// archive occupies the destination.
+    private static func replaceArchive(
+        at archiveURL: URL,
+        with stagedArchiveURL: URL,
+        fileManager: FileManager
+    ) throws {
+        guard fileManager.fileExists(atPath: archiveURL.path) else {
+            try fileManager.moveItem(
+                at: stagedArchiveURL,
+                to: archiveURL
+            )
+            return
+        }
+
+        #if os(WASI)
+        let backupURL = archiveURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(
+                ".\(archiveURL.lastPathComponent).\(UUID().uuidString).backup"
+            )
+        try replaceArchive(
+            at: archiveURL,
+            with: stagedArchiveURL,
+            backingUpOriginalTo: backupURL,
+            moveItem: { sourceURL, destinationURL in
+                try fileManager.moveItem(
+                    at: sourceURL,
+                    to: destinationURL
+                )
+            },
+            removeItem: { url in
+                try fileManager.removeItem(at: url)
+            }
+        )
+        #else
+        _ = try fileManager.replaceItemAt(
+            archiveURL,
+            withItemAt: stagedArchiveURL
+        )
+        #endif
+    }
+
+    /// Replaces an archive on filesystems without direct item replacement.
+    ///
+    /// The original remains at `backupURL` until the staged archive reaches its
+    /// destination. A failed commit restores that backup; if restoration also
+    /// fails, the resulting error reports both failures and the retained backup
+    /// location. Injecting the file operations keeps this rollback path
+    /// independently verifiable without depending on filesystem permissions.
+    static func replaceArchive(
+        at archiveURL: URL,
+        with stagedArchiveURL: URL,
+        backingUpOriginalTo backupURL: URL,
+        moveItem: (URL, URL) throws -> Void,
+        removeItem: (URL) throws -> Void
+    ) throws {
+        try moveItem(archiveURL, backupURL)
+        do {
+            try moveItem(stagedArchiveURL, archiveURL)
+        } catch let commitError {
+            do {
+                try moveItem(backupURL, archiveURL)
+            } catch let restorationError {
+                throw RorkSignError.invalidArchive(
+                    "Archive replacement failed: \(commitError.localizedDescription). "
+                        + "The previous archive could not be restored from "
+                        + "\(backupURL.path): \(restorationError.localizedDescription)"
+                )
+            }
+            throw commitError
+        }
+        try? removeItem(backupURL)
+    }
+
+    /// Validates or creates the parent for an isolated extraction workspace.
+    ///
+    /// A caller-provided file path is rejected before extraction starts, while a
+    /// missing directory is created to preserve the CLI's temporary-path
+    /// behavior.
+    private static func workspaceRootDirectory(
+        _ temporaryDirectory: URL?
+    ) throws -> URL {
+        let fileManager = FileManager.default
+        let rootURL = temporaryDirectory ?? fileManager.temporaryDirectory
+        var isDirectory: ObjCBool = false
+        if fileManager.fileExists(
+            atPath: rootURL.path,
+            isDirectory: &isDirectory
+        ) {
+            guard isDirectory.boolValue else {
+                throw RorkSignError.invalidArchive(
+                    "Temporary path is not a directory: \(rootURL.path)."
+                )
+            }
+        } else {
+            do {
+                try fileManager.createDirectory(
+                    at: rootURL,
+                    withIntermediateDirectories: true
+                )
+            } catch {
+                throw RorkSignError.invalidArchive(
+                    "Temporary directory could not be created: \(error.localizedDescription)"
+                )
+            }
+        }
+        return rootURL
+    }
+
+    /// Returns the only top-level app bundle inside `Payload`.
+    ///
+    /// Signing and metadata extraction reject ambiguous payloads rather than
+    /// silently selecting one app from an invalid multi-app archive.
+    private static func payloadAppBundle(in archiveRootURL: URL) throws -> URL {
+        let fileManager = FileManager.default
+        let payloadURL = archiveRootURL.appendingPathComponent(
+            "Payload",
+            isDirectory: true
+        )
+        guard (try? fileManager.entry(at: payloadURL).kind) == .directory else {
+            throw RorkSignError.invalidArchive(
+                "IPA archive is missing a Payload directory."
+            )
+        }
+
+        let appBundles = try fileManager.entries(
+            in: payloadURL,
+            options: .skipsHiddenFiles
+        )
+            .filter { entry in
+                entry.kind == .directory
+                    && entry.url.pathExtension.lowercased() == "app"
+            }
+            .map(\.url)
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+        guard let appURL = appBundles.first else {
+            throw RorkSignError.invalidArchive(
+                "IPA archive has no app bundle in Payload."
+            )
+        }
+        guard appBundles.count == 1 else {
+            throw RorkSignError.invalidArchive(
+                "IPA archive contains multiple app bundles in Payload."
+            )
+        }
+        return appURL
+    }
+
     /// Reports whether `candidateURL` is equal to or below `rootURL`.
     private static func isSameOrDescendant(
         _ candidateURL: URL,
@@ -492,9 +755,9 @@ package enum IPAArchive {
     private static func restoreFileMetadata(
         from entry: Zip.FileHeader,
         to url: URL,
-        metadataBehavior: ExtractedMetadataBehavior
+        metadataRestoration: MetadataRestoration
     ) throws {
-        guard metadataBehavior == .restoreToFileSystem else {
+        guard metadataRestoration == .restore else {
             return
         }
 

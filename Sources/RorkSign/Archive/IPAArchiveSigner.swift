@@ -98,87 +98,32 @@ enum IPAArchiveSigner {
         temporaryDirectory: URL?,
         signBundle: (URL) throws -> BundleSigningReport
     ) throws -> IPAArchiveSigningReport {
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: archiveURL.path) else {
-            throw RorkSignError.invalidArchive("IPA archive does not exist: \(archiveURL.path).")
-        }
-
-        let workspaceRoot = try workspaceRootDirectory(temporaryDirectory)
-        let workspace = workspaceRoot
-            .appendingPathComponent("rork-sign-ipa-\(UUID().uuidString)", isDirectory: true)
-        let archiveRoot = workspace.appendingPathComponent("ArchiveRoot", isDirectory: true)
-        defer {
-            try? fileManager.removeItem(at: workspace)
-        }
-
-        let extractedArchive: IPAArchive.Contents
-        do {
-            try fileManager.createDirectory(
-                at: archiveRoot,
-                withIntermediateDirectories: true
+        try IPAArchive.withExtractedPayloadApp(
+            from: archiveURL,
+            temporaryDirectory: temporaryDirectory
+        ) { payload in
+            let bundleReport = try signBundle(payload.appBundleURL)
+            let report = try reportForArchive(
+                outputURL: outputURL,
+                archiveRoot: payload.archiveRootURL,
+                appURL: payload.appBundleURL,
+                bundleReport: bundleReport
             )
-            extractedArchive = try IPAArchive.extract(
-                at: archiveURL,
-                to: archiveRoot
-            )
-        } catch let error as RorkSignError {
-            throw error
-        } catch {
-            throw RorkSignError.invalidArchive(
-                "IPA archive could not be extracted: \(error.localizedDescription)"
-            )
-        }
 
-        let appURL = try payloadAppBundle(in: archiveRoot)
-        let bundleReport = try signBundle(appURL)
-        let report = try reportForArchive(
-            outputURL: outputURL,
-            archiveRoot: archiveRoot,
-            appURL: appURL,
-            bundleReport: bundleReport
-        )
-
-        do {
-            try IPAArchive.write(
-                contentsOf: archiveRoot,
-                to: outputURL,
-                compressionMode: archiveCompressionMode,
-                preserving: extractedArchive
-            )
-        } catch {
-            try? fileManager.removeItem(at: outputURL)
-            throw RorkSignError.invalidArchive("Signed IPA archive could not be written: \(error.localizedDescription)")
-        }
-
-        return report
-    }
-
-    /// Returns the only top-level app bundle inside `Payload`.
-    private static func payloadAppBundle(in archiveRoot: URL) throws -> URL {
-        let payloadURL = archiveRoot.appendingPathComponent("Payload", isDirectory: true)
-        guard (try? FileManager.default.entry(at: payloadURL).kind) == .directory else {
-            throw RorkSignError.invalidArchive("IPA archive is missing a Payload directory.")
-        }
-
-        let payloadEntries = try FileManager.default.entries(
-            in: payloadURL,
-            options: .skipsHiddenFiles
-        )
-        let appBundles = payloadEntries
-            .filter { entry in
-                entry.kind == .directory
-                    && entry.url.pathExtension.lowercased() == "app"
+            do {
+                try IPAArchive.write(
+                    contentsOf: payload.archiveRootURL,
+                    to: outputURL,
+                    compressionMode: archiveCompressionMode,
+                    preservingMetadataFrom: payload.archiveMetadata
+                )
+            } catch {
+                throw RorkSignError.invalidArchive(
+                    "Signed IPA archive could not be written: \(error.localizedDescription)"
+                )
             }
-            .map(\.url)
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-
-        guard let appURL = appBundles.first else {
-            throw RorkSignError.invalidArchive("IPA archive has no app bundle in Payload.")
+            return report
         }
-        guard appBundles.count == 1 else {
-            throw RorkSignError.invalidArchive("IPA archive contains multiple app bundles in Payload.")
-        }
-        return appURL
     }
 
     /// Converts a bundle report to archive-relative paths before cleanup.
@@ -210,22 +155,4 @@ enum IPAArchiveSigner {
         return String(path.dropFirst(rootPath.count + 1))
     }
 
-    /// Returns a usable parent directory for temporary archive workspaces.
-    private static func workspaceRootDirectory(_ temporaryDirectory: URL?) throws -> URL {
-        let fileManager = FileManager.default
-        let rootURL = temporaryDirectory ?? fileManager.temporaryDirectory
-        var isDirectory: ObjCBool = false
-        if fileManager.fileExists(atPath: rootURL.path, isDirectory: &isDirectory) {
-            guard isDirectory.boolValue else {
-                throw RorkSignError.invalidArchive("Temporary path is not a directory: \(rootURL.path).")
-            }
-        } else {
-            do {
-                try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
-            } catch {
-                throw RorkSignError.invalidArchive("Temporary directory could not be created: \(error.localizedDescription)")
-            }
-        }
-        return rootURL
-    }
 }
