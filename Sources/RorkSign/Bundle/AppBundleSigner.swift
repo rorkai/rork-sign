@@ -86,6 +86,17 @@ public struct AppSigningOptions: Equatable {
     /// Removes `UISupportedDevices` from the root app's `Info.plist`.
     public var removeUISupportedDevices: Bool
 
+    /// Files written relative to the root app bundle before signing begins.
+    ///
+    /// Use this for caller-owned resources that must be part of the signed app,
+    /// such as runtime credentials or configuration files. Parent directories
+    /// are created as needed, and an existing file at the same relative path is
+    /// replaced before resources are sealed. Paths must remain relative to the
+    /// root app bundle, cannot contain empty, `.` or `..` components, and cannot
+    /// replace bundle metadata, provisioning profiles, signatures, or Mach-O
+    /// files owned by the signing process.
+    public var additionalBundleFiles: [String: Data]
+
     /// Whether selected provisioning profiles are embedded before resource sealing.
     ///
     /// This defaults to `true` because installable app outputs normally need an
@@ -135,6 +146,7 @@ public struct AppSigningOptions: Equatable {
         removeExtensions: Bool = false,
         removeWatchApps: Bool = false,
         removeUISupportedDevices: Bool = false,
+        additionalBundleFiles: [String: Data] = [:],
         embedProvisioningProfiles: Bool = true,
         dylibInjections: [BundleDylibInjection] = [],
         dylibLoadCommandsToRemove: [String] = [],
@@ -156,6 +168,7 @@ public struct AppSigningOptions: Equatable {
         self.removeExtensions = removeExtensions
         self.removeWatchApps = removeWatchApps
         self.removeUISupportedDevices = removeUISupportedDevices
+        self.additionalBundleFiles = additionalBundleFiles
         self.embedProvisioningProfiles = embedProvisioningProfiles
         self.dylibInjections = dylibInjections
         self.dylibLoadCommandsToRemove = dylibLoadCommandsToRemove
@@ -183,6 +196,7 @@ public struct AppSigningOptions: Equatable {
             && lhs.removeExtensions == rhs.removeExtensions
             && lhs.removeWatchApps == rhs.removeWatchApps
             && lhs.removeUISupportedDevices == rhs.removeUISupportedDevices
+            && lhs.additionalBundleFiles == rhs.additionalBundleFiles
             && lhs.embedProvisioningProfiles == rhs.embedProvisioningProfiles
             && lhs.dylibInjections == rhs.dylibInjections
             && lhs.dylibLoadCommandsToRemove == rhs.dylibLoadCommandsToRemove
@@ -227,6 +241,10 @@ enum AppBundleSigner {
         )
     }
 
+    /// Builds and validates provisioning inputs before bundle mutation.
+    ///
+    /// Team and certificate mismatches must fail before identifiers, resources,
+    /// or caller-owned files are rewritten.
     private static func provisioningAssets(
         options: AppSigningOptions,
         identity: SigningIdentity?
@@ -245,7 +263,13 @@ enum AppBundleSigner {
         options: AppSigningOptions,
         profiles: AppProvisioningAssets
     ) throws -> BundleSigningOptions {
-        let replacementIdentifier = try BundleIdentifier.normalize(options.bundleIdentifier)
+        let replacementIdentifier = try BundleIdentifier.normalize(
+            options.bundleIdentifier
+        )
+        try AdditionalBundleFileWriter.write(
+            options.additionalBundleFiles,
+            to: bundleURL
+        )
         let rewrittenBundles = try AppBundleIdentityRewriter.rewrite(
             rootBundleURL: bundleURL,
             replacementBundleIdentifier: replacementIdentifier,
@@ -297,6 +321,217 @@ enum AppBundleSigner {
             dylibLoadCommandsToRemove: options.dylibLoadCommandsToRemove,
             signingCache: options.signingCache,
             diagnostics: options.diagnostics
+        )
+    }
+}
+
+/// Writes caller-owned resources before app metadata and signatures are derived.
+///
+/// Every destination is validated before the first write so a malformed path
+/// cannot leave an otherwise valid app bundle partially updated.
+private enum AdditionalBundleFileWriter {
+    /// One validated write that can be applied after the complete set is safe.
+    private struct PendingFile {
+        let relativePath: String
+        let components: [String]
+        let url: URL
+        let data: Data
+    }
+
+    /// Validates and writes files relative to `rootBundleURL`.
+    static func write(
+        _ filesByRelativePath: [String: Data],
+        to rootBundleURL: URL
+    ) throws {
+        let files = try filesByRelativePath
+            .sorted { $0.key < $1.key }
+            .map { relativePath, data in
+                try pendingFile(
+                    at: relativePath,
+                    data: data,
+                    in: rootBundleURL
+                )
+            }
+        try validatePathConflicts(in: files)
+        for file in files {
+            try validateExistingPath(
+                for: file,
+                in: rootBundleURL
+            )
+        }
+        try validateCallerOwnedDestinations(in: files)
+
+        for file in files {
+            try FileManager.default.createDirectory(
+                at: file.url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try file.data.writeReplacingItem(at: file.url)
+        }
+    }
+
+    /// Prevents resource injection from replacing inputs and outputs controlled
+    /// by bundle signing.
+    private static func validateCallerOwnedDestinations(
+        in files: [PendingFile]
+    ) throws {
+        for file in files {
+            let normalizedComponents = file.components.map {
+                $0.lowercased()
+            }
+            let finalComponent = normalizedComponents.last
+            if normalizedComponents.contains("_codesignature")
+                || finalComponent == "info.plist"
+                || finalComponent == "embedded.mobileprovision"
+            {
+                throw signerOwnedPathError(file.relativePath)
+            }
+            if FileManager.default.fileExists(atPath: file.url.path),
+               try MachOFile.isMachO(at: file.url)
+            {
+                throw signerOwnedPathError(file.relativePath)
+            }
+        }
+    }
+
+    /// Resolves one lexical path before inspecting the existing filesystem.
+    private static func pendingFile(
+        at relativePath: String,
+        data: Data,
+        in rootBundleURL: URL
+    ) throws -> PendingFile {
+        let components = relativePath.split(
+            separator: "/",
+            omittingEmptySubsequences: false
+        ).map(String.init)
+        guard
+            !relativePath.isEmpty,
+            !relativePath.hasPrefix("/"),
+            !relativePath.contains("\\"),
+            !relativePath.contains("\0"),
+            components.allSatisfy({
+                !$0.isEmpty && $0 != "." && $0 != ".."
+            })
+        else {
+            throw invalidPath(relativePath)
+        }
+
+        let destinationURL = components.reduce(rootBundleURL) {
+            $0.appendingPathComponent($1)
+        }
+        let rootPath = rootBundleURL.standardizedFileURL.path
+        let destinationPath = destinationURL.standardizedFileURL.path
+        guard destinationPath.hasPrefix(rootPath + "/") else {
+            throw invalidPath(relativePath)
+        }
+        return PendingFile(
+            relativePath: relativePath,
+            components: components,
+            url: destinationURL,
+            data: data
+        )
+    }
+
+    /// Rejects a requested file that is also an ancestor of another write.
+    ///
+    /// Without this preflight, dictionary iteration order could create a file
+    /// where another entry needs a directory and leave the bundle partially
+    /// updated before the conflict surfaces.
+    private static func validatePathConflicts(
+        in files: [PendingFile]
+    ) throws {
+        var requestedPaths: Set<String> = []
+        for file in files {
+            let path = pathForComparison(file.components)
+            guard requestedPaths.insert(path).inserted else {
+                throw invalidPath(file.relativePath)
+            }
+        }
+
+        for file in files {
+            var ancestorComponents: [String] = []
+            for component in file.components.dropLast() {
+                ancestorComponents.append(component)
+                let ancestorPath = pathForComparison(ancestorComponents)
+                guard !requestedPaths.contains(ancestorPath) else {
+                    throw invalidPath(file.relativePath)
+                }
+            }
+        }
+    }
+
+    /// Normalizes requested paths before comparing them as one write set.
+    ///
+    /// App bundles are commonly prepared on case-insensitive filesystems, so
+    /// allowing case-only differences would make preflight behavior depend on
+    /// the host that performs signing.
+    private static func pathForComparison(
+        _ components: [String]
+    ) -> String {
+        components.map { $0.lowercased() }.joined(separator: "/")
+    }
+
+    /// Rejects links and non-directory ancestors before any write begins.
+    ///
+    /// Lexical `..` validation is insufficient when an existing bundle entry
+    /// is a symbolic link. Inspecting every existing component prevents a
+    /// caller-owned resource from escaping the root through that link.
+    private static func validateExistingPath(
+        for file: PendingFile,
+        in rootBundleURL: URL
+    ) throws {
+        let fileManager = FileManager.default
+        var candidateURL = rootBundleURL
+
+        for (index, component) in file.components.enumerated() {
+            candidateURL.appendPathComponent(component)
+            if (try? fileManager.destinationOfSymbolicLink(
+                atPath: candidateURL.path
+            )) != nil {
+                throw invalidPath(file.relativePath)
+            }
+
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(
+                atPath: candidateURL.path,
+                isDirectory: &isDirectory
+            ) else {
+                continue
+            }
+
+            let kind: FileSystemEntry.Kind
+            do {
+                kind = try FileManager.default.entry(at: candidateURL).kind
+            } catch {
+                throw invalidPath(file.relativePath)
+            }
+
+            let isFinalComponent = index == file.components.count - 1
+            if isFinalComponent {
+                guard kind == .regularFile else {
+                    throw invalidPath(file.relativePath)
+                }
+            } else {
+                guard kind == .directory else {
+                    throw invalidPath(file.relativePath)
+                }
+            }
+        }
+    }
+
+    /// Produces one stable public error for every unsafe relative-path shape.
+    private static func invalidPath(_ relativePath: String) -> RorkSignError {
+        .invalidBundle(
+            "Additional bundle file path must remain inside the root app bundle: \(relativePath)."
+        )
+    }
+
+    /// Produces one stable public error for attempts to replace signing inputs.
+    private static func signerOwnedPathError(
+        _ relativePath: String
+    ) -> RorkSignError {
+        .invalidBundle(
+            "Additional bundle file path is owned by the signing process: \(relativePath)."
         )
     }
 }
@@ -522,28 +757,29 @@ private enum AppBundleIdentityRewriter {
     /// Finds nested `.app` and `.appex` bundles whose identifiers may need to
     /// follow the rewritten root app identifier.
     private static func nestedRewritableBundles(in rootBundleURL: URL) throws -> [URL] {
-        let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey]
-        guard let enumerator = FileManager.default.enumerator(
-            at: rootBundleURL,
-            includingPropertiesForKeys: Array(resourceKeys),
-            options: []
-        ) else {
-            throw RorkSignError.invalidBundle("Unable to enumerate bundle: \(rootBundleURL.path).")
-        }
-
         var bundles: [URL] = []
-        for case let url as URL in enumerator {
-            guard try relativePath(for: url, under: rootBundleURL) != "Info.plist" else {
-                continue
+        try FileManager.default.enumerateDescendants(of: rootBundleURL) { entry in
+            guard
+                try relativePath(for: entry.url, under: rootBundleURL)
+                    != "Info.plist"
+            else {
+                return .visitDescendants
             }
-            guard (try? url.resourceValues(forKeys: resourceKeys).isDirectory) == true else {
-                continue
+            guard entry.kind == .directory else {
+                return .visitDescendants
             }
-            guard isProvisionedBundle(url),
-                  FileManager.default.fileExists(atPath: url.appendingPathComponent("Info.plist").path) else {
-                continue
+            guard
+                isProvisionedBundle(entry.url),
+                FileManager.default.fileExists(
+                    atPath: entry.url
+                        .appendingPathComponent("Info.plist")
+                        .path
+                )
+            else {
+                return .visitDescendants
             }
-            bundles.append(url)
+            bundles.append(entry.url)
+            return .visitDescendants
         }
         return bundles.sorted { $0.path < $1.path }
     }
@@ -702,6 +938,11 @@ private enum AppBundleContentPruner {
 
 /// Applies root-only `Info.plist` mutations before resources are sealed.
 private enum AppRootInfoRewriter {
+    /// Limits caller-supplied metadata changes to the host app.
+    ///
+    /// Nested bundle identifiers and profiles are rewritten by their dedicated
+    /// signing paths, so applying these options recursively would overwrite
+    /// extension-owned metadata.
     static func apply(options: AppSigningOptions, info: inout MutableInfoPlist) throws {
         if let displayName = nonEmptyTrimmed(options.displayName) {
             info.setString(displayName, forKey: "CFBundleName")
@@ -726,38 +967,42 @@ private enum AppRootInfoRewriter {
 
 /// Rewrites localized display-name strings when they are plist-backed files.
 private enum AppLocalizedNameRewriter {
+    /// Updates localizations that Foundation can decode as property lists.
+    ///
+    /// A bundle may contain strings files in other encodings or syntaxes.
+    /// Leaving those files untouched is safer than attempting a lossy textual
+    /// rewrite while the surrounding resources are being resealed.
     static func apply(displayName: String?, rootBundleURL: URL) throws {
         guard let displayName = nonEmptyTrimmed(displayName) else {
             return
         }
 
-        let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .isRegularFileKey]
-        guard let enumerator = FileManager.default.enumerator(
-            at: rootBundleURL,
-            includingPropertiesForKeys: Array(resourceKeys),
-            options: [.skipsHiddenFiles]
-        ) else {
-            throw RorkSignError.invalidBundle("Unable to enumerate bundle: \(rootBundleURL.path).")
-        }
-
-        for case let url as URL in enumerator {
-            let values = try url.resourceValues(forKeys: resourceKeys)
-            if values.isDirectory == true, url.pathExtension == "lproj" {
-                continue
+        try FileManager.default.enumerateDescendants(
+            of: rootBundleURL,
+            options: .skipsHiddenFiles
+        ) { entry in
+            if entry.kind == .directory, entry.url.pathExtension == "lproj" {
+                return .visitDescendants
             }
-            if values.isDirectory == true {
-                enumerator.skipDescendants()
-                continue
+            if entry.kind == .directory {
+                return .skipDescendants
             }
-            guard values.isRegularFile == true,
-                  url.lastPathComponent == "InfoPlist.strings",
-                  url.deletingLastPathComponent().pathExtension == "lproj" else {
-                continue
+            guard
+                entry.kind == .regularFile,
+                entry.url.lastPathComponent == "InfoPlist.strings",
+                entry.url.deletingLastPathComponent().pathExtension == "lproj"
+            else {
+                return .visitDescendants
             }
-            try rewriteStringsFile(at: url, displayName: displayName)
+            try rewriteStringsFile(
+                at: entry.url,
+                displayName: displayName
+            )
+            return .visitDescendants
         }
     }
 
+    /// Rewrites a decoded strings dictionary and preserves unsupported files.
     private static func rewriteStringsFile(at url: URL, displayName: String) throws {
         let data = try Data(contentsOf: url)
         guard let plist = try? PropertyListSerialization.propertyList(
@@ -772,12 +1017,11 @@ private enum AppLocalizedNameRewriter {
         }
         dictionary["CFBundleName"] = displayName
         dictionary["CFBundleDisplayName"] = displayName
-        let output = try PropertyListSerialization.data(
-            fromPropertyList: dictionary,
-            format: .xml,
-            options: 0
+        let output = try PropertyListWriter.data(
+            from: dictionary,
+            format: .xml
         )
-        try output.write(to: url, options: .atomic)
+        try output.writeReplacingItem(at: url)
     }
 }
 
@@ -967,13 +1211,16 @@ private struct MutableInfoPlist {
         )
     }
 
+    /// Persists the modified metadata through the shared plist boundary.
+    ///
+    /// The metadata remains open-ended while it is edited, so the writer
+    /// validates the dynamic value graph before Foundation serializes it.
     func write() throws {
-        let data = try PropertyListSerialization.data(
-            fromPropertyList: dictionary,
-            format: .xml,
-            options: 0
+        let data = try PropertyListWriter.data(
+            from: dictionary,
+            format: .xml
         )
-        try data.write(to: url, options: .atomic)
+        try data.writeReplacingItem(at: url)
     }
 
     private func value(forKeyPath keyPath: [String]) -> Any? {

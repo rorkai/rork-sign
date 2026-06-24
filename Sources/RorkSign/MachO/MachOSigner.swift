@@ -710,7 +710,7 @@ private func removeThinDylibLoadCommands(_ data: Data, matching paths: Set<Strin
     guard newCommandSize <= Int(header.commandSize) else {
         throw RorkSignError.invalidMachO("Mach-O load-command table is malformed.")
     }
-    guard keptRecords.count <= Int(UInt32.max) else {
+    guard UInt32(exactly: keptRecords.count) != nil else {
         throw RorkSignError.invalidMachO("Mach-O load-command table is too large.")
     }
 
@@ -750,7 +750,7 @@ private func makeDylibCommand(path: String, weak: Bool) throws -> Data {
     let pathBytes = Array(path.utf8)
     let rawSize = Constants.dylibCommandSize + pathBytes.count + 1
     let commandSize = Int(alignUp(UInt64(rawSize), alignment: 8))
-    guard commandSize <= Int(UInt32.max) else {
+    guard UInt32(exactly: commandSize) != nil else {
         throw RorkSignError.invalidMachO("Dylib load command is too large.")
     }
 
@@ -1098,9 +1098,15 @@ private func signThinMachO(_ data: Data, options: MachOSigningOptions) throws ->
         return max(signatureSize, requestedSignatureSize, existingSignatureSize, compatibleMinimumSize)
     }
 
+    /// Keeps `LC_CODE_SIGNATURE` and `__LINKEDIT` consistent with the signature
+    /// reservation used for the next signing pass.
+    ///
+    /// Exact-width checks prevent a valid 64-bit file offset from being
+    /// truncated when this code runs with 32-bit `Int` on WebAssembly.
     func writeSignatureLayout(signatureSize: Int) throws {
         let newLength = codeLimit + UInt64(signatureSize)
-        guard codeLimit <= UInt64(UInt32.max), signatureSize <= Int(UInt32.max) else {
+        guard UInt32(exactly: codeLimit) != nil,
+              UInt32(exactly: signatureSize) != nil else {
             throw RorkSignError.invalidMachO("Signed Mach-O is too large.")
         }
         try output.writeUInt32LE(UInt32(codeLimit), at: signatureCommandOffset + 8)
@@ -1200,9 +1206,15 @@ private func prepareThinMachOCMSCodeDirectories(
         max(signatureSize, Int(layout.codeSignatureDataSize), compatibleMinimumSize)
     }
 
+    /// Keeps `LC_CODE_SIGNATURE` and `__LINKEDIT` consistent with the ad-hoc
+    /// signature reservation used for the next signing pass.
+    ///
+    /// Exact-width checks prevent a valid 64-bit file offset from being
+    /// truncated when this code runs with 32-bit `Int` on WebAssembly.
     func writeSignatureLayout(signatureSize: Int) throws {
         let newLength = codeLimit + UInt64(signatureSize)
-        guard codeLimit <= UInt64(UInt32.max), signatureSize <= Int(UInt32.max) else {
+        guard UInt32(exactly: codeLimit) != nil,
+              UInt32(exactly: signatureSize) != nil else {
             throw RorkSignError.invalidMachO("Signed Mach-O is too large.")
         }
         try output.writeUInt32LE(UInt32(codeLimit), at: signatureCommandOffset + 8)
@@ -1377,7 +1389,10 @@ private func rebuildUniversalMachO(magic: UInt32, records: [FatArchRecord]) thro
         let alignment = UInt64(1) << alignPower
         nextOffset = alignUp(nextOffset, alignment: alignment)
 
-        guard fat64 || (nextOffset <= UInt64(UInt32.max) && rewrittenRecords[index].data.count <= Int(UInt32.max)) else {
+        guard fat64 || (
+            UInt32(exactly: nextOffset) != nil
+                && UInt32(exactly: rewrittenRecords[index].data.count) != nil
+        ) else {
             throw RorkSignError.invalidMachO("Signed universal Mach-O is too large for 32-bit fat headers.")
         }
 

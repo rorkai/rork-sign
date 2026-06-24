@@ -961,6 +961,12 @@ public final class AppSigningOptionsObjC: NSObject {
     /// Removes `UISupportedDevices` from the root app's `Info.plist`.
     @objc public var removeUISupportedDevices: Bool
 
+    /// Files written relative to the root app bundle before resources are sealed.
+    ///
+    /// Keys must be safe bundle-relative paths and values must be `NSData`.
+    /// Existing files at the same paths are replaced.
+    @objc public var additionalBundleFiles: NSDictionary
+
     /// Whether selected provisioning profiles should be embedded before sealing resources.
     @objc public var embedProvisioningProfiles: Bool
 
@@ -1023,6 +1029,7 @@ public final class AppSigningOptionsObjC: NSObject {
         removeExtensions = false
         removeWatchApps = false
         removeUISupportedDevices = false
+        additionalBundleFiles = [:]
         embedProvisioningProfiles = true
         dylibInjections = []
         dylibLoadCommandsToRemove = []
@@ -1054,6 +1061,10 @@ public final class AppSigningOptionsObjC: NSObject {
             removeExtensions: removeExtensions,
             removeWatchApps: removeWatchApps,
             removeUISupportedDevices: removeUISupportedDevices,
+            additionalBundleFiles: BridgeDictionaries.dataByStringKey(
+                additionalBundleFiles,
+                label: "additionalBundleFiles"
+            ),
             embedProvisioningProfiles: embedProvisioningProfiles,
             dylibInjections: dylibInjections.map(\.coreValue),
             dylibLoadCommandsToRemove: dylibLoadCommandsToRemove,

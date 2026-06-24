@@ -253,7 +253,9 @@ enum BundleSigner {
             )
             if options.embedProvisioningProfiles {
                 let embeddedProfileURL = bundle.url.appendingPathComponent("embedded.mobileprovision")
-                try provisioningProfile.write(to: embeddedProfileURL, options: .atomic)
+                try provisioningProfile.writeReplacingItem(
+                    at: embeddedProfileURL
+                )
                 context.embeddedProvisioningProfiles.append(embeddedProfileURL)
                 context.diagnostics.debug("embeddedProfile=\(embeddedProfileURL.path)")
             }
@@ -373,9 +375,26 @@ enum BundleSigner {
         originalAttributes attributes: [FileAttributeKey: Any]
     ) throws {
         try signed.write(to: url)
-        if let permissions = attributes[.posixPermissions] {
+        if let permissions = restorablePOSIXPermissions(in: attributes) {
             try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: url.path)
         }
+    }
+
+    /// Returns permissions that can be restored after rewriting an executable.
+    ///
+    /// WASI Foundation reports `0` when its filesystem cannot represent POSIX
+    /// permissions. Treating that sentinel as real metadata would make browser
+    /// signing fail while attempting an unsupported attribute update.
+    static func restorablePOSIXPermissions(
+        in attributes: [FileAttributeKey: Any]
+    ) -> NSNumber? {
+        guard
+            let permissions = attributes[.posixPermissions] as? NSNumber,
+            permissions.intValue != 0
+        else {
+            return nil
+        }
+        return permissions
     }
 
     /// Removes an existing embedded provisioning profile before sealing.
@@ -568,12 +587,11 @@ private struct HostedBundleSigningTransaction {
             var temporaryInfo = originalInfo
             temporaryInfo["CFBundleExecutable"] = stubExecutableName
             temporaryInfo["CFBundleIdentifier"] = hostBundleIdentifier
-            let temporaryInfoData = try PropertyListSerialization.data(
-                fromPropertyList: temporaryInfo,
-                format: .binary,
-                options: 0
+            let temporaryInfoData = try PropertyListWriter.data(
+                from: temporaryInfo,
+                format: .binary
             )
-            try temporaryInfoData.write(to: infoPlistURL, options: .atomic)
+            try temporaryInfoData.writeReplacingItem(at: infoPlistURL)
         } catch {
             try? transaction.restore()
             throw error
@@ -587,7 +605,7 @@ private struct HostedBundleSigningTransaction {
         let fileManager = FileManager.default
         var firstError: Error?
         do {
-            try originalInfoPlistData.write(to: infoPlistURL, options: .atomic)
+            try originalInfoPlistData.writeReplacingItem(at: infoPlistURL)
         } catch {
             firstError = error
         }
@@ -1158,69 +1176,59 @@ private enum BundleCodeScanner {
 
     /// Finds nested bundles without descending into their contents.
     static func nestedBundles(in bundleURL: URL) throws -> [URL] {
-        let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey]
-        guard let enumerator = FileManager.default.enumerator(
-            at: bundleURL,
-            includingPropertiesForKeys: Array(resourceKeys),
-            options: []
-        ) else {
-            throw RorkSignError.invalidBundle("Unable to enumerate bundle: \(bundleURL.path).")
-        }
-
         var bundles: [URL] = []
-        for case let url as URL in enumerator {
-            if shouldSkip(relativePath: try BundlePath.relativePath(for: url, under: bundleURL)) {
-                if isDirectory(url) {
-                    enumerator.skipDescendants()
-                }
-                continue
+        try FileManager.default.enumerateDescendants(of: bundleURL) { entry in
+            let relativePath = try BundlePath.relativePath(
+                for: entry.url,
+                under: bundleURL
+            )
+            if shouldSkip(relativePath: relativePath) {
+                return entry.kind == .directory
+                    ? .skipDescendants
+                    : .visitDescendants
             }
-            guard isDirectory(url), isNestedBundle(url) else {
-                continue
+            guard
+                entry.kind == .directory,
+                isNestedBundle(entry.url)
+            else {
+                return .visitDescendants
             }
-            bundles.append(url)
-            enumerator.skipDescendants()
+            bundles.append(entry.url)
+            return .skipDescendants
         }
         return bundles.sorted { $0.path < $1.path }
     }
 
     /// Finds loose Mach-O files owned by the current bundle.
     static func standaloneCodeFiles(in bundle: SigningBundle) throws -> [URL] {
-        let resourceKeys: Set<URLResourceKey> = [
-            .isDirectoryKey,
-            .isRegularFileKey,
-        ]
-        guard let enumerator = FileManager.default.enumerator(
-            at: bundle.url,
-            includingPropertiesForKeys: Array(resourceKeys),
-            options: []
-        ) else {
-            throw RorkSignError.invalidBundle("Unable to enumerate bundle: \(bundle.url.path).")
-        }
-
         var codeFiles: [URL] = []
-        for case let url as URL in enumerator {
-            let relativePath = try BundlePath.relativePath(for: url, under: bundle.url)
+        try FileManager.default.enumerateDescendants(of: bundle.url) { entry in
+            let relativePath = try BundlePath.relativePath(
+                for: entry.url,
+                under: bundle.url
+            )
             if shouldSkip(relativePath: relativePath) {
-                if isDirectory(url) {
-                    enumerator.skipDescendants()
-                }
-                continue
+                return entry.kind == .directory
+                    ? .skipDescendants
+                    : .visitDescendants
             }
-            if isDirectory(url), isNestedBundle(url) {
-                enumerator.skipDescendants()
-                continue
+            if entry.kind == .directory, isNestedBundle(entry.url) {
+                return .skipDescendants
             }
             if let executableURL = bundle.executableURL,
-               url.standardizedFileURL.path == executableURL.standardizedFileURL.path {
-                continue
+               entry.url.standardizedFileURL.path
+                == executableURL.standardizedFileURL.path {
+                return .visitDescendants
             }
 
-            let values = try url.resourceValues(forKeys: resourceKeys)
-            guard values.isRegularFile == true, try isMachO(url) else {
-                continue
+            guard
+                entry.kind == .regularFile,
+                try MachOFile.isMachO(at: entry.url)
+            else {
+                return .visitDescendants
             }
-            codeFiles.append(url)
+            codeFiles.append(entry.url)
+            return .visitDescendants
         }
         return codeFiles.sorted { $0.path < $1.path }
     }
@@ -1240,14 +1248,13 @@ private enum BundleCodeScanner {
             || pathComponents.contains(where: { $0.hasSuffix(".dSYM") })
             || pathComponents.contains(where: { $0 == "_WatchKitStub" })
     }
+}
 
-    /// Reads a URL's directory resource flag without surfacing lookup failures.
-    private static func isDirectory(_ url: URL) -> Bool {
-        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-    }
-
-    /// Checks only the magic; full validation happens when the Mach-O is signed.
-    private static func isMachO(_ url: URL) throws -> Bool {
+/// Identifies Mach-O files without performing full structural validation.
+enum MachOFile {
+    /// Checks only the leading magic because complete validation belongs to the
+    /// signing or inspection operation that later consumes the file.
+    static func isMachO(at url: URL) throws -> Bool {
         let handle = try FileHandle(forReadingFrom: url)
         defer {
             try? handle.close()

@@ -3,6 +3,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
+#if !os(WASI)
 /// Options used when turning an `OCSPRequest` into an HTTP POST.
 ///
 /// RFC 6960 transport is intentionally kept separate from response validation.
@@ -251,3 +252,4 @@ public extension RorkSigner {
         )
     }
 }
+#endif

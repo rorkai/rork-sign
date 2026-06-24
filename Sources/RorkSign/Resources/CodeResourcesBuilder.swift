@@ -40,10 +40,9 @@ enum CodeResourcesBuilder {
             "rules": ResourceRules.legacy,
             "rules2": ResourceRules.modern,
         ]
-        return try PropertyListSerialization.data(
-            fromPropertyList: plist,
-            format: .xml,
-            options: 0
+        return try PropertyListWriter.data(
+            from: plist,
+            format: .xml
         )
     }
 
@@ -137,7 +136,7 @@ enum CodeResourcesBuilder {
 
         let outputURL = outputDirectory.appendingPathComponent("CodeResources")
         let data = try build(bundleURL: bundleURL)
-        try data.write(to: outputURL, options: .atomic)
+        try data.writeReplacingItem(at: outputURL)
         return outputURL
     }
 }
@@ -172,30 +171,33 @@ private enum NestedResourceBundleScanner {
         return String(path.dropFirst(rootPath.count + 1))
     }
 
+    /// Finds only immediate nested bundles below one signing root.
+    ///
+    /// The caller performs recursion after each nested bundle becomes its own
+    /// sealing boundary, preventing resources from being visited under both the
+    /// parent and child bundle.
     private static func directNestedBundles(in rootURL: URL) throws -> [URL] {
-        let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey]
-        guard let enumerator = FileManager.default.enumerator(
-            at: rootURL,
-            includingPropertiesForKeys: Array(resourceKeys),
-            options: []
-        ) else {
-            throw RorkSignError.resourceSealing("Unable to enumerate bundle: \(rootURL.path).")
-        }
-
         var bundles: [URL] = []
-        for case let url as URL in enumerator {
-            let relativePath = try relativePath(for: url, under: rootURL)
+        try FileManager.default.enumerateDescendants(of: rootURL) { entry in
+            let relativePath = try relativePath(
+                for: entry.url,
+                under: rootURL
+            )
             if shouldSkip(relativePath: relativePath) {
-                if isDirectory(url) {
-                    enumerator.skipDescendants()
-                }
-                continue
+                return entry.kind == .directory
+                    ? .skipDescendants
+                    : .visitDescendants
             }
-            guard isDirectory(url), nestedBundleExtensions.contains(url.pathExtension.lowercased()) else {
-                continue
+            guard
+                entry.kind == .directory,
+                nestedBundleExtensions.contains(
+                    entry.url.pathExtension.lowercased()
+                )
+            else {
+                return .visitDescendants
             }
-            bundles.append(url)
-            enumerator.skipDescendants()
+            bundles.append(entry.url)
+            return .skipDescendants
         }
         return bundles.sorted { $0.path < $1.path }
     }
@@ -208,10 +210,6 @@ private enum NestedResourceBundleScanner {
             || relativePath.hasPrefix("SC_Info/")
             || components.contains(where: { $0.hasSuffix(".dSYM") })
             || components.contains(where: { $0 == "_WatchKitStub" })
-    }
-
-    private static func isDirectory(_ url: URL) -> Bool {
-        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
 
     private static func normalizedFileSystemPath(_ path: String) -> String {
@@ -420,45 +418,46 @@ private struct BundleResource: Equatable {
 /// Walks the bundle once, classifies resource nodes, and returns a stable order
 /// so generated plist bytes do not depend on filesystem traversal order.
 private enum BundleResourceScanner {
+    /// Collects resources owned by this bundle's seal.
+    ///
+    /// Signature artifacts, executable code, and nested bundles are excluded
+    /// because they have separate signing or sealing contracts.
     static func resources(in bundle: BundleResourceBundle) throws -> [BundleResource] {
-        let resourceKeys: Set<URLResourceKey> = [
-            .isDirectoryKey,
-            .isRegularFileKey,
-            .isSymbolicLinkKey,
-        ]
-        guard let enumerator = FileManager.default.enumerator(
-            at: bundle.url,
-            includingPropertiesForKeys: Array(resourceKeys),
-            options: []
-        ) else {
-            throw RorkSignError.resourceSealing("Unable to enumerate bundle: \(bundle.url.path).")
-        }
-
         var resources: [BundleResource] = []
-        for case let url as URL in enumerator {
-            let relativePath = try relativePath(for: url, under: bundle.url)
+        try FileManager.default.enumerateDescendants(of: bundle.url) { entry in
+            let relativePath = try relativePath(
+                for: entry.url,
+                under: bundle.url
+            )
             if shouldSkip(relativePath: relativePath, bundle: bundle) {
-                if isDirectory(url) {
-                    enumerator.skipDescendants()
-                }
-                continue
+                return entry.kind == .directory
+                    ? .skipDescendants
+                    : .visitDescendants
             }
 
-            let values = try url.resourceValues(forKeys: resourceKeys)
-            if values.isDirectory == true {
-                continue
-            }
-
-            if values.isSymbolicLink == true {
-                let target = try FileManager.default.destinationOfSymbolicLink(atPath: url.path)
+            switch entry.kind {
+            case .directory:
+                return .visitDescendants
+            case .symbolicLink:
+                let target = try FileManager.default
+                    .destinationOfSymbolicLink(atPath: entry.url.path)
                 resources.append(
-                    BundleResource(relativePath: relativePath, url: url, kind: .symbolicLink(target))
+                    BundleResource(
+                        relativePath: relativePath,
+                        url: entry.url,
+                        kind: .symbolicLink(target)
+                    )
                 )
-            } else if values.isRegularFile == true {
-                resources.append(BundleResource(relativePath: relativePath, url: url, kind: .regularFile))
-            } else {
-                throw RorkSignError.resourceSealing("Unsupported bundle resource type: \(relativePath).")
+            case .regularFile:
+                resources.append(
+                    BundleResource(
+                        relativePath: relativePath,
+                        url: entry.url,
+                        kind: .regularFile
+                    )
+                )
             }
+            return .visitDescendants
         }
 
         return resources.sorted { $0.relativePath < $1.relativePath }
@@ -527,9 +526,6 @@ private enum BundleResourceScanner {
         return false
     }
 
-    private static func isDirectory(_ url: URL) -> Bool {
-        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-    }
 }
 
 /// Applies the same resource-rule decisions that are serialized into the

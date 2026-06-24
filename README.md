@@ -25,6 +25,7 @@ oracle for certificate and CMS interoperability.
 - [Examples](#examples)
 - [Certificate Checks](#certificate-checks)
 - [Swift API](#swift-api)
+- [Browser API](#browser-api)
 - [Objective-C API](#objective-c-api)
 - [ZSign Compatibility](#zsign-compatibility)
 - [Fast Re-signing](#fast-re-signing)
@@ -39,6 +40,9 @@ oracle for certificate and CMS interoperability.
   IPA, bundle, and Mach-O workflows.
 - **Swift-first library** - the `RorkSign` module exposes signing, inspection,
   resource sealing, and credential APIs directly to Swift applications.
+- **Browser signing** - the optional `RorkSignWeb` module accepts IPA,
+  certificate, private-key, and provisioning-profile bytes without exposing
+  native filesystem URLs to browser clients.
 - **Objective-C facade** - the `RorkSignObjC` module exposes the public signer
   surface to Objective-C and Objective-C++ with Foundation types.
 - **Mach-O signing** - ad-hoc and identity-backed signatures for thin and
@@ -75,10 +79,12 @@ The package currently declares:
 
 - macOS 13+
 - iOS 15+
+- WASI browser environments through the opt-in `RorkSignWeb` product
 
 The CLI is intended for macOS development and CI environments with a Swift
-toolchain. The library code is pure Swift and SwiftPM-based; additional platform
-support should be added with CI coverage before it is advertised as supported.
+toolchain. Native library products require Swift 6.0 or newer. `RorkSignWeb`
+requires Swift 6.3 or newer because the browser product is declared in the
+versioned Swift 6.3 package manifest.
 
 ## Build
 
@@ -483,6 +489,54 @@ let teamID = try RorkSigner.validatedTeamIdentifier(
 )
 ```
 
+## Browser API
+
+Swift 6.3 clients can add the package normally:
+
+```swift
+.package(
+    url: "https://github.com/rorkai/rork-sign.git",
+    from: "0.4.0"
+)
+```
+
+Then add the `RorkSignWeb` product to the browser target:
+
+```swift
+.product(name: "RorkSignWeb", package: "rork-sign")
+```
+
+The browser application supplies credential and archive bytes. The signer
+returns the completed IPA as `Data`, so private-key material and signed output
+can remain inside the local WASM process:
+
+```swift
+import Foundation
+import RorkSign
+import RorkSignWeb
+
+let identity = try SigningIdentity(
+    certificateData: certificateData,
+    privateKeyData: privateKeyData,
+    privateKeyPassword: password
+)
+let signedIPA = try RorkSigner.signIPA(
+    unsignedIPAData,
+    using: identity,
+    options: AppSigningOptions(
+        bundleIdentifier: "com.example.demo",
+        rootProvisioningProfile: provisioningProfileData
+    )
+)
+
+print(signedIPA.appBundlePath)
+```
+
+The embedding runtime must expose a writable WASI temporary directory because
+bundle signing operates on an isolated filesystem workspace before returning
+the final archive bytes. Network-backed OCSP fetching is unavailable on WASI;
+local certificate, profile, CMS, and signing operations remain available.
+
 ## Objective-C API
 
 Add the `RorkSignObjC` product when integrating from Objective-C or
@@ -726,7 +780,7 @@ authorize that certificate:
 - Additional certificates are preserved in generated CMS output, but the signer
   does not perform platform trust-store evaluation.
 - The CLI does not download CRLs or make Apple certificate-policy decisions.
-- `--zip_level` preserves the ZSign flag shape, but Swift ZIPFoundation exposes
+- `--zip_level` preserves the ZSign flag shape, but the ZIP backend exposes
   stored vs deflated output rather than exact numeric compression tuning.
 
 ## Development

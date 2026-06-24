@@ -189,10 +189,9 @@ enum EntitlementPlist {
     /// Serializes an entitlement dictionary as XML plist data.
     static func xml(from dictionary: [String: Any]) throws -> String {
         do {
-            let data = try PropertyListSerialization.data(
-                fromPropertyList: dictionary,
-                format: .xml,
-                options: 0
+            let data = try PropertyListWriter.data(
+                from: dictionary,
+                format: .xml
             )
             return String(decoding: data, as: UTF8.self)
         } catch {

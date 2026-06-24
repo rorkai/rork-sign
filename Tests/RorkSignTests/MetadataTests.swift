@@ -1,7 +1,6 @@
 import Foundation
-import RorkSign
+@testable import RorkSign
 import XCTest
-import ZIPFoundation
 
 final class MetadataTests: XCTestCase {
     func testBundleMetadataWritesZSignJSONAndLargestDeclaredIcon() throws {
@@ -41,6 +40,37 @@ final class MetadataTests: XCTestCase {
         XCTAssertEqual(json["AppVersion"] as? String, "1.2.3")
         XCTAssertEqual(json["AppBundleIdentifier"] as? String, "com.example.metadata")
         XCTAssertEqual(json["IconName"] as? String, report.iconName)
+    }
+
+    /// An unreadable optional icon candidate must not prevent metadata
+    /// extraction from selecting another declared icon.
+    func testIconSelectionSkipsCandidateWhoseSizeCannotBeRead() throws {
+        let fixture = try makeMetadataAppFixture()
+        let smallIconURL = fixture.appURL.appendingPathComponent(
+            "AppIcon20.png"
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.rootURL)
+        }
+
+        let iconURL = try AppMetadataExtractor.largestIcon(
+            in: fixture.appURL,
+            matching: ["AppIcon"],
+            fileSize: { url in
+                if url == fixture.largeIconURL {
+                    throw NSError(
+                        domain: "RorkSignTests",
+                        code: 1,
+                        userInfo: [
+                            NSLocalizedDescriptionKey: "size unavailable",
+                        ]
+                    )
+                }
+                return Int64(try Data(contentsOf: url).count)
+            }
+        )
+
+        XCTAssertEqual(iconURL, smallIconURL)
     }
 
     func testBundleMetadataWithoutOutputDirectoryDoesNotReturnUncopiedIconName() throws {
@@ -88,6 +118,8 @@ final class MetadataTests: XCTestCase {
         )
     }
 
+    /// Keeps archive-level identity separate from metadata read from the
+    /// extracted app bundle, including when a custom workspace is used.
     func testIPAMetadataUsesArchiveFilenameAndSize() throws {
         let fixture = try makeMetadataAppFixture()
         let archiveRoot = fixture.rootURL.appendingPathComponent("ArchiveRoot", isDirectory: true)
@@ -103,7 +135,7 @@ final class MetadataTests: XCTestCase {
         try FileManager.default.createDirectory(at: payloadURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: tempURL, withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: fixture.appURL, to: archivedAppURL)
-        try FileManager.default.zipItem(at: archiveRoot, to: archiveURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRoot, at: archiveURL)
 
         let report = try RorkSigner.extractIPAMetadata(
             at: archiveURL,

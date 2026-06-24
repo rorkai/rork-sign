@@ -1,7 +1,6 @@
 import Foundation
 import RorkSign
 import XCTest
-import ZIPFoundation
 
 final class CLITests: XCTestCase {
     func testDefaultCommandAcceptsZSignStyleAdHocMachOFlags() throws {
@@ -415,6 +414,8 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(metadata.appName, "Wrapped Fixture")
     }
 
+    /// Confirms archive structure, rather than the filename extension,
+    /// determines whether metadata extraction follows the IPA path.
     func testMetadataSubcommandTreatsZipLikeIPAArchive() throws {
         let fixture = try makeCLIFixture()
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
@@ -434,7 +435,7 @@ final class CLITests: XCTestCase {
             ],
             to: appURL.appendingPathComponent("Info.plist")
         )
-        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
 
         let result = try runRorkSign([
             "metadata",
@@ -451,6 +452,8 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(metadata.appName, "ZIP Fixture")
     }
 
+    /// Protects the CLI path that accepts an already extracted IPA tree and
+    /// still emits a sealed, compressed, installable archive.
     func testDefaultCommandSignsExtractedIPAFolderAndWritesOutputArchive() throws {
         let fixture = try makeCLIFixture()
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
@@ -482,7 +485,7 @@ final class CLITests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
 
         try FileManager.default.createDirectory(at: extractedURL, withIntermediateDirectories: true)
-        try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
+        try FileManager.default.extractIPAArchive(at: outputURL, to: extractedURL)
         let signedExecutableURL = extractedURL.appendingPathComponent("Payload/Host.app/Host")
         XCTAssertTrue(try RorkSigner.inspectMachO(Data(contentsOf: signedExecutableURL)).hasCodeSignature)
         XCTAssertTrue(try isArchiveEntryCompressed("Payload/Host.app/Host", in: outputURL))
@@ -493,6 +496,8 @@ final class CLITests: XCTestCase {
         )
     }
 
+    /// Verifies that requesting archive output for a bare app bundle adds the
+    /// required IPA container without changing the bundle-signing behavior.
     func testDefaultCommandSignsAppBundleAndWritesOutputArchive() throws {
         let fixture = try makeCLIFixture()
         let appURL = fixture.directory.appendingPathComponent("Host.app", isDirectory: true)
@@ -528,7 +533,7 @@ final class CLITests: XCTestCase {
         )
 
         try FileManager.default.createDirectory(at: extractedURL, withIntermediateDirectories: true)
-        try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
+        try FileManager.default.extractIPAArchive(at: outputURL, to: extractedURL)
         let archivedAppURL = extractedURL.appendingPathComponent("Payload/Host.app")
         XCTAssertTrue(try RorkSigner.inspectMachO(Data(contentsOf: archivedAppURL.appendingPathComponent("Host"))).hasCodeSignature)
         XCTAssertTrue(
@@ -683,7 +688,7 @@ final class CLITests: XCTestCase {
             applicationIdentifier: "TEAMID1234.*"
         )
         try profile.write(to: profileURL)
-        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
 
         let result = try runRorkSign([
             "-a",
@@ -700,7 +705,7 @@ final class CLITests: XCTestCase {
 
         XCTAssertEqual(result.status, 0, result.output)
         try FileManager.default.createDirectory(at: extractedURL, withIntermediateDirectories: true)
-        try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
+        try FileManager.default.extractIPAArchive(at: outputURL, to: extractedURL)
         let signedAppURL = extractedURL.appendingPathComponent("Payload/Host.app")
         let info = try cliPlistDictionary(at: signedAppURL.appendingPathComponent("Info.plist"))
 
@@ -813,7 +818,7 @@ final class CLITests: XCTestCase {
             options: [.sortedKeys]
         )
         .write(to: profileMapURL)
-        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
 
         let result = try runRorkSign([
             "sign", "ipa",
@@ -831,7 +836,7 @@ final class CLITests: XCTestCase {
             return
         }
         try FileManager.default.createDirectory(at: extractedURL, withIntermediateDirectories: true)
-        try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
+        try FileManager.default.extractIPAArchive(at: outputURL, to: extractedURL)
         let signedAppURL = extractedURL.appendingPathComponent("Payload/Host.app")
         let signedExtensionURL = signedAppURL.appendingPathComponent("PlugIns/Widget.appex")
         let signedFrameworkExecutableURL = signedAppURL.appendingPathComponent("Frameworks/Nested.framework/Nested")
@@ -926,7 +931,7 @@ final class CLITests: XCTestCase {
             ]
         )
         try profile.write(to: profileURL)
-        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
 
         let result = try runRorkSign([
             "-m", profileURL.path,
@@ -940,7 +945,7 @@ final class CLITests: XCTestCase {
             return
         }
         try FileManager.default.createDirectory(at: extractedURL, withIntermediateDirectories: true)
-        try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
+        try FileManager.default.extractIPAArchive(at: outputURL, to: extractedURL)
         let entitlements = try cliEntitlementDictionary(
             inSignedMachOAt: extractedURL.appendingPathComponent("Payload/Host.app/Host")
         )
@@ -1027,7 +1032,7 @@ final class CLITests: XCTestCase {
             options: [.sortedKeys]
         )
         .write(to: profileMapURL)
-        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
 
         let result = try runRorkSign([
             "sign", "ipa",
@@ -1045,7 +1050,7 @@ final class CLITests: XCTestCase {
             return
         }
         try FileManager.default.createDirectory(at: extractedURL, withIntermediateDirectories: true)
-        try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
+        try FileManager.default.extractIPAArchive(at: outputURL, to: extractedURL)
         let info = try cliPlistDictionary(
             at: extractedURL.appendingPathComponent("Payload/Host.app/Info.plist")
         )
@@ -1089,7 +1094,7 @@ final class CLITests: XCTestCase {
             ],
             to: entitlementsURL
         )
-        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
 
         let result = try runRorkSign([
             "-a",
@@ -1102,7 +1107,7 @@ final class CLITests: XCTestCase {
 
         XCTAssertEqual(result.status, 0, result.output)
         try FileManager.default.createDirectory(at: extractedURL, withIntermediateDirectories: true)
-        try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
+        try FileManager.default.extractIPAArchive(at: outputURL, to: extractedURL)
         let signedAppURL = extractedURL.appendingPathComponent("Payload/Host.app")
         let entitlements = try cliEntitlementDictionary(
             inSignedMachOAt: signedAppURL.appendingPathComponent("Host")
@@ -1141,7 +1146,7 @@ final class CLITests: XCTestCase {
             applicationIdentifier: "TEAMID1234.com.example.*"
         )
         try profile.write(to: profileURL)
-        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
 
         let result = try runRorkSign([
             "-a",
@@ -1153,7 +1158,7 @@ final class CLITests: XCTestCase {
 
         XCTAssertEqual(result.status, 0, result.output)
         try FileManager.default.createDirectory(at: extractedURL, withIntermediateDirectories: true)
-        try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
+        try FileManager.default.extractIPAArchive(at: outputURL, to: extractedURL)
         let signedAppURL = extractedURL.appendingPathComponent("Payload/Host.app")
         let info = try cliPlistDictionary(at: signedAppURL.appendingPathComponent("Info.plist"))
         XCTAssertEqual(info["CFBundleIdentifier"] as? String, "com.example.preserved")
@@ -1162,6 +1167,8 @@ final class CLITests: XCTestCase {
         XCTAssertTrue(try RorkSigner.inspectMachO(Data(contentsOf: signedAppURL.appendingPathComponent("Host"))).hasCodeSignature)
     }
 
+    /// Ensures caller-selected temporary storage is honored for archive work
+    /// instead of silently falling back to a system directory.
     func testDefaultCommandUsesConfiguredTempFolderForIPAInput() throws {
         let fixture = try makeCLIFixture()
         let archiveRootURL = fixture.directory.appendingPathComponent("ArchiveRoot", isDirectory: true)
@@ -1183,7 +1190,7 @@ final class CLITests: XCTestCase {
             to: appURL.appendingPathComponent("Info.plist")
         )
         try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
-        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
 
         let result = try runRorkSign([
             "-a",
@@ -1224,7 +1231,7 @@ final class CLITests: XCTestCase {
         )
         try Data("old embedded profile".utf8).write(to: appURL.appendingPathComponent("embedded.mobileprovision"))
         try profile.write(to: profileURL)
-        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
 
         let result = try runRorkSign([
             "-a",
@@ -1236,7 +1243,7 @@ final class CLITests: XCTestCase {
 
         XCTAssertEqual(result.status, 0, result.output)
         try FileManager.default.createDirectory(at: extractedURL, withIntermediateDirectories: true)
-        try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
+        try FileManager.default.extractIPAArchive(at: outputURL, to: extractedURL)
         let signedAppURL = extractedURL.appendingPathComponent("Payload/Host.app")
         XCTAssertFalse(
             FileManager.default.fileExists(
@@ -1283,7 +1290,7 @@ final class CLITests: XCTestCase {
             applicationIdentifier: "TEAMID1234.com.example.*"
         )
         try profile.write(to: profileURL)
-        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
 
         let result = try runRorkSign([
             "-a",
@@ -1294,7 +1301,7 @@ final class CLITests: XCTestCase {
 
         XCTAssertEqual(result.status, 0, result.output)
         try FileManager.default.createDirectory(at: extractedURL, withIntermediateDirectories: true)
-        try FileManager.default.unzipItem(at: outputURL, to: extractedURL)
+        try FileManager.default.extractIPAArchive(at: outputURL, to: extractedURL)
         let signedAppURL = extractedURL.appendingPathComponent("Payload/Host.app")
         XCTAssertEqual(
             try Data(contentsOf: signedAppURL.appendingPathComponent("embedded.mobileprovision")),
@@ -1327,7 +1334,7 @@ final class CLITests: XCTestCase {
             to: appURL.appendingPathComponent("Info.plist")
         )
         try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
-        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
 
         let result = try runRorkSign([
             "-a",
@@ -1373,7 +1380,7 @@ final class CLITests: XCTestCase {
             to: appURL.appendingPathComponent("Info.plist")
         )
         try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
-        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
         try writeFakeInstaller(
             to: installerDirectory.appendingPathComponent("ideviceinstaller"),
             logURL: installerLogURL
@@ -1673,7 +1680,7 @@ final class CLITests: XCTestCase {
             certificateDER: signing.identity.certificateDER
         )
         .write(to: appURL.appendingPathComponent("embedded.mobileprovision"))
-        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
 
         let result = try runRorkSign([
             "-C",
@@ -1824,7 +1831,7 @@ final class CLITests: XCTestCase {
             certificateDER: signing.identity.certificateDER
         )
         .write(to: profileURL)
-        try FileManager.default.zipItem(at: archiveRootURL, to: inputURL, shouldKeepParent: false)
+        try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
 
         let result = try runRorkSign([
             "-C",
@@ -2071,10 +2078,4 @@ private func cliProvisioningProfile(
         format: .xml,
         options: 0
     )
-}
-
-private func isArchiveEntryCompressed(_ path: String, in archiveURL: URL) throws -> Bool {
-    let archive = try Archive(url: archiveURL, accessMode: .read)
-    let entry = try XCTUnwrap(archive[path])
-    return entry.isCompressed
 }

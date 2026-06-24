@@ -1,6 +1,20 @@
 import Foundation
 
 extension Data {
+    /// Replaces one file using the strongest write guarantee the platform offers.
+    ///
+    /// Native Foundation can stage the bytes in a temporary sibling before
+    /// replacing the destination. WASI explicitly lacks that temporary-file
+    /// primitive, so browser signing writes directly inside its isolated,
+    /// disposable workspace.
+    func writeReplacingItem(at url: URL) throws {
+        #if os(WASI)
+        try write(to: url)
+        #else
+        try write(to: url, options: .atomic)
+        #endif
+    }
+
     /// Returns whether `offset..<offset + length` is wholly inside the buffer.
     ///
     /// Binary parsers should use this before every integer load so malformed

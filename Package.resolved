@@ -1,5 +1,5 @@
 {
-  "originHash" : "b1cd76aa13eb6e0e1e628050df35262b9fa1df04e0185c0185a87155836f859e",
+  "originHash" : "5166347ce74e79521483137097e2e1103099c9d5e5c8a98808ed899dadcca8d3",
   "pins" : [
     {
       "identity" : "swift-argument-parser",
@@ -22,10 +22,9 @@
     {
       "identity" : "swift-crypto",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-crypto.git",
+      "location" : "https://github.com/rorkai/swift-crypto.git",
       "state" : {
-        "revision" : "1b6b2e274e85105bfa155183145a1dcfd63331f1",
-        "version" : "4.5.0"
+        "revision" : "f171fca4c1718d685c495350fe9136a3fda6f262"
       }
     },
     {
@@ -38,12 +37,20 @@
       }
     },
     {
-      "identity" : "zipfoundation",
+      "identity" : "swift-system",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/weichsel/ZIPFoundation.git",
+      "location" : "https://github.com/apple/swift-system.git",
       "state" : {
-        "revision" : "22787ffb59de99e5dc1fbfe80b19c97a904ad48d",
-        "version" : "0.9.20"
+        "revision" : "7502b711c92a17741fa625d722b0ccbd595d8ed1",
+        "version" : "1.7.2"
+      }
+    },
+    {
+      "identity" : "swift-zip-archive",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rorkai/swift-zip-archive.git",
+      "state" : {
+        "revision" : "f43a4dbd56a5395ec59d9857e24b2537ece1854a"
       }
     }
   ],
