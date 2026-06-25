@@ -47,13 +47,69 @@ public extension RorkSigner {
         options: AppSigningOptions,
         archiveCompressionMode: ArchiveCompressionMode = .stored
     ) throws -> SignedIPA {
+        try signArchiveData(
+            ipaData,
+            inputFileName: "Input.ipa"
+        ) { inputURL, outputURL, workspace in
+            try RorkSigner.signIPA(
+                at: inputURL,
+                outputURL: outputURL,
+                identity: identity,
+                options: options,
+                archiveCompressionMode: archiveCompressionMode,
+                temporaryDirectory: workspace
+            )
+        }
+    }
+
+    /// Packages and signs an app-bundle ZIP as an installable IPA.
+    ///
+    /// The input archive must contain exactly one top-level `.app` directory.
+    /// RorkSign introduces the IPA's required `Payload` directory, preserves
+    /// compatible ZIP metadata, signs the app, and returns the completed IPA
+    /// without requiring callers to publish or construct an unsigned IPA first.
+    ///
+    /// This synchronous operation performs archive extraction, code signing,
+    /// and repacking. Browser applications should invoke it from a Web Worker so
+    /// signing does not block rendering or user input on the main thread.
+    static func signAppArchive(
+        _ archiveData: Data,
+        using identity: SigningIdentity,
+        options: AppSigningOptions,
+        archiveCompressionMode: ArchiveCompressionMode = .stored
+    ) throws -> SignedIPA {
+        try signArchiveData(
+            archiveData,
+            inputFileName: "Input.app.zip"
+        ) { inputURL, outputURL, workspace in
+            try RorkSigner.signAppArchive(
+                at: inputURL,
+                outputURL: outputURL,
+                identity: identity,
+                options: options,
+                archiveCompressionMode: archiveCompressionMode,
+                temporaryDirectory: workspace
+            )
+        }
+    }
+
+    /// Runs one data-based signing operation inside a scoped workspace.
+    private static func signArchiveData(
+        _ archiveData: Data,
+        inputFileName: String,
+        sign: (
+            _ inputURL: URL,
+            _ outputURL: URL,
+            _ workspace: URL
+        ) throws -> IPAArchiveSigningReport
+    ) throws -> SignedIPA {
         let fileManager = FileManager.default
         let workspace = fileManager.temporaryDirectory
             .appendingPathComponent(
                 "rork-sign-web-\(UUID().uuidString)",
                 isDirectory: true
             )
-        let inputURL = workspace.appendingPathComponent("Input.ipa")
+        let inputURL = workspace.appendingPathComponent(inputFileName)
         let outputURL = workspace.appendingPathComponent("Signed.ipa")
         defer {
             try? fileManager.removeItem(at: workspace)
@@ -63,15 +119,8 @@ public extension RorkSigner {
             at: workspace,
             withIntermediateDirectories: true
         )
-        try ipaData.write(to: inputURL)
-        let report = try RorkSigner.signIPA(
-            at: inputURL,
-            outputURL: outputURL,
-            identity: identity,
-            options: options,
-            archiveCompressionMode: archiveCompressionMode,
-            temporaryDirectory: workspace
-        )
+        try archiveData.write(to: inputURL)
+        let report = try sign(inputURL, outputURL, workspace)
 
         return SignedIPA(
             data: try Data(contentsOf: outputURL),

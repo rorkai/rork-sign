@@ -90,6 +90,33 @@ enum IPAArchiveSigner {
         }
     }
 
+    /// Packages and CMS-signs a root-level app-bundle archive as an IPA.
+    static func signAppArchiveWithIdentity(
+        archiveURL: URL,
+        outputURL: URL,
+        identity: SigningIdentity,
+        options: AppSigningOptions,
+        archiveCompressionMode: ArchiveCompressionMode,
+        temporaryDirectory: URL?
+    ) throws -> IPAArchiveSigningReport {
+        try IPAArchive.withExtractedAppArchive(
+            from: archiveURL,
+            temporaryDirectory: temporaryDirectory
+        ) { payload in
+            try signExtractedPayload(
+                payload,
+                outputURL: outputURL,
+                archiveCompressionMode: archiveCompressionMode
+            ) { appURL in
+                try AppBundleSigner.signWithIdentity(
+                    bundleURL: appURL,
+                    identity: identity,
+                    options: options
+                )
+            }
+        }
+    }
+
     /// Performs archive extraction/repacking around one bundle-signing closure.
     private static func signArchive(
         archiveURL: URL,
@@ -102,28 +129,43 @@ enum IPAArchiveSigner {
             from: archiveURL,
             temporaryDirectory: temporaryDirectory
         ) { payload in
-            let bundleReport = try signBundle(payload.appBundleURL)
-            let report = try reportForArchive(
+            try signExtractedPayload(
+                payload,
                 outputURL: outputURL,
-                archiveRoot: payload.archiveRootURL,
-                appURL: payload.appBundleURL,
-                bundleReport: bundleReport
+                archiveCompressionMode: archiveCompressionMode,
+                signBundle: signBundle
             )
-
-            do {
-                try IPAArchive.write(
-                    contentsOf: payload.archiveRootURL,
-                    to: outputURL,
-                    compressionMode: archiveCompressionMode,
-                    preservingMetadataFrom: payload.archiveMetadata
-                )
-            } catch {
-                throw RorkSignError.invalidArchive(
-                    "Signed IPA archive could not be written: \(error.localizedDescription)"
-                )
-            }
-            return report
         }
+    }
+
+    /// Signs one extracted app and serializes its complete IPA workspace.
+    private static func signExtractedPayload(
+        _ payload: IPAArchive.PayloadExtraction,
+        outputURL: URL,
+        archiveCompressionMode: ArchiveCompressionMode,
+        signBundle: (URL) throws -> BundleSigningReport
+    ) throws -> IPAArchiveSigningReport {
+        let bundleReport = try signBundle(payload.appBundleURL)
+        let report = try reportForArchive(
+            outputURL: outputURL,
+            archiveRoot: payload.archiveRootURL,
+            appURL: payload.appBundleURL,
+            bundleReport: bundleReport
+        )
+
+        do {
+            try IPAArchive.write(
+                contentsOf: payload.archiveRootURL,
+                to: outputURL,
+                compressionMode: archiveCompressionMode,
+                preservingMetadataFrom: payload.archiveMetadata
+            )
+        } catch {
+            throw RorkSignError.invalidArchive(
+                "Signed IPA archive could not be written: \(error.localizedDescription)"
+            )
+        }
+        return report
     }
 
     /// Converts a bundle report to archive-relative paths before cleanup.
