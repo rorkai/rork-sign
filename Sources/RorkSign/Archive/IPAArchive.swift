@@ -8,6 +8,45 @@ import ZipArchive
 /// Both paths share path validation and metadata handling so signing produces
 /// the same archive structure on every supported platform.
 package enum IPAArchive {
+    /// Filesystem layout expected after extracting one supported input archive.
+    private enum ArchiveLayout {
+        case ipa
+        case appBundle
+
+        /// User-facing archive name used in validation errors.
+        var name: String {
+            switch self {
+            case .ipa:
+                return "IPA"
+            case .appBundle:
+                return "App"
+            }
+        }
+
+        /// Directory that receives the input archive's top-level entries.
+        func extractionRoot(in archiveRootURL: URL) -> URL {
+            switch self {
+            case .ipa:
+                return archiveRootURL
+            case .appBundle:
+                return archiveRootURL.appendingPathComponent(
+                    "Payload",
+                    isDirectory: true
+                )
+            }
+        }
+
+        /// Reconciles input paths with their location in the final IPA.
+        func archiveMetadata(from extraction: Extraction) -> Extraction {
+            switch self {
+            case .ipa:
+                return extraction
+            case .appBundle:
+                return extraction.prefixingPaths(with: "Payload")
+            }
+        }
+    }
+
     /// Filesystem shape encoded by one ZIP entry.
     ///
     /// Preserved metadata remains valid only while the extracted entry keeps
@@ -64,6 +103,24 @@ package enum IPAArchive {
 
         /// Represents a directory tree that was not extracted from an archive.
         package static let empty = Self(entriesByPath: [:])
+
+        /// Returns metadata adjusted for entries moved below one new directory.
+        ///
+        /// App-bundle ZIPs store `App.app` at their root, while an IPA requires
+        /// the same tree below `Payload`. Rebasing the preserved paths keeps
+        /// executable and symbolic-link metadata attached to the corresponding
+        /// entries when the final IPA is written.
+        fileprivate func prefixingPaths(
+            with pathComponent: String
+        ) -> Self {
+            Self(
+                entriesByPath: Dictionary(
+                    uniqueKeysWithValues: entriesByPath.map { path, entry in
+                        ("\(pathComponent)/\(path)", entry)
+                    }
+                )
+            )
+        }
     }
 
     /// Extracts an IPA and records metadata needed when it is rebuilt.
@@ -115,10 +172,45 @@ package enum IPAArchive {
         temporaryDirectory: URL?,
         _ body: (PayloadExtraction) throws -> Result
     ) throws -> Result {
+        try withExtractedPayloadApp(
+            from: archiveURL,
+            layout: .ipa,
+            temporaryDirectory: temporaryDirectory,
+            body
+        )
+    }
+
+    /// Extracts an app-bundle ZIP into an IPA workspace and removes the
+    /// workspace after `body` returns.
+    ///
+    /// Published app archives place one `.app` directory at their root. The
+    /// temporary workspace introduces the required `Payload` directory before
+    /// signing so the resulting archive is a valid IPA without an intermediate
+    /// repacking pass.
+    package static func withExtractedAppArchive<Result>(
+        from archiveURL: URL,
+        temporaryDirectory: URL?,
+        _ body: (PayloadExtraction) throws -> Result
+    ) throws -> Result {
+        try withExtractedPayloadApp(
+            from: archiveURL,
+            layout: .appBundle,
+            temporaryDirectory: temporaryDirectory,
+            body
+        )
+    }
+
+    /// Extracts one supported archive layout into a scoped IPA workspace.
+    private static func withExtractedPayloadApp<Result>(
+        from archiveURL: URL,
+        layout: ArchiveLayout,
+        temporaryDirectory: URL?,
+        _ body: (PayloadExtraction) throws -> Result
+    ) throws -> Result {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: archiveURL.path) else {
             throw RorkSignError.invalidArchive(
-                "IPA archive does not exist: \(archiveURL.path)."
+                "\(layout.name) archive does not exist: \(archiveURL.path)."
             )
         }
 
@@ -131,6 +223,9 @@ package enum IPAArchive {
             "ArchiveRoot",
             isDirectory: true
         )
+        let extractionRootURL = layout.extractionRoot(
+            in: archiveRootURL
+        )
         defer {
             try? fileManager.removeItem(at: workspaceURL)
         }
@@ -138,18 +233,18 @@ package enum IPAArchive {
         let extraction: Extraction
         do {
             try fileManager.createDirectory(
-                at: archiveRootURL,
+                at: extractionRootURL,
                 withIntermediateDirectories: true
             )
             extraction = try extract(
                 at: archiveURL,
-                to: archiveRootURL
+                to: extractionRootURL
             )
         } catch let error as RorkSignError {
             throw error
         } catch {
             throw RorkSignError.invalidArchive(
-                "IPA archive could not be extracted: \(error.localizedDescription)"
+                "\(layout.name) archive could not be extracted: \(error.localizedDescription)"
             )
         }
 
@@ -157,7 +252,7 @@ package enum IPAArchive {
             PayloadExtraction(
                 archiveRootURL: archiveRootURL,
                 appBundleURL: try payloadAppBundle(in: archiveRootURL),
-                archiveMetadata: extraction
+                archiveMetadata: layout.archiveMetadata(from: extraction)
             )
         )
     }
@@ -199,15 +294,18 @@ package enum IPAArchive {
                 at: destinationURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            let bytes = try reader.readFile(entry.header)
             if entry.kind == .symbolicLink {
                 try createSymbolicLink(
                     at: destinationURL,
                     archivePath: entry.relativePath,
-                    bytes: bytes
+                    bytes: try reader.readFile(entry.header)
                 )
             } else {
-                try Data(bytes).write(to: destinationURL)
+                try writeRegularFile(
+                    entry.header,
+                    to: destinationURL,
+                    using: reader
+                )
                 try restoreFileMetadata(
                     from: entry.header,
                     to: destinationURL,
@@ -227,6 +325,42 @@ package enum IPAArchive {
         }
 
         return Extraction(entriesByPath: entriesByPath)
+    }
+
+    /// Streams one regular ZIP entry to disk with bounded memory use.
+    ///
+    /// Browser-hosted app archives may contain large executables and assets.
+    /// Writing decompressed chunks directly to the workspace avoids retaining a
+    /// second complete copy of each entry in WASM linear memory.
+    private static func writeRegularFile<Storage: ZipReadableStorage>(
+        _ entry: Zip.FileHeader,
+        to destinationURL: URL,
+        using reader: ZipArchiveReader<Storage>
+    ) throws {
+        let fileManager = FileManager.default
+        guard fileManager.createFile(
+            atPath: destinationURL.path,
+            contents: nil
+        ) else {
+            throw RorkSignError.invalidArchive(
+                "Archive entry could not be created: \(destinationURL.path)."
+            )
+        }
+
+        let fileHandle = try FileHandle(forWritingTo: destinationURL)
+        do {
+            try reader.readFile(
+                entry,
+                bufferSize: ZipArchiveExtractionOptions.defaultBufferSize
+            ) { bytes in
+                try fileHandle.write(contentsOf: Data(bytes))
+            }
+            try fileHandle.close()
+        } catch {
+            try? fileHandle.close()
+            try? fileManager.removeItem(at: destinationURL)
+            throw error
+        }
     }
 
     /// Validates archive paths and their hierarchy before extraction mutates disk.

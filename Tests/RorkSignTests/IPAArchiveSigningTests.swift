@@ -321,6 +321,71 @@ final class IPAArchiveSigningTests: XCTestCase {
         XCTAssertEqual(infoPlist["UIDeviceFamily"] as? [Int], [1, 2])
     }
 
+    /// Proves that browser clients can consume a published app-bundle ZIP
+    /// directly instead of requiring a separately published unsigned IPA.
+    func testWebSignerPackagesAndSignsAppArchive() throws {
+        let signing = try OpenSSLFixture()
+        defer {
+            signing.remove()
+        }
+        let fixture = try makeIPAArchiveFixture(
+            bundleIdentifier: "app.rork.archive.web",
+            includeSymbolicLink: true
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.rootURL)
+        }
+        let appArchiveURL = fixture.rootURL.appendingPathComponent(
+            "Host.app.zip"
+        )
+        try IPAArchive.write(
+            contentsOf: fixture.rootURL.appendingPathComponent(
+                "ArchiveRoot/Payload",
+                isDirectory: true
+            ),
+            to: appArchiveURL,
+            compressionMode: .deflated
+        )
+        let profile = try provisioningProfilePlist(
+            teamIdentifier: "TEAMID1234",
+            developerCertificates: [signing.identity.certificateDER],
+            entitlements: [
+                "application-identifier": "TEAMID1234.app.rork.archive.web",
+                "com.apple.developer.team-identifier": "TEAMID1234",
+            ]
+        )
+
+        let signedIPA = try RorkSigner.signAppArchive(
+            try Data(contentsOf: appArchiveURL),
+            using: signing.identity,
+            options: AppSigningOptions(
+                bundleIdentifier: "app.rork.archive.web",
+                rootProvisioningProfile: profile
+            )
+        )
+
+        XCTAssertEqual(signedIPA.appBundlePath, "Payload/Host.app")
+        let reader = try ZipArchiveReader(buffer: [UInt8](signedIPA.data))
+        let entries = try reader.readDirectory()
+        let executable = try XCTUnwrap(
+            entries.first { $0.filename.string == "Payload/Host.app/Host" }
+        )
+        XCTAssertTrue(
+            executable.externalAttributes.unixAttributes.filePermissions
+                .contains(.ownerExecute)
+        )
+        let symbolicLink = try XCTUnwrap(
+            entries.first {
+                $0.filename.string == "Payload/Host.app/asset-link"
+            }
+        )
+        XCTAssertTrue(
+            symbolicLink.externalAttributes.unixAttributes.contains(
+                .isSymbolicLink
+            )
+        )
+    }
+
     /// Ensures explicit empty ZIP directories survive the filesystem round trip
     /// even though they contribute no file data.
     func testWebSignerPreservesEmptyDirectories() throws {

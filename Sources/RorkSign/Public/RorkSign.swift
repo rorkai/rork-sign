@@ -3086,6 +3086,30 @@ public enum RorkSigner {
         )
     }
 
+    /// Packages a root-level app-bundle ZIP and signs it as an IPA.
+    ///
+    /// This package-only entry point supports the browser facade without
+    /// expanding the filesystem-based public API. Native callers should keep
+    /// using the existing IPA signing overloads.
+    @discardableResult
+    package static func signAppArchive(
+        at archiveURL: URL,
+        outputURL: URL,
+        identity: SigningIdentity,
+        options: AppSigningOptions,
+        archiveCompressionMode: ArchiveCompressionMode = .stored,
+        temporaryDirectory: URL? = nil
+    ) throws -> IPAArchiveSigningReport {
+        try IPAArchiveSigner.signAppArchiveWithIdentity(
+            archiveURL: archiveURL,
+            outputURL: outputURL,
+            identity: identity,
+            options: options,
+            archiveCompressionMode: archiveCompressionMode,
+            temporaryDirectory: temporaryDirectory
+        )
+    }
+
     /// Rewrites and signs the app inside an IPA with a profile/credential pair.
     ///
     /// This is the archive equivalent of
