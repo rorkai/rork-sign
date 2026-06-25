@@ -384,6 +384,50 @@ final class IPAArchiveSigningTests: XCTestCase {
                 .isSymbolicLink
             )
         )
+        XCTAssertEqual(
+            String(decoding: try reader.readFile(symbolicLink), as: UTF8.self),
+            "asset.txt"
+        )
+    }
+
+    /// Rejects archives that would place unrelated files beside the app in the
+    /// IPA's Payload directory.
+    func testAppArchiveRejectsTopLevelSiblingEntries() throws {
+        let fixture = try makeIPAArchiveFixture(
+            bundleIdentifier: "app.rork.archive.sibling"
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.rootURL)
+        }
+        let payloadURL = fixture.rootURL.appendingPathComponent(
+            "ArchiveRoot/Payload",
+            isDirectory: true
+        )
+        try Data("not part of the app bundle".utf8).write(
+            to: payloadURL.appendingPathComponent("README.txt")
+        )
+        let appArchiveURL = fixture.rootURL.appendingPathComponent(
+            "Invalid.app.zip"
+        )
+        try IPAArchive.write(
+            contentsOf: payloadURL,
+            to: appArchiveURL,
+            compressionMode: .stored
+        )
+
+        XCTAssertThrowsError(
+            try IPAArchive.withExtractedAppArchive(
+                from: appArchiveURL,
+                temporaryDirectory: nil
+            ) { _ in }
+        ) { error in
+            XCTAssertEqual(
+                error as? RorkSignError,
+                .invalidArchive(
+                    "App archive must contain exactly one top-level .app directory."
+                )
+            )
+        }
     }
 
     /// Ensures explicit empty ZIP directories survive the filesystem round trip

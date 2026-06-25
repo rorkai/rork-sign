@@ -248,13 +248,50 @@ package enum IPAArchive {
             )
         }
 
+        let appBundleURL = try appBundleURL(
+            in: archiveRootURL,
+            extractedAt: extractionRootURL,
+            layout: layout,
+            using: fileManager
+        )
+
         return try body(
             PayloadExtraction(
                 archiveRootURL: archiveRootURL,
-                appBundleURL: try payloadAppBundle(in: archiveRootURL),
+                appBundleURL: appBundleURL,
                 archiveMetadata: layout.archiveMetadata(from: extraction)
             )
         )
+    }
+
+    /// Resolves the app while enforcing the selected input archive's contract.
+    ///
+    /// IPA files may contain other top-level directories outside `Payload`.
+    /// Published app archives are narrower: accepting siblings beside the app
+    /// would copy unrelated files into the final IPA's `Payload` directory.
+    private static func appBundleURL(
+        in archiveRootURL: URL,
+        extractedAt extractionRootURL: URL,
+        layout: ArchiveLayout,
+        using fileManager: FileManager
+    ) throws -> URL {
+        switch layout {
+        case .ipa:
+            return try payloadAppBundle(in: archiveRootURL)
+        case .appBundle:
+            let entries = try fileManager.entries(in: extractionRootURL)
+            guard
+                entries.count == 1,
+                let appBundle = entries.first,
+                appBundle.kind == .directory,
+                appBundle.url.pathExtension.lowercased() == "app"
+            else {
+                throw RorkSignError.invalidArchive(
+                    "App archive must contain exactly one top-level .app directory."
+                )
+            }
+            return appBundle.url
+        }
     }
 
     /// Extracts entries from one reader after its storage has been selected.
