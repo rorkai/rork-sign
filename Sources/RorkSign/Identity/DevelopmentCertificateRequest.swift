@@ -7,17 +7,23 @@ import Foundation
 
 /// A certificate signing request whose private key remains owned by this value.
 ///
-/// Create this value in the environment that will ultimately sign application
-/// bundles, then send only `pemRepresentation` to the certificate issuer. After
-/// the issuer returns a DER certificate, `makeSigningIdentity` verifies that
-/// the certificate contains this request's public key before making the private
-/// key available to RorkSign's signing pipeline.
+/// Create and retain this value in the environment that will ultimately sign
+/// application bundles, then send only `pemRepresentation` to the certificate
+/// issuer. The PEM representation contains no private key and cannot be used to
+/// reconstruct one. After the issuer returns a DER certificate,
+/// `makeSigningIdentity` verifies that the certificate contains this request's
+/// public key before making the private key available to the signing pipeline.
+/// Discarding this value before certificate issuance also discards the only
+/// reference to its private key.
 ///
 /// The request currently generates an RSA-2048 key because Apple development
 /// certificates use RSA identities. The private key is intentionally opaque and
 /// has no public serialization API.
 public struct DevelopmentCertificateRequest: Sendable {
-    /// PEM-encoded PKCS#10 request to submit to the certificate issuer.
+    /// PEM-encoded PKCS#10 request that can be sent to the certificate issuer.
+    ///
+    /// This representation contains the public key and request signature, but
+    /// not the private key retained by this value.
     public let pemRepresentation: String
 
     /// Opaque key retained until the issuer returns the matching certificate.
@@ -26,7 +32,11 @@ public struct DevelopmentCertificateRequest: Sendable {
     /// exporting it while the certificate request is in flight.
     private let privateKey: RSAPrivateSigningKey
 
-    /// Generates a new private key and a signed PKCS#10 request.
+    /// Generates a new private key and its signed PKCS#10 request.
+    ///
+    /// Retain the initialized value until the issuer returns a certificate.
+    /// Recreating a request, even with the same common name, generates a
+    /// different key and cannot complete the original issuance request.
     ///
     /// - Parameter commonName: Subject common name recorded in the request.
     /// - Throws: `RorkSignError.invalidSigningIdentity` when the common name is
@@ -112,7 +122,10 @@ public struct DevelopmentCertificateRequest: Sendable {
             let start = encoded.index(encoded.startIndex, offsetBy: offset)
             let end = encoded.index(
                 start,
-                offsetBy: min(64, encoded.distance(from: start, to: encoded.endIndex))
+                offsetBy: min(
+                    64,
+                    encoded.distance(from: start, to: encoded.endIndex)
+                )
             )
             return String(encoded[start..<end])
         }
