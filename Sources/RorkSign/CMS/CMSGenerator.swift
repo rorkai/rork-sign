@@ -383,16 +383,6 @@ private enum DER {
     }
 }
 
-/// Canonical ordering helpers for DER-encoded values.
-private extension Array where Element == Data {
-    /// Returns the encoded values in lexicographic byte order.
-    func sortedLexicographically() -> [Data] {
-        sorted { lhs, rhs in
-            lhs.lexicographicallyPrecedes(rhs)
-        }
-    }
-}
-
 /// Data slicing helpers used while constructing code-signing attributes.
 private extension Data {
     /// Returns the requested prefix as standalone `Data`.

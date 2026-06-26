@@ -135,6 +135,20 @@ enum SigningPrivateKey: Sendable {
         }
     }
 
+    /// PKCS#8 DER used when exporting the identity into a portable container.
+    var pkcs8DERRepresentation: Data {
+        switch self {
+        case .rsa(let key):
+            return key.pkcs8DERRepresentation
+        case .p256(let key):
+            return key.pkcs8DERRepresentation
+        case .p384(let key):
+            return key.pkcs8DERRepresentation
+        case .p521(let key):
+            return key.pkcs8DERRepresentation
+        }
+    }
+
     /// Signs the precomputed SHA-256 digest of the CMS signed-attribute set.
     func signature(for digest: SHA256.Digest) throws -> Data {
         switch self {
@@ -153,6 +167,11 @@ enum SigningPrivateKey: Sendable {
 /// Small wrapper around Swift Crypto's RSA private key type.
 struct RSAPrivateSigningKey: Sendable {
     private let privateKey: _RSA.Signing.PrivateKey
+
+    /// Generates the RSA-2048 key required by Apple development certificates.
+    init() throws {
+        self.privateKey = try _RSA.Signing.PrivateKey(keySize: .bits2048)
+    }
 
     init(derRepresentation: Data, password: String = "") throws {
         let candidate = try decryptedDERIfNeeded(
@@ -211,8 +230,14 @@ struct RSAPrivateSigningKey: Sendable {
         }
     }
 
+    /// SubjectPublicKeyInfo DER submitted in certificate signing requests.
     var publicKeyDERRepresentation: Data {
         privateKey.publicKey.derRepresentation
+    }
+
+    /// PKCS#8 DER used only when placing this opaque key into PKCS#12.
+    var pkcs8DERRepresentation: Data {
+        privateKey.pkcs8DERRepresentation
     }
 }
 
@@ -293,6 +318,11 @@ struct P256PrivateSigningKey: Sendable {
     var publicKeyDERRepresentation: Data {
         privateKey.publicKey.derRepresentation
     }
+
+    /// PKCS#8 DER used only when placing this opaque key into PKCS#12.
+    var pkcs8DERRepresentation: Data {
+        privateKey.pkcs8DERRepresentation
+    }
 }
 
 /// Small wrapper around Swift Crypto's P-384 signing key type.
@@ -372,6 +402,11 @@ struct P384PrivateSigningKey: Sendable {
     var publicKeyDERRepresentation: Data {
         privateKey.publicKey.derRepresentation
     }
+
+    /// PKCS#8 DER used only when placing this opaque key into PKCS#12.
+    var pkcs8DERRepresentation: Data {
+        privateKey.pkcs8DERRepresentation
+    }
 }
 
 /// Small wrapper around Swift Crypto's P-521 signing key type.
@@ -450,6 +485,11 @@ struct P521PrivateSigningKey: Sendable {
 
     var publicKeyDERRepresentation: Data {
         privateKey.publicKey.derRepresentation
+    }
+
+    /// PKCS#8 DER used only when placing this opaque key into PKCS#12.
+    var pkcs8DERRepresentation: Data {
+        privateKey.pkcs8DERRepresentation
     }
 }
 

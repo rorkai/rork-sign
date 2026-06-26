@@ -1023,6 +1023,22 @@ public struct SigningIdentity: Sendable {
         )
     }
 
+    /// Exports this identity as a password-protected PKCS#12 container.
+    ///
+    /// The resulting data includes the leaf certificate, additional
+    /// certificates, and the matching private key. The private key is encrypted
+    /// with PBES2 and the complete container is authenticated with a PKCS#12
+    /// MAC so standard platform and OpenSSL importers can validate it.
+    ///
+    /// - Parameter password: Passphrase used for both key encryption and
+    ///   container integrity protection.
+    /// - Returns: DER-encoded PKCS#12 data.
+    /// - Throws: A cryptographic error when the private key cannot be encrypted
+    ///   into the container.
+    public func pkcs12Representation(password: String) throws -> Data {
+        try PKCS12IdentityExporter.data(for: self, password: password)
+    }
+
     /// Creates a signing identity from a provisioning profile and private-key credential.
     ///
     /// This matches the shape of many app-signing flows: the provisioning
@@ -1063,8 +1079,13 @@ public struct SigningIdentity: Sendable {
         )
     }
 
-    /// Creates an identity from already-decoded certificate and private-key material.
-    fileprivate init(
+    /// Creates an identity from certificate data and an internal key wrapper.
+    ///
+    /// Protocol-specific flows use this boundary after obtaining a certificate
+    /// for a key that already exists in memory. Keeping it internal prevents
+    /// concrete cryptographic key types from escaping through the public API,
+    /// while preserving the same certificate/key validation as public inputs.
+    init(
         certificateDER: Data,
         additionalCertificatesDER: [Data],
         privateKey: SigningPrivateKey,
