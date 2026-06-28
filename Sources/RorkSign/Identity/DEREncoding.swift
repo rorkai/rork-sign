@@ -47,11 +47,20 @@ enum DEREncoding {
     /// Object identifiers are constants owned by the package. Invalid arcs are
     /// therefore programmer errors and intentionally fail a precondition.
     static func objectIdentifier(_ value: String) -> Data {
-        let components = value.split(separator: ".").compactMap { Int($0) }
+        let components = value.split(
+            separator: ".",
+            omittingEmptySubsequences: false
+        ).map { component in
+            guard let value = Int(component) else {
+                preconditionFailure("Invalid OID arc: \(component)")
+            }
+            return value
+        }
         precondition(
             components.count >= 2
                 && (0...2).contains(components[0])
                 && components[1] >= 0
+                && (components[0] == 2 || components[1] < 40)
         )
 
         var content = base128(components[0] * 40 + components[1])

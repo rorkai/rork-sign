@@ -26,8 +26,13 @@ final class DevelopmentCertificateRequestTests: XCTestCase {
             encoding: .utf8
         )
 
+        let openssl = URL(fileURLWithPath: "/usr/bin/openssl")
+        guard FileManager.default.fileExists(atPath: openssl.path) else {
+            throw XCTSkip("OpenSSL is required for certificate-request tests.")
+        }
+
         try runCommand(
-            URL(fileURLWithPath: "/usr/bin/openssl"),
+            openssl,
             arguments: [
                 "req",
                 "-in", requestURL.path,

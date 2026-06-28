@@ -93,6 +93,11 @@ public struct DevelopmentCertificateRequest: Sendable {
         )
     }
 
+    /// Builds a PKCS#10 request around an existing RSA private key.
+    ///
+    /// Both public initializers funnel through this path so fresh and restored
+    /// requests share the same common-name validation, fingerprinting, and PEM
+    /// encoding behavior.
     private init(
         commonName: String,
         privateKey: RSAPrivateSigningKey
