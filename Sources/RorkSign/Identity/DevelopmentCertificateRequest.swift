@@ -17,14 +17,35 @@ import Foundation
 /// reference to its private key.
 ///
 /// The request currently generates an RSA-2048 key because Apple development
-/// certificates use RSA identities. The private key is intentionally opaque and
-/// has no public serialization API.
+/// certificates use RSA identities. `privateKeyPKCS8` exists for browser
+/// installers that must persist a pending Apple certificate request across page
+/// reloads; callers should keep that value encrypted and scoped to the local
+/// browser identity.
 public struct DevelopmentCertificateRequest: Sendable {
     /// PEM-encoded PKCS#10 request that can be sent to the certificate issuer.
     ///
     /// This representation contains the public key and request signature, but
     /// not the private key retained by this value.
     public let pemRepresentation: String
+
+    /// SHA-256 fingerprint of the SubjectPublicKeyInfo carried by the request.
+    ///
+    /// Persist this value before asking a certificate issuer to create a
+    /// certificate. If the browser crashes after a successful issuer-side
+    /// creation, the fingerprint lets the caller reconcile the pending local
+    /// request with the remote certificate list without consuming another
+    /// certificate slot.
+    public let publicKeyFingerprint: String
+
+    /// PKCS#8 DER for the private key that signed this request.
+    ///
+    /// This is intentionally the only private-key export on the certificate
+    /// request. Browser installers need it to recover from reloads between CSR
+    /// creation and certificate issuance, while native callers can ignore it and
+    /// keep the request in memory.
+    public var privateKeyPKCS8: Data {
+        privateKey.pkcs8DERRepresentation
+    }
 
     /// Opaque key retained until the issuer returns the matching certificate.
     ///
@@ -42,6 +63,40 @@ public struct DevelopmentCertificateRequest: Sendable {
     /// - Throws: `RorkSignError.invalidSigningIdentity` when the common name is
     ///   empty, or a cryptographic error when key generation fails.
     public init(commonName: String) throws {
+        try self.init(
+            commonName: commonName,
+            privateKey: RSAPrivateSigningKey()
+        )
+    }
+
+    /// Restores a pending request from previously exported PKCS#8 key data.
+    ///
+    /// Use this initializer only after decrypting trusted browser-local pending
+    /// state. The common name must match the original request context; changing
+    /// it creates a different CSR for the same private key and should be treated
+    /// as a new issuer request.
+    ///
+    /// - Parameters:
+    ///   - commonName: Subject common name recorded in the request.
+    ///   - privateKeyPKCS8: PKCS#8 DER returned by `privateKeyPKCS8`.
+    /// - Throws: `RorkSignError.invalidSigningIdentity` when the common name is
+    ///   empty or the private key cannot be loaded as RSA-2048 signing material.
+    public init(
+        commonName: String,
+        privateKeyPKCS8: Data
+    ) throws {
+        try self.init(
+            commonName: commonName,
+            privateKey: RSAPrivateSigningKey(
+                derRepresentation: privateKeyPKCS8
+            )
+        )
+    }
+
+    private init(
+        commonName: String,
+        privateKey: RSAPrivateSigningKey
+    ) throws {
         let commonName = commonName.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
@@ -50,8 +105,6 @@ public struct DevelopmentCertificateRequest: Sendable {
                 "Certificate request common name must not be empty."
             )
         }
-
-        let privateKey = try RSAPrivateSigningKey()
         let requestInfo = DEREncoding.sequence([
             DEREncoding.integer(0),
             Self.distinguishedName(commonName: commonName),
@@ -73,6 +126,9 @@ public struct DevelopmentCertificateRequest: Sendable {
         ])
 
         self.privateKey = privateKey
+        self.publicKeyFingerprint = Self.fingerprint(
+            for: privateKey.publicKeyDERRepresentation
+        )
         self.pemRepresentation = Self.pemRepresentation(
             type: "CERTIFICATE REQUEST",
             der: request
@@ -113,6 +169,12 @@ public struct DevelopmentCertificateRequest: Sendable {
                 ]),
             ]),
         ])
+    }
+
+    private static func fingerprint(for data: Data) -> String {
+        SHA256.hash(data: data).map {
+            String(format: "%02x", $0)
+        }.joined()
     }
 
     /// Wraps DER bytes in the 64-column PEM form expected by Apple and OpenSSL.

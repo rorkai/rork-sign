@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Security)
+import Security
+#endif
 @testable import RorkSign
 import XCTest
 
@@ -32,6 +35,44 @@ final class DevelopmentCertificateRequestTests: XCTestCase {
                 "-verify",
             ]
         )
+    }
+
+    func testRestoresCertificateRequestFromExportedPrivateKey() throws {
+        let request = try DevelopmentCertificateRequest(
+            commonName: "Browser Development"
+        )
+
+        let restoredRequest = try DevelopmentCertificateRequest(
+            commonName: "Browser Development",
+            privateKeyPKCS8: request.privateKeyPKCS8
+        )
+
+        XCTAssertEqual(
+            restoredRequest.pemRepresentation,
+            request.pemRepresentation
+        )
+        XCTAssertEqual(
+            restoredRequest.publicKeyFingerprint,
+            request.publicKeyFingerprint
+        )
+    }
+
+    func testRestoredCertificateRequestCompletesSigningIdentity() throws {
+        let request = try DevelopmentCertificateRequest(
+            commonName: "Browser Development"
+        )
+        let certificateDER = try issueCertificate(for: request)
+        let restoredRequest = try DevelopmentCertificateRequest(
+            commonName: "Browser Development",
+            privateKeyPKCS8: request.privateKeyPKCS8
+        )
+
+        let identity = try restoredRequest.makeSigningIdentity(
+            certificateDER: certificateDER
+        )
+
+        XCTAssertEqual(identity.certificateDER, certificateDER)
+        XCTAssertEqual(identity.subjectCommonName, "Browser Development")
     }
 
     func testMatchingCertificateCompletesSigningIdentity() throws {
@@ -121,6 +162,38 @@ final class DevelopmentCertificateRequestTests: XCTestCase {
             ]
         )
     }
+
+#if canImport(Security)
+    /// Guards the iOS import path where a valid P12 must become a SecIdentity.
+    func testExportedPKCS12IsAcceptedBySecurityFramework() throws {
+        let request = try DevelopmentCertificateRequest(
+            commonName: "Browser Development"
+        )
+        let identity = try request.makeSigningIdentity(
+            certificateDER: issueCertificate(for: request)
+        )
+        let pkcs12 = try identity.pkcs12Representation(
+            password: "browser-secret"
+        )
+
+        var importedItems: CFArray?
+        let status = SecPKCS12Import(
+            pkcs12 as CFData,
+            [kSecImportExportPassphrase as String: "browser-secret"]
+                as CFDictionary,
+            &importedItems
+        )
+        let items = importedItems as? [[String: Any]]
+        let importedIdentity = items?.first?[kSecImportItemIdentity as String]
+
+        XCTAssertEqual(status, errSecSuccess)
+        XCTAssertNotNil(importedIdentity)
+        XCTAssertEqual(
+            importedIdentity.map { CFGetTypeID($0 as CFTypeRef) },
+            SecIdentityGetTypeID()
+        )
+    }
+#endif
 
     /// Issues a short-lived certificate so tests exercise a real PKCS#10 flow.
     private func issueCertificate(

@@ -36,14 +36,16 @@ enum PKCS12IdentityExporter {
         for identity: SigningIdentity,
         password: String
     ) throws -> Data {
+        let localKeyID = localKeyID(for: identity.certificateDER)
         let encryptedPrivateKey = try encryptedPrivateKeyInfo(
             identity.privateKey.pkcs8DERRepresentation,
             password: password
         )
         let safeContents = DEREncoding.sequence(
-            [privateKeyBag(encryptedPrivateKey)]
+            [privateKeyBag(encryptedPrivateKey, localKeyID: localKeyID)]
                 + certificateBags(
-                    [identity.certificateDER] + identity.additionalCertificatesDER
+                    [identity.certificateDER] + identity.additionalCertificatesDER,
+                    localKeyID: localKeyID
                 )
         )
         let authenticatedSafe = DEREncoding.sequence([
@@ -112,19 +114,26 @@ enum PKCS12IdentityExporter {
     }
 
     /// Wraps an encrypted PKCS#8 value in a PKCS#12 shrouded-key SafeBag.
-    private static func privateKeyBag(_ encryptedPrivateKey: Data) -> Data {
+    private static func privateKeyBag(
+        _ encryptedPrivateKey: Data,
+        localKeyID: Data
+    ) -> Data {
         DEREncoding.sequence([
             DEREncoding.objectIdentifier(OID.pkcs8ShroudedKeyBag),
             DEREncoding.contextSpecificConstructed(
                 0,
                 content: encryptedPrivateKey
             ),
+            safeBagAttributes(localKeyID: localKeyID),
         ])
     }
 
     /// Wraps the leaf and chain certificates as X.509 certificate SafeBags.
-    private static func certificateBags(_ certificates: [Data]) -> [Data] {
-        certificates.map { certificate in
+    private static func certificateBags(
+        _ certificates: [Data],
+        localKeyID: Data
+    ) -> [Data] {
+        certificates.enumerated().map { offset, certificate in
             let certificateBag = DEREncoding.sequence([
                 DEREncoding.objectIdentifier(OID.x509Certificate),
                 DEREncoding.contextSpecificConstructed(
@@ -132,14 +141,30 @@ enum PKCS12IdentityExporter {
                     content: DEREncoding.octetString(certificate)
                 ),
             ])
-            return DEREncoding.sequence([
+            var safeBag = [
                 DEREncoding.objectIdentifier(OID.certBag),
                 DEREncoding.contextSpecificConstructed(
                     0,
                     content: certificateBag
                 ),
-            ])
+            ]
+            if offset == 0 {
+                safeBag.append(safeBagAttributes(localKeyID: localKeyID))
+            }
+            return DEREncoding.sequence(safeBag)
         }
+    }
+
+    /// Adds the PKCS#9 localKeyID that Security.framework uses to pair bags.
+    private static func safeBagAttributes(localKeyID: Data) -> Data {
+        DEREncoding.set([
+            DEREncoding.sequence([
+                DEREncoding.objectIdentifier(OID.localKeyID),
+                DEREncoding.set([
+                    DEREncoding.octetString(localKeyID),
+                ]),
+            ]),
+        ])
     }
 
     /// Wraps safe contents in the PKCS#7 data ContentInfo used by PFX.
@@ -211,6 +236,11 @@ enum PKCS12IdentityExporter {
         )
     }
 
+    /// Uses the common certificate hash form also emitted by OpenSSL exports.
+    private static func localKeyID(for certificateDER: Data) -> Data {
+        Data(Insecure.SHA1.hash(data: certificateDER))
+    }
+
     /// Object identifiers required by the modern PKCS#12 encoding profile.
     private enum OID {
         /// PKCS#7 data ContentInfo.
@@ -224,6 +254,9 @@ enum PKCS12IdentityExporter {
 
         /// PKCS#9 X.509 certificate bag value.
         static let x509Certificate = "1.2.840.113549.1.9.22.1"
+
+        /// PKCS#9 local key identifier bag attribute.
+        static let localKeyID = "1.2.840.113549.1.9.21"
 
         /// Password-Based Encryption Scheme 2.
         static let pbes2 = "1.2.840.113549.1.5.13"
