@@ -40,7 +40,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
         .package(
             url: "https://github.com/rorkai/swift-zip-archive.git",
-            revision: "a611fb98910fc3b933b03c57b19a379af7efe7cf"
+            exact: "0.8.1-rork.3"
         ),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
     ],

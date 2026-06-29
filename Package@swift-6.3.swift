@@ -55,7 +55,7 @@ let package = Package(
         ),
         .package(
             url: "https://github.com/rorkai/swift-zip-archive.git",
-            exact: "0.8.1-rork.2"
+            exact: "0.8.1-rork.3"
         ),
         .package(
             url: "https://github.com/apple/swift-argument-parser.git",
