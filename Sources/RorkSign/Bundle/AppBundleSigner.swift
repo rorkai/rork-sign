@@ -912,12 +912,15 @@ private enum AppBundleIdentityRewriter {
 
 /// Removes optional bundle content before nested bundles are discovered.
 private enum AppBundleContentPruner {
+    /// Root-relative directories that hold app extensions.
+    private static let extensionDirectories = ["PlugIns", "Extensions"]
+
     /// Applies root app cleanup options before signing.
     static func apply(options: AppSigningOptions, rootBundleURL: URL) throws {
         let fileManager = FileManager.default
         if options.removeExtensions {
             try removeExistingDirectories(
-                ["PlugIns", "Extensions"],
+                extensionDirectories,
                 rootBundleURL: rootBundleURL,
                 fileManager: fileManager
             )
@@ -962,7 +965,7 @@ private enum AppBundleContentPruner {
                     "extensionsToRemove entries must be plain bundle names, not \"\(name)\"."
                 )
             }
-            return ["PlugIns/\(name)", "Extensions/\(name)"]
+            return extensionDirectories.map { "\($0)/\(name)" }
         }
         try removeExistingDirectories(
             relativePaths,
