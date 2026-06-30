@@ -80,6 +80,17 @@ public struct AppSigningOptions: Equatable {
     /// Removes root `PlugIns` and `Extensions` directories before signing.
     public var removeExtensions: Bool
 
+    /// Specific embedded extensions to delete before signing, by `.appex`
+    /// directory name (for example `Share.appex`).
+    ///
+    /// Use this to drop an individual extension the signing identity cannot
+    /// provision — such as a NetworkExtension on a free Personal Team — while
+    /// keeping the rest of `PlugIns`/`Extensions` (and their profiles) intact.
+    /// Names are matched against direct children of the root app's `PlugIns` and
+    /// `Extensions` directories. This is ignored when `removeExtensions` is
+    /// `true`, which already removes every extension.
+    public var extensionsToRemove: [String]
+
     /// Removes embedded Watch app directories before signing.
     public var removeWatchApps: Bool
 
@@ -144,6 +155,7 @@ public struct AppSigningOptions: Equatable {
         minimumOSVersion: String? = nil,
         enableDocuments: Bool = false,
         removeExtensions: Bool = false,
+        extensionsToRemove: [String] = [],
         removeWatchApps: Bool = false,
         removeUISupportedDevices: Bool = false,
         additionalBundleFiles: [String: Data] = [:],
@@ -166,6 +178,7 @@ public struct AppSigningOptions: Equatable {
         self.minimumOSVersion = minimumOSVersion
         self.enableDocuments = enableDocuments
         self.removeExtensions = removeExtensions
+        self.extensionsToRemove = extensionsToRemove
         self.removeWatchApps = removeWatchApps
         self.removeUISupportedDevices = removeUISupportedDevices
         self.additionalBundleFiles = additionalBundleFiles
@@ -194,6 +207,7 @@ public struct AppSigningOptions: Equatable {
             && lhs.minimumOSVersion == rhs.minimumOSVersion
             && lhs.enableDocuments == rhs.enableDocuments
             && lhs.removeExtensions == rhs.removeExtensions
+            && lhs.extensionsToRemove == rhs.extensionsToRemove
             && lhs.removeWatchApps == rhs.removeWatchApps
             && lhs.removeUISupportedDevices == rhs.removeUISupportedDevices
             && lhs.additionalBundleFiles == rhs.additionalBundleFiles
@@ -898,12 +912,23 @@ private enum AppBundleIdentityRewriter {
 
 /// Removes optional bundle content before nested bundles are discovered.
 private enum AppBundleContentPruner {
+    /// Root-relative directories that hold app extensions.
+    private static let extensionDirectories = ["PlugIns", "Extensions"]
+
     /// Applies root app cleanup options before signing.
     static func apply(options: AppSigningOptions, rootBundleURL: URL) throws {
         let fileManager = FileManager.default
         if options.removeExtensions {
             try removeExistingDirectories(
-                ["PlugIns", "Extensions"],
+                extensionDirectories,
+                rootBundleURL: rootBundleURL,
+                fileManager: fileManager
+            )
+        } else {
+            // Removing every extension already covers the named subset, so this
+            // only runs when the whole-directory removal is off.
+            try removeNamedExtensions(
+                options.extensionsToRemove,
                 rootBundleURL: rootBundleURL,
                 fileManager: fileManager
             )
@@ -915,6 +940,38 @@ private enum AppBundleContentPruner {
                 fileManager: fileManager
             )
         }
+    }
+
+    /// Deletes individually named `.appex` bundles from the root app's extension
+    /// directories, leaving the rest of `PlugIns`/`Extensions` intact.
+    private static func removeNamedExtensions(
+        _ names: [String],
+        rootBundleURL: URL,
+        fileManager: FileManager
+    ) throws {
+        guard !names.isEmpty else {
+            return
+        }
+        // Confine each entry to a direct child of an extension directory so a
+        // caller-supplied name cannot escape the bundle via path traversal.
+        let relativePaths = try names.flatMap { name -> [String] in
+            guard !name.isEmpty,
+                  name != ".",
+                  name != "..",
+                  !name.contains("/"),
+                  !name.contains("\\")
+            else {
+                throw RorkSignError.invalidBundle(
+                    "extensionsToRemove entries must be plain bundle names, not \"\(name)\"."
+                )
+            }
+            return extensionDirectories.map { "\($0)/\(name)" }
+        }
+        try removeExistingDirectories(
+            relativePaths,
+            rootBundleURL: rootBundleURL,
+            fileManager: fileManager
+        )
     }
 
     private static func removeExistingDirectories(
@@ -1075,6 +1132,8 @@ private struct AppProvisioningAssets {
         }
     }
 
+    /// Returns the identity retagged with the profiles' Apple team so the
+    /// signature's team matches the embedded provisioning profiles.
     func signingIdentity(for identity: SigningIdentity) throws -> SigningIdentity {
         guard let teamIdentifier else {
             return identity
@@ -1258,6 +1317,7 @@ private struct MutableInfoPlist {
 
 /// Bundle identifier helpers shared by rewriting and profile lookup.
 private enum BundleIdentifier {
+    /// Trims a bundle identifier and rejects empty or path-separator values.
     static func normalize(_ value: String) throws -> String {
         let identifier = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !identifier.isEmpty else {
@@ -1269,6 +1329,12 @@ private enum BundleIdentifier {
         return identifier
     }
 
+    /// Re-homes an app-extension identifier under the replacement root.
+    ///
+    /// Like `rebasedNestedIdentifier`, but an extension must always end up a
+    /// child of the new root: when the original identifier did not share the
+    /// original root prefix, its last component (or a stable fallback) is
+    /// appended to the new root so the result stays a valid nested identifier.
     static func rebasedExtensionIdentifier(
         _ originalIdentifier: String,
         originalRootIdentifier: String,
@@ -1294,6 +1360,11 @@ private enum BundleIdentifier {
         return requiredPrefix + (suffix.isEmpty ? "extension" : suffix)
     }
 
+    /// Re-homes a nested identifier under the replacement root.
+    ///
+    /// An identifier equal to the original root becomes the new root; one that
+    /// shares the original root prefix keeps its suffix under the new root; an
+    /// unrelated identifier is returned unchanged.
     static func rebasedNestedIdentifier(
         _ originalIdentifier: String,
         originalRootIdentifier: String,

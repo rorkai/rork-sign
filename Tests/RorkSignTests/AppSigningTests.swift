@@ -1006,6 +1006,93 @@ final class AppSigningTests: XCTestCase {
         )
     }
 
+    func testAppSigningRemovesOnlyNamedExtensions() throws {
+        let fixture = try makeAppSigningFixture()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
+        }
+
+        // A second extension that the caller wants dropped because the signing
+        // identity cannot provision it. It is otherwise a normal nested bundle,
+        // so if pruning failed the signer would discover and sign it.
+        let removableURL = fixture.bundleURL.appendingPathComponent("PlugIns/Removable.appex", isDirectory: true)
+        try FileManager.default.createDirectory(at: removableURL, withIntermediateDirectories: true)
+        try writeInfoPlist(
+            [
+                "CFBundleIdentifier": "com.vendor.RemovableExtension",
+                "CFBundleExecutable": "Removable",
+            ],
+            to: removableURL.appendingPathComponent("Info.plist")
+        )
+        let removable = try RorkSigner.signMachOAdHoc(
+            Fixtures.machO64WithCodeSignature(),
+            bundleIdentifier: "com.vendor.RemovableExtension",
+            entitlementsXML: entitlementsXML(
+                [
+                    "application-identifier": "OLDTEAM.com.vendor.RemovableExtension",
+                    "com.apple.developer.team-identifier": "OLDTEAM",
+                    "com.apple.developer.associated-application-identifier": "OLDTEAM.com.original.host",
+                ]
+            )
+        )
+        try removable.write(to: removableURL.appendingPathComponent("Removable"))
+
+        let rootProfile = try provisioningProfilePlist(
+            teamIdentifier: "TEAMID1234",
+            entitlements: [
+                "application-identifier": "TEAMID1234.*",
+                "com.apple.developer.team-identifier": "TEAMID1234",
+                "get-task-allow": true,
+            ]
+        )
+
+        let report = try RorkSigner.signBundle(
+            at: fixture.bundleURL,
+            options: AppSigningOptions(
+                bundleIdentifier: "app.rork.kept",
+                rootProvisioningProfile: rootProfile,
+                extensionsToRemove: ["Removable.appex"]
+            )
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: removableURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.extensionURL.path))
+        let signedPaths = try report.signedCode.map { try relativePath($0, under: fixture.bundleURL) }
+        XCTAssertTrue(signedPaths.contains("Host"))
+        XCTAssertTrue(signedPaths.contains("PlugIns/Share.appex/Share"))
+        XCTAssertFalse(signedPaths.contains { $0.contains("Removable") })
+    }
+
+    func testAppSigningRejectsExtensionsToRemoveWithPathTraversal() throws {
+        let fixture = try makeAppSigningFixture()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fixture.bundleURL.deletingLastPathComponent())
+        }
+        let rootProfile = try provisioningProfilePlist(
+            teamIdentifier: "TEAMID1234",
+            entitlements: [
+                "application-identifier": "TEAMID1234.*",
+                "com.apple.developer.team-identifier": "TEAMID1234",
+                "get-task-allow": true,
+            ]
+        )
+
+        XCTAssertThrowsError(
+            try RorkSigner.signBundle(
+                at: fixture.bundleURL,
+                options: AppSigningOptions(
+                    bundleIdentifier: "app.rork.invalid",
+                    rootProvisioningProfile: rootProfile,
+                    extensionsToRemove: ["../Evil.appex"]
+                )
+            )
+        ) { error in
+            guard case RorkSignError.invalidBundle = error else {
+                return XCTFail("Expected invalidBundle, got \(error).")
+            }
+        }
+    }
+
     func testAppSigningCredentialSigningBuildsIdentityFromRootProfile() throws {
         let openssl = try OpenSSLFixture()
         defer {
