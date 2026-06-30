@@ -80,6 +80,17 @@ public struct AppSigningOptions: Equatable {
     /// Removes root `PlugIns` and `Extensions` directories before signing.
     public var removeExtensions: Bool
 
+    /// Specific embedded extensions to delete before signing, by `.appex`
+    /// directory name (for example `LocalTunnel.appex`).
+    ///
+    /// Use this to drop an individual extension the signing identity cannot
+    /// provision — such as a NetworkExtension on a free Personal Team — while
+    /// keeping the rest of `PlugIns`/`Extensions` (and their profiles) intact.
+    /// Names are matched against direct children of the root app's `PlugIns` and
+    /// `Extensions` directories. This is ignored when `removeExtensions` is
+    /// `true`, which already removes every extension.
+    public var extensionsToRemove: [String]
+
     /// Removes embedded Watch app directories before signing.
     public var removeWatchApps: Bool
 
@@ -144,6 +155,7 @@ public struct AppSigningOptions: Equatable {
         minimumOSVersion: String? = nil,
         enableDocuments: Bool = false,
         removeExtensions: Bool = false,
+        extensionsToRemove: [String] = [],
         removeWatchApps: Bool = false,
         removeUISupportedDevices: Bool = false,
         additionalBundleFiles: [String: Data] = [:],
@@ -166,6 +178,7 @@ public struct AppSigningOptions: Equatable {
         self.minimumOSVersion = minimumOSVersion
         self.enableDocuments = enableDocuments
         self.removeExtensions = removeExtensions
+        self.extensionsToRemove = extensionsToRemove
         self.removeWatchApps = removeWatchApps
         self.removeUISupportedDevices = removeUISupportedDevices
         self.additionalBundleFiles = additionalBundleFiles
@@ -194,6 +207,7 @@ public struct AppSigningOptions: Equatable {
             && lhs.minimumOSVersion == rhs.minimumOSVersion
             && lhs.enableDocuments == rhs.enableDocuments
             && lhs.removeExtensions == rhs.removeExtensions
+            && lhs.extensionsToRemove == rhs.extensionsToRemove
             && lhs.removeWatchApps == rhs.removeWatchApps
             && lhs.removeUISupportedDevices == rhs.removeUISupportedDevices
             && lhs.additionalBundleFiles == rhs.additionalBundleFiles
@@ -907,6 +921,14 @@ private enum AppBundleContentPruner {
                 rootBundleURL: rootBundleURL,
                 fileManager: fileManager
             )
+        } else {
+            // Removing every extension already covers the named subset, so this
+            // only runs when the whole-directory removal is off.
+            try removeNamedExtensions(
+                options.extensionsToRemove,
+                rootBundleURL: rootBundleURL,
+                fileManager: fileManager
+            )
         }
         if options.removeWatchApps {
             try removeExistingDirectories(
@@ -915,6 +937,38 @@ private enum AppBundleContentPruner {
                 fileManager: fileManager
             )
         }
+    }
+
+    /// Deletes individually named `.appex` bundles from the root app's extension
+    /// directories, leaving the rest of `PlugIns`/`Extensions` intact.
+    private static func removeNamedExtensions(
+        _ names: [String],
+        rootBundleURL: URL,
+        fileManager: FileManager
+    ) throws {
+        guard !names.isEmpty else {
+            return
+        }
+        // Confine each entry to a direct child of an extension directory so a
+        // caller-supplied name cannot escape the bundle via path traversal.
+        let relativePaths = try names.flatMap { name -> [String] in
+            guard !name.isEmpty,
+                  name != ".",
+                  name != "..",
+                  !name.contains("/"),
+                  !name.contains("\\")
+            else {
+                throw RorkSignError.invalidBundle(
+                    "extensionsToRemove entries must be plain bundle names, not \"\(name)\"."
+                )
+            }
+            return ["PlugIns/\(name)", "Extensions/\(name)"]
+        }
+        try removeExistingDirectories(
+            relativePaths,
+            rootBundleURL: rootBundleURL,
+            fileManager: fileManager
+        )
     }
 
     private static func removeExistingDirectories(
