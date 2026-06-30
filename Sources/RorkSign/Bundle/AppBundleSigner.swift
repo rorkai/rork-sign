@@ -81,7 +81,7 @@ public struct AppSigningOptions: Equatable {
     public var removeExtensions: Bool
 
     /// Specific embedded extensions to delete before signing, by `.appex`
-    /// directory name (for example `LocalTunnel.appex`).
+    /// directory name (for example `Share.appex`).
     ///
     /// Use this to drop an individual extension the signing identity cannot
     /// provision — such as a NetworkExtension on a free Personal Team — while
