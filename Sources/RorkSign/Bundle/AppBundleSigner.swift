@@ -1132,6 +1132,8 @@ private struct AppProvisioningAssets {
         }
     }
 
+    /// Returns the identity retagged with the profiles' Apple team so the
+    /// signature's team matches the embedded provisioning profiles.
     func signingIdentity(for identity: SigningIdentity) throws -> SigningIdentity {
         guard let teamIdentifier else {
             return identity
@@ -1315,6 +1317,7 @@ private struct MutableInfoPlist {
 
 /// Bundle identifier helpers shared by rewriting and profile lookup.
 private enum BundleIdentifier {
+    /// Trims a bundle identifier and rejects empty or path-separator values.
     static func normalize(_ value: String) throws -> String {
         let identifier = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !identifier.isEmpty else {
@@ -1326,6 +1329,12 @@ private enum BundleIdentifier {
         return identifier
     }
 
+    /// Re-homes an app-extension identifier under the replacement root.
+    ///
+    /// Like `rebasedNestedIdentifier`, but an extension must always end up a
+    /// child of the new root: when the original identifier did not share the
+    /// original root prefix, its last component (or a stable fallback) is
+    /// appended to the new root so the result stays a valid nested identifier.
     static func rebasedExtensionIdentifier(
         _ originalIdentifier: String,
         originalRootIdentifier: String,
@@ -1351,6 +1360,11 @@ private enum BundleIdentifier {
         return requiredPrefix + (suffix.isEmpty ? "extension" : suffix)
     }
 
+    /// Re-homes a nested identifier under the replacement root.
+    ///
+    /// An identifier equal to the original root becomes the new root; one that
+    /// shares the original root prefix keeps its suffix under the new root; an
+    /// unrelated identifier is returned unchanged.
     static func rebasedNestedIdentifier(
         _ originalIdentifier: String,
         originalRootIdentifier: String,
