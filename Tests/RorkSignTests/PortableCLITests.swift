@@ -429,6 +429,42 @@ final class PortableCLITests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: outputURL), previousOutput)
     }
 
+    func testExportPKCS12ReadsPasswordsFromFiles() throws {
+        let signing = try SyntheticSigningFixture()
+        defer {
+            signing.remove()
+        }
+        let inputURL = signing.directory.appendingPathComponent("Input.p12")
+        let outputURL = signing.directory.appendingPathComponent("Output.p12")
+        let inputPasswordURL = signing.directory
+            .appendingPathComponent("input-password")
+        let outputPasswordURL = signing.directory
+            .appendingPathComponent("output-password")
+        try signing.identity.pkcs12Representation(password: "input-secret")
+            .write(to: inputURL)
+        try Data("input-secret".utf8).write(to: inputPasswordURL)
+        try Data("output-secret".utf8).write(to: outputPasswordURL)
+
+        let result = try runRorkSign([
+            "export-pkcs12",
+            "--certificate", signing.certificateURL.path,
+            "--key", inputURL.path,
+            "--input-password-file", inputPasswordURL.path,
+            "--output", outputURL.path,
+            "--output-password-file", outputPasswordURL.path,
+        ])
+
+        XCTAssertEqual(result.status, 0, result.output)
+        let exported = try SigningIdentity(
+            pkcs12Data: Data(contentsOf: outputURL),
+            password: "output-secret"
+        )
+        XCTAssertEqual(
+            exported.certificateDER,
+            signing.identity.certificateDER
+        )
+    }
+
     func testExportPKCS12RejectsAnEmptyOutputPassword() throws {
         let signing = try SyntheticSigningFixture()
         defer {

@@ -328,6 +328,9 @@ struct SignIPA: ParsableCommand {
     @Option(name: [.customShort("p"), .customLong("password")], help: "Password for the private key or PKCS#12 credential.")
     var password = ""
 
+    @Option(name: [.customLong("password-file")], help: "Path to a file containing the private-key password.")
+    var passwordFile: String?
+
     @Option(name: [.customLong("app-groups")], help: "Comma-separated app-group identifiers.")
     var appGroups: String?
 
@@ -350,10 +353,15 @@ struct SignIPA: ParsableCommand {
             )
         }
 
+        let resolvedPassword = try CLISupport.readPassword(
+            value: password,
+            filePath: passwordFile,
+            optionName: "Signing identity"
+        )
         let identity = try CLISupport.readIdentity(
             certificatePath: certificatePath,
             credentialPath: credentialPath,
-            password: password
+            password: resolvedPassword
         )
         let preparedInput = try CLISupport.prepareIPAInput(
             at: fileURL(input)
@@ -793,6 +801,12 @@ struct ExportPKCS12: ParsableCommand {
     var inputPassword = ""
 
     @Option(
+        name: [.customLong("input-password-file")],
+        help: "Path to a file containing the input credential password."
+    )
+    var inputPasswordFile: String?
+
+    @Option(
         name: [.customLong("output")],
         help: "Path to the output PKCS#12 file."
     )
@@ -802,19 +816,35 @@ struct ExportPKCS12: ParsableCommand {
         name: [.customLong("output-password")],
         help: "Password for the output PKCS#12 file."
     )
-    var outputPassword: String
+    var outputPassword = ""
+
+    @Option(
+        name: [.customLong("output-password-file")],
+        help: "Path to a file containing the output password."
+    )
+    var outputPasswordFile: String?
 
     func run() throws {
-        guard !outputPassword.isEmpty else {
+        let resolvedInputPassword = try CLISupport.readPassword(
+            value: inputPassword,
+            filePath: inputPasswordFile,
+            optionName: "Input credential"
+        )
+        let resolvedOutputPassword = try CLISupport.readPassword(
+            value: outputPassword,
+            filePath: outputPasswordFile,
+            optionName: "Output identity"
+        )
+        guard !resolvedOutputPassword.isEmpty else {
             throw ValidationError("Output password must not be empty.")
         }
         let identity = try CLISupport.readIdentity(
             certificatePath: certificatePath,
             credentialPath: keyPath,
-            password: inputPassword
+            password: resolvedInputPassword
         )
         let output = try identity.pkcs12Representation(
-            password: outputPassword
+            password: resolvedOutputPassword
         )
         let outputURL = fileURL(outputPath)
         try CLISupport.writeAtomically(output, to: outputURL)

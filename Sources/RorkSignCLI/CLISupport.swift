@@ -152,6 +152,26 @@ enum CLISupport {
         try SecureFileWriter.writeAtomically(data, to: outputURL)
     }
 
+    /// Reads a password from one direct value or one protected file.
+    static func readPassword(
+        value: String,
+        filePath: String?,
+        optionName: String
+    ) throws -> String {
+        if !value.isEmpty, filePath != nil {
+            throw ValidationError(
+                "\(optionName) accepts either a direct password or a password file, not both."
+            )
+        }
+        guard let filePath else {
+            return value
+        }
+        return try String(
+            contentsOf: URL(fileURLWithPath: filePath),
+            encoding: .utf8
+        )
+    }
+
     /// Loads a PEM certificate/private-key pair into a signing identity.
     static func readIdentity(
         certificatePath: String,

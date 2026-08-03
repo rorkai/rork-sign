@@ -749,8 +749,8 @@ rorksign identity-sign-bundle-profile-key <bundle-path> <profile-path> <credenti
 rorksign identity-sign-ipa <input-ipa> <output-ipa> <cert-pem> <private-key-pem> [--password <password>]
 rorksign identity-sign-ipa-p12 <input-ipa> <output-ipa> <p12-path> <password>
 rorksign identity-sign-ipa-profile-key <input-ipa> <output-ipa> <profile-path> <credential-path> <password>
-rorksign sign ipa --input <ipa-app-or-extracted-path> --output <output-ipa> --bundle-id <bundle-id> --profile-map <profile-map-json> --certificate <cert-path> --key <credential-path> [--password <password>] [--app-groups <group,...>] [--bundle-name <name>] [--entitlements-resource <name>]
-rorksign export-pkcs12 --certificate <cert-path> --key <credential-path> [--input-password <password>] --output <output-p12> --output-password <password>
+rorksign sign ipa --input <ipa-app-or-extracted-path> --output <output-ipa> --bundle-id <bundle-id> --profile-map <profile-map-json> --certificate <cert-path> --key <credential-path> [--password <password> | --password-file <path>] [--app-groups <group,...>] [--bundle-name <name>] [--entitlements-resource <name>]
+rorksign export-pkcs12 --certificate <cert-path> --key <credential-path> [--input-password <password> | --input-password-file <path>] --output <output-p12> [--output-password <password> | --output-password-file <path>]
 rorksign seal-resources <bundle-path>
 rorksign verify-resources <bundle-path>
 rorksign team-id <profile-path> <credential-path> <password>
@@ -776,9 +776,11 @@ authorize that certificate:
 }
 ```
 
-`export-pkcs12` loads the certificate and credential with `--input-password`,
-then protects the exported identity with `--output-password`. It commits the
-output atomically after the complete container has been encoded.
+`export-pkcs12` protects the exported identity with an output password. Direct
+password values remain available for interactive use. Automation can read each
+password from a file so the value does not appear in process arguments. Password
+files are read verbatim. The command commits the output atomically after the
+complete container has been encoded.
 
 ## Limitations
 
