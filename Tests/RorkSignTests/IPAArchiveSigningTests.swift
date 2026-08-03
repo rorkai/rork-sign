@@ -1067,6 +1067,55 @@ final class IPAArchiveSigningTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
+    func testArchiveRejectsBackslashEntryPaths() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let inputURL = rootURL.appendingPathComponent("Unsafe.ipa")
+        let extractedURL = rootURL.appendingPathComponent(
+            "Extracted",
+            isDirectory: true
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+
+        let writer = ZipArchiveWriter()
+        try writer.writeFile(
+            filename: "Payload/Sample.app/Sample",
+            contents: Array("unsafe".utf8)
+        )
+
+        // The writer rejects backslashes, so equal-length filename replacement
+        // creates hostile input without changing the ZIP record layout.
+        var archive = Data(try writer.finalizeBuffer())
+        let slashPath = Data("Payload/Sample.app/Sample".utf8)
+        let backslashPath = Data(#"Payload\Sample.app\Sample"#.utf8)
+        var replacementCount = 0
+        while let range = archive.range(of: slashPath) {
+            archive.replaceSubrange(range, with: backslashPath)
+            replacementCount += 1
+        }
+        XCTAssertEqual(replacementCount, 2)
+        try archive.write(to: inputURL)
+
+        XCTAssertThrowsError(
+            try IPAArchive.extract(at: inputURL, to: extractedURL)
+        ) { error in
+            guard case .invalidArchive = error as? RorkSignError else {
+                return XCTFail(
+                    "Expected an invalid archive error, got \(error)."
+                )
+            }
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: extractedURL.path)
+        )
+    }
+
     /// Ensures a relative symlink is rejected when lexical resolution escapes
     /// the extracted IPA tree.
     func testArchiveRejectsEscapingSymbolicLink() throws {

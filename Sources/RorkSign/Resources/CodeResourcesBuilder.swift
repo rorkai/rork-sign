@@ -213,6 +213,7 @@ private enum NestedResourceBundleScanner {
     }
 
     private static func normalizedFileSystemPath(_ path: String) -> String {
+        let path = path.replacingOccurrences(of: "\\", with: "/")
         if path == "/private/var" {
             return "/var"
         }
@@ -478,6 +479,7 @@ private enum BundleResourceScanner {
     static func resourceURL(for relativePath: String, under rootURL: URL) throws -> URL {
         guard !relativePath.isEmpty,
               !relativePath.hasPrefix("/"),
+              !relativePath.contains("\\"),
               !relativePath.contains("\u{0}") else {
             throw RorkSignError.resourceSealing("CodeResources path is not relative: \(relativePath).")
         }
@@ -501,6 +503,7 @@ private enum BundleResourceScanner {
     /// `/private/var`. Normalizing that alias keeps bundle-relative path
     /// extraction stable without resolving the final symlink resource itself.
     private static func normalizedFileSystemPath(_ path: String) -> String {
+        let path = path.replacingOccurrences(of: "\\", with: "/")
         if path == "/private/var" {
             return "/var"
         }

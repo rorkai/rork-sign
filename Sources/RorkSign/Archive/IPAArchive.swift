@@ -89,8 +89,8 @@ package enum IPAArchive {
         /// Applies archived permissions and modification dates after extraction.
         case restore
 
-        /// Uses the filesystem only when it can reliably preserve ZIP metadata.
-        #if os(WASI)
+        /// Uses the filesystem only when it can reliably preserve POSIX metadata.
+        #if os(WASI) || os(Windows)
         package static let platformDefault: Self = .skip
         #else
         package static let platformDefault: Self = .restore
@@ -703,7 +703,11 @@ package enum IPAArchive {
                 ]),
             ])
         case .regularFile:
-            let isExecutable = permissions.map { $0 & 0o111 != 0 } ?? false
+
+            // Mach-O code remains executable when the host cannot expose a
+            // POSIX mode for the source file.
+            let isExecutable = permissions.map { $0 & 0o111 != 0 } == true
+                || (try? MachOFile.isMachO(at: url)) == true
             externalAttributes = .unix([
                 .isRegularFile,
                 .permissions(
@@ -806,9 +810,10 @@ package enum IPAArchive {
 
     /// Commits a fully serialized sibling archive without exposing partial data.
     ///
-    /// Native Foundation provides direct item replacement. WASI does not, so it
-    /// keeps the previous archive under a temporary sibling name until the new
-    /// archive occupies the destination.
+    /// Some Foundation implementations cannot replace an item directly.
+    ///
+    /// The fallback keeps the previous archive under a temporary sibling name
+    /// until the new archive occupies the destination.
     private static func replaceArchive(
         at archiveURL: URL,
         with stagedArchiveURL: URL,
@@ -822,7 +827,7 @@ package enum IPAArchive {
             return
         }
 
-        #if os(WASI)
+        #if os(WASI) || os(Windows)
         let backupURL = archiveURL
             .deletingLastPathComponent()
             .appendingPathComponent(
@@ -1014,7 +1019,12 @@ package enum IPAArchive {
 
     /// Rejects absolute paths, traversal components, and ambiguous empty parts.
     private static func validatedArchivePath(_ path: String) throws -> String {
-        guard !path.isEmpty, !path.hasPrefix("/"), !path.contains("\0") else {
+        guard
+            !path.isEmpty,
+            !path.hasPrefix("/"),
+            !path.contains("\\"),
+            !path.contains("\0")
+        else {
             throw RorkSignError.invalidArchive(
                 "IPA archive contains an invalid entry path: \(path)."
             )
@@ -1052,8 +1062,11 @@ package enum IPAArchive {
                 isDirectory: isDirectory
             )
             .standardizedFileURL
-        let rootPath = rootURL.standardizedFileURL.path
-        guard destinationURL.path.hasPrefix(rootPath + "/") else {
+        let rootPath = normalizedFileSystemPath(
+            rootURL.standardizedFileURL.path
+        )
+        let destinationPath = normalizedFileSystemPath(destinationURL.path)
+        guard destinationPath.hasPrefix(rootPath + "/") else {
             throw RorkSignError.invalidArchive(
                 "IPA archive entry escaped the extraction directory: \(relativePath)."
             )
@@ -1069,6 +1082,7 @@ package enum IPAArchive {
         guard
             !target.isEmpty,
             !target.hasPrefix("/"),
+            !target.contains("\\"),
             !target.contains("\0")
         else {
             throw RorkSignError.invalidArchive(
@@ -1105,14 +1119,21 @@ package enum IPAArchive {
         for url: URL,
         under rootURL: URL
     ) throws -> String {
-        let rootPath = rootURL.standardizedFileURL.path
-        let path = url.standardizedFileURL.path
+        let rootPath = normalizedFileSystemPath(
+            rootURL.standardizedFileURL.path
+        )
+        let path = normalizedFileSystemPath(url.standardizedFileURL.path)
         guard path.hasPrefix(rootPath + "/") else {
             throw RorkSignError.invalidArchive(
                 "Signed IPA path escaped its workspace: \(path)."
             )
         }
         return String(path.dropFirst(rootPath.count + 1))
+    }
+
+    /// Normalizes host separators before creating an archive-relative path.
+    private static func normalizedFileSystemPath(_ path: String) -> String {
+        path.replacingOccurrences(of: "\\", with: "/")
     }
 }
 

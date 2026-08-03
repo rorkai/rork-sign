@@ -56,13 +56,110 @@ enum CLISupport {
                 throw ValidationError("Provisioning profile map contains an empty profile path for \(bundleIdentifier).")
             }
 
-            let profileURL = profilePath.hasPrefix("/")
-                ? URL(fileURLWithPath: profilePath)
-                : baseURL.appendingPathComponent(profilePath)
+            let profileURL = URL(
+                fileURLWithPath: profilePath,
+                relativeTo: baseURL
+            ).standardizedFileURL
             profilesByBundleIdentifier[bundleIdentifier] = try Data(contentsOf: profileURL)
         }
 
         return profilesByBundleIdentifier
+    }
+
+    struct PreparedIPAInput {
+        let archiveURL: URL
+        let workspaceURL: URL?
+
+        func removeWorkspace() {
+            guard let workspaceURL else {
+                return
+            }
+            try? FileManager.default.removeItem(at: workspaceURL)
+        }
+    }
+
+    /**
+     Directory inputs are serialized through the archive implementation so the
+     focused command uses one signing path for every supported input shape.
+     */
+    static func prepareIPAInput(at inputURL: URL) throws -> PreparedIPAInput {
+        var isDirectory: ObjCBool = false
+        guard
+            FileManager.default.fileExists(
+                atPath: inputURL.path,
+                isDirectory: &isDirectory
+            ),
+            isDirectory.boolValue
+        else {
+            return PreparedIPAInput(
+                archiveURL: inputURL,
+                workspaceURL: nil
+            )
+        }
+
+        let fileManager = FileManager.default
+        let workspaceURL = fileManager.temporaryDirectory
+            .appendingPathComponent(
+                "rorksign-input-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let archiveURL = workspaceURL.appendingPathComponent("Input.ipa")
+        do {
+            try fileManager.createDirectory(
+                at: workspaceURL,
+                withIntermediateDirectories: true
+            )
+            let archiveRootURL: URL
+            if inputURL.pathExtension.lowercased() == "app" {
+                archiveRootURL = workspaceURL.appendingPathComponent(
+                    "ArchiveRoot",
+                    isDirectory: true
+                )
+                let payloadURL = archiveRootURL.appendingPathComponent(
+                    "Payload",
+                    isDirectory: true
+                )
+                try fileManager.createDirectory(
+                    at: payloadURL,
+                    withIntermediateDirectories: true
+                )
+                try fileManager.copyItem(
+                    at: inputURL,
+                    to: payloadURL.appendingPathComponent(
+                        inputURL.lastPathComponent,
+                        isDirectory: true
+                    )
+                )
+            } else {
+                archiveRootURL = inputURL
+            }
+            try IPAArchive.write(
+                contentsOf: archiveRootURL,
+                to: archiveURL,
+                compressionMode: .stored
+            )
+            return PreparedIPAInput(
+                archiveURL: archiveURL,
+                workspaceURL: workspaceURL
+            )
+        } catch {
+            try? fileManager.removeItem(at: workspaceURL)
+            throw error
+        }
+    }
+
+    static func writeAtomically(_ data: Data, to outputURL: URL) throws {
+        try FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: outputURL, options: .atomic)
+        #if !os(Windows)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: outputURL.path
+        )
+        #endif
     }
 
     /// Loads a PEM certificate/private-key pair into a signing identity.

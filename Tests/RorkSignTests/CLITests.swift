@@ -1966,54 +1966,11 @@ private struct CLIFixture {
     let directory: URL
 }
 
-private struct CLIResult {
-    let status: Int32
-    let output: String
-}
-
 private func makeCLIFixture() throws -> CLIFixture {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     return CLIFixture(directory: directory)
-}
-
-private func runRorkSign(
-    _ arguments: [String],
-    environment: [String: String] = [:],
-    currentDirectoryURL: URL? = nil
-) throws -> CLIResult {
-    let process = Process()
-    process.executableURL = try rorkSignExecutableURL()
-    process.arguments = arguments
-    process.currentDirectoryURL = currentDirectoryURL
-    if !environment.isEmpty {
-        process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
-    }
-
-    let output = Pipe()
-    process.standardOutput = output
-    process.standardError = output
-    try process.run()
-    let data = output.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    return CLIResult(
-        status: process.terminationStatus,
-        output: String(decoding: data, as: UTF8.self)
-    )
-}
-
-private func rorkSignExecutableURL() throws -> URL {
-    if let override = ProcessInfo.processInfo.environment["RORKSIGN_TEST_EXECUTABLE"] {
-        return URL(fileURLWithPath: override)
-    }
-
-    let debugURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appendingPathComponent(".build/debug/rorksign")
-    guard FileManager.default.isExecutableFile(atPath: debugURL.path) else {
-        throw XCTSkip("rorksign executable was not built at \(debugURL.path).")
-    }
-    return debugURL
 }
 
 private func writeCLIInfoPlist(_ dictionary: [String: Any], to url: URL) throws {

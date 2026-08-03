@@ -1,0 +1,255 @@
+name: Windows x64
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-x64-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SWIFT_VERSION: 6.3.3
+  SWIFT_INSTALLER_URL: https://download.swift.org/swift-6.3.3-release/windows10/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE-windows10.exe
+  SWIFT_INSTALLER_SHA256: 235626548F249CD516D3D4D90EEE980DCCAD46F3822DAC1F8E3119B0FEDE94B7
+
+jobs:
+  build-test-inspect:
+    runs-on: blacksmith-4vcpu-windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install pinned Swift toolchain
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ProgressPreference = "SilentlyContinue"
+          $installer = Join-Path $env:RUNNER_TEMP "swift-installer.exe"
+          Invoke-WebRequest -Uri $env:SWIFT_INSTALLER_URL -OutFile $installer
+
+          $actualHash = (Get-FileHash $installer -Algorithm SHA256).Hash
+          if ($actualHash -ne $env:SWIFT_INSTALLER_SHA256) {
+            throw "Swift installer checksum mismatch. Expected $env:SWIFT_INSTALLER_SHA256 but received $actualHash."
+          }
+
+          $process = Start-Process `
+            -FilePath $installer `
+            -ArgumentList @("/quiet", "/norestart") `
+            -Wait `
+            -PassThru
+          if (@(0, 3010) -notcontains $process.ExitCode) {
+            throw "Swift installer failed with exit code $($process.ExitCode)."
+          }
+          Remove-Item $installer -Force
+
+          $machinePath = [Environment]::GetEnvironmentVariable(
+            "Path",
+            "Machine"
+          )
+          $userPath = [Environment]::GetEnvironmentVariable(
+            "Path",
+            "User"
+          )
+          $pathEntries = "$machinePath;$userPath" -split ";" |
+            Where-Object { $_ -and (Test-Path $_) } |
+            Select-Object -Unique
+          foreach ($pathEntry in $pathEntries) {
+            Add-Content -Path $env:GITHUB_PATH -Value $pathEntry
+          }
+          $env:Path = ($pathEntries -join ";") + ";" + $env:Path
+
+          $swiftRoots = @(
+            (Join-Path $env:LOCALAPPDATA "Programs\Swift"),
+            (Join-Path $env:ProgramFiles "Swift"),
+            (Join-Path $env:SystemDrive "Library\Developer\Toolchains")
+          ) | Where-Object { Test-Path $_ }
+          $swiftExecutable = Get-Command swift.exe `
+            -ErrorAction SilentlyContinue
+          if ($null -ne $swiftExecutable) {
+            $swiftExecutable = Get-Item $swiftExecutable.Source
+          } else {
+            $swiftExecutable = $swiftRoots |
+              ForEach-Object {
+                Get-ChildItem `
+                  -Path $_ `
+                  -Filter "swift.exe" `
+                  -File `
+                  -Recurse `
+                  -ErrorAction SilentlyContinue
+              } |
+              Select-Object -First 1
+          }
+          if ($null -eq $swiftExecutable) {
+            throw "Swift executable was not found after installation."
+          }
+          $swiftRoot = $swiftRoots |
+            Where-Object {
+              $swiftExecutable.FullName.StartsWith(
+                $_,
+                [StringComparison]::OrdinalIgnoreCase
+              )
+            } |
+            Select-Object -First 1
+          if ($null -eq $swiftRoot) {
+            $swiftRoot = $swiftExecutable.Directory.Parent.FullName
+          }
+          $swiftBin = $swiftExecutable.Directory.FullName
+          Add-Content -Path $env:GITHUB_PATH -Value $swiftBin
+          $env:Path = "$swiftBin;$env:Path"
+          Add-Content -Path $env:GITHUB_ENV -Value "SWIFT_INSTALL_ROOT=$swiftRoot"
+
+          $versionOutput = (
+            & $swiftExecutable.FullName --version
+          ) -join "`n"
+          if ($versionOutput -notmatch [Regex]::Escape($env:SWIFT_VERSION)) {
+            throw "Installed Swift version does not match $env:SWIFT_VERSION."
+          }
+          $versionOutput
+
+      - name: Build debug rorksign
+        run: swift build --product rorksign
+
+      - name: Run portable tests
+        run: |
+          swift test --filter PortableCLITests
+          swift test --filter IPAArchiveSigningTests/testArchiveRejectsBackslashEntryPaths
+
+      - name: Build release rorksign
+        run: |
+          swift build -c release --product rorksign
+          $binaryDirectory = (
+            swift build -c release --show-bin-path
+          ).Trim()
+          $binary = Join-Path $binaryDirectory "rorksign.exe"
+          if (-not (Test-Path $binary -PathType Leaf)) {
+            throw "Release executable was not found at $binary."
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "RORKSIGN_RELEASE=$binary"
+
+      - name: Smoke test release commands
+        run: |
+          $versionOutput = (
+            & $env:RORKSIGN_RELEASE --version
+          ) -join "`n"
+          if ($versionOutput.Trim() -ne "version: 0.6.0") {
+            throw "Unexpected rorksign version output."
+          }
+          $versionOutput
+          & $env:RORKSIGN_RELEASE --help
+          & $env:RORKSIGN_RELEASE sign ipa --help
+
+      - name: Inspect release dependencies
+        run: |
+          $inspection = Join-Path $env:RUNNER_TEMP "windows-x64-inspection"
+          New-Item -ItemType Directory -Path $inspection -Force | Out-Null
+
+          swift --version |
+            Out-File (Join-Path $inspection "swift-version.txt")
+          $targetInfoText = (
+            swiftc -print-target-info
+          ) -join "`n"
+          $targetInfoText |
+            Out-File (Join-Path $inspection "swift-target-info.json")
+
+          Get-ChildItem `
+            -Path $env:SWIFT_INSTALL_ROOT `
+            -File `
+            -Recurse |
+            Sort-Object FullName |
+            Select-Object FullName, Length |
+            Format-Table -AutoSize |
+            Out-String -Width 4096 |
+            Out-File (Join-Path $inspection "swift-installation-files.txt")
+
+          $targetInfo = $targetInfoText | ConvertFrom-Json
+          $runtimeInventory = Join-Path $inspection "runtime-path-files.txt"
+          foreach ($runtimePath in $targetInfo.paths.runtimeLibraryPaths) {
+            "[$runtimePath]" | Add-Content $runtimeInventory
+            if (Test-Path $runtimePath) {
+              Get-ChildItem -Path $runtimePath -File -Recurse |
+                Sort-Object FullName |
+                ForEach-Object {
+                  "$($_.FullName)`t$($_.Length)"
+                } |
+                Add-Content $runtimeInventory
+            }
+          }
+
+          Get-ChildItem `
+            -Path (Split-Path $env:RORKSIGN_RELEASE) `
+            -File |
+            Sort-Object Name |
+            Select-Object Name, Length |
+            Format-Table -AutoSize |
+            Out-String |
+            Out-File (Join-Path $inspection "release-directory.txt")
+          Get-FileHash `
+            -Path $env:RORKSIGN_RELEASE `
+            -Algorithm SHA256 |
+            Format-List |
+            Out-File (Join-Path $inspection "rorksign-sha256.txt")
+          Copy-Item `
+            -Path $env:RORKSIGN_RELEASE `
+            -Destination (Join-Path $inspection "rorksign.exe")
+
+          $licenseInventory = Join-Path $inspection `
+            "swift-license-notice-files.txt"
+          Get-ChildItem `
+            -Path $env:SWIFT_INSTALL_ROOT `
+            -File `
+            -Recurse |
+            Where-Object {
+              $_.Name -match "(?i)(license|notice|copying)"
+            } |
+            Sort-Object FullName |
+            ForEach-Object {
+              "$($_.FullName)`t$($_.Length)"
+            } |
+            Out-File $licenseInventory
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} `
+            "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere -PathType Leaf)) {
+            throw "Visual Studio locator was not found."
+          }
+          $visualStudio = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          $dumpbin = Get-ChildItem `
+            -Path (Join-Path $visualStudio "VC\Tools\MSVC") `
+            -Filter "dumpbin.exe" `
+            -File `
+            -Recurse |
+            Where-Object {
+              $_.FullName -match "Hostx64\\x64\\dumpbin\.exe$"
+            } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if ($null -eq $dumpbin) {
+            throw "The x64 dependency inspector was not found."
+          }
+          & $dumpbin.FullName /DEPENDENTS $env:RORKSIGN_RELEASE |
+            Out-File (Join-Path $inspection "rorksign-dependencies.txt")
+
+          Add-Content `
+            -Path $env:GITHUB_ENV `
+            -Value "WINDOWS_INSPECTION=$inspection"
+
+      - name: Upload Windows inspection
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rorksign-windows-x64-inspection
+          path: ${{ env.WINDOWS_INSPECTION }}
+          if-no-files-found: error
+          retention-days: 14

@@ -15,6 +15,35 @@ let platformCryptoDependencies: [Target.Dependency] = [
 ]
 #endif
 
+#if canImport(ObjectiveC)
+let objectiveCProducts: [Product] = [
+    .library(
+        name: "RorkSignObjC",
+        targets: ["RorkSignObjC"]
+    ),
+]
+let objectiveCTargets: [Target] = [
+    .target(
+        name: "RorkSignObjC",
+        dependencies: [
+            "RorkSign",
+        ],
+        path: "Sources/RorkSignObjC"
+    ),
+]
+let objectiveCTestDependencies: [Target.Dependency] = [
+    "RorkSignObjC",
+]
+let objectiveCTestExclusions: [String] = []
+#else
+let objectiveCProducts: [Product] = []
+let objectiveCTargets: [Target] = []
+let objectiveCTestDependencies: [Target.Dependency] = []
+let objectiveCTestExclusions = [
+    "ObjCFacadeTests.swift",
+]
+#endif
+
 let package = Package(
     name: "rork-sign",
     platforms: [
@@ -26,15 +55,11 @@ let package = Package(
             name: "RorkSign",
             targets: ["RorkSign"]
         ),
-        .library(
-            name: "RorkSignObjC",
-            targets: ["RorkSignObjC"]
-        ),
         .executable(
             name: "rorksign",
             targets: ["RorkSignCLI"]
         ),
-    ],
+    ] + objectiveCProducts,
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
@@ -53,13 +78,7 @@ let package = Package(
             ],
             path: "Sources/RorkSign"
         ),
-        .target(
-            name: "RorkSignObjC",
-            dependencies: [
-                "RorkSign",
-            ],
-            path: "Sources/RorkSignObjC"
-        ),
+    ] + objectiveCTargets + [
         .executableTarget(
             name: "RorkSignCLI",
             dependencies: [
@@ -73,10 +92,10 @@ let package = Package(
             name: "RorkSignTests",
             dependencies: [
                 "RorkSign",
-                "RorkSignObjC",
                 .product(name: "ZipArchive", package: "swift-zip-archive"),
-            ],
-            path: "Tests/RorkSignTests"
+            ] + objectiveCTestDependencies,
+            path: "Tests/RorkSignTests",
+            exclude: objectiveCTestExclusions
         ),
     ]
 )

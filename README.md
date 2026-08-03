@@ -75,16 +75,14 @@ oracle for certificate and CMS interoperability.
 
 ## Supported Targets
 
-The package currently declares:
+The native package supports macOS 13 or newer and iOS 15 or newer. The CLI also
+builds for Windows x64 with a Swift toolchain. Native library products require
+Swift 6.0 or newer, and the Objective-C product is available only where
+Objective-C interoperability exists.
 
-- macOS 13+
-- iOS 15+
-- WASI browser environments through the opt-in `RorkSignWeb` product
-
-The CLI is intended for macOS development and CI environments with a Swift
-toolchain. Native library products require Swift 6.0 or newer. `RorkSignWeb`
-requires Swift 6.3 or newer because the browser product is declared in the
-versioned Swift 6.3 package manifest.
+The opt-in `RorkSignWeb` product supports WASI browser environments. It requires
+Swift 6.3 or newer because the browser product is declared in the versioned
+Swift 6.3 package manifest.
 
 ## Build
 
@@ -94,9 +92,13 @@ using Swift 5 language mode.
 ```bash
 git clone https://github.com/rorkai/rork-sign.git
 cd rork-sign
-swift build -c release
+swift build -c release --product rorksign
 .build/release/rorksign --help
 ```
+
+On Windows, the executable is named `rorksign.exe`. Use
+`swift build -c release --show-bin-path` when a script needs the toolchain's
+exact release output directory.
 
 During development, run the executable through SwiftPM:
 
@@ -747,7 +749,8 @@ rorksign identity-sign-bundle-profile-key <bundle-path> <profile-path> <credenti
 rorksign identity-sign-ipa <input-ipa> <output-ipa> <cert-pem> <private-key-pem> [--password <password>]
 rorksign identity-sign-ipa-p12 <input-ipa> <output-ipa> <p12-path> <password>
 rorksign identity-sign-ipa-profile-key <input-ipa> <output-ipa> <profile-path> <credential-path> <password>
-rorksign sign ipa --input <input-ipa> --output <output-ipa> --bundle-id <bundle-id> --profile-map <profile-map-json> --certificate <cert-path> --key <credential-path> [--password <password>] [--app-groups <group,...>] [--bundle-name <name>] [--entitlements-resource <name>]
+rorksign sign ipa --input <ipa-app-or-extracted-path> --output <output-ipa> --bundle-id <bundle-id> --profile-map <profile-map-json> --certificate <cert-path> --key <credential-path> [--password <password>] [--app-groups <group,...>] [--bundle-name <name>] [--entitlements-resource <name>]
+rorksign export-pkcs12 --certificate <cert-path> --key <credential-path> [--input-password <password>] --output <output-p12> --output-password <password>
 rorksign seal-resources <bundle-path>
 rorksign verify-resources <bundle-path>
 rorksign team-id <profile-path> <credential-path> <password>
@@ -759,9 +762,11 @@ traditional encrypted RSA PEM credentials. Pass an empty password for
 unencrypted PEM/DER credentials.
 
 `sign ipa --profile-map` reads a JSON object keyed by the final bundle
-identifiers. The root bundle id must be present, and relative profile paths are
-resolved from the JSON file directory. The explicit `--certificate` and `--key`
-inputs define the signing identity, and every selected provisioning profile must
+identifiers. The root bundle id must be present. Relative profile paths are
+resolved from the JSON file directory, while absolute paths remain unchanged.
+The input can be an IPA, a direct `.app` bundle, or an extracted archive
+directory containing `Payload`. The explicit `--certificate` and `--key` inputs
+define the signing identity, and every selected provisioning profile must
 authorize that certificate:
 
 ```json
@@ -770,6 +775,10 @@ authorize that certificate:
   "com.example.app.LiveProcess": "profiles/LiveProcess.mobileprovision"
 }
 ```
+
+`export-pkcs12` loads the certificate and credential with `--input-password`,
+then protects the exported identity with `--output-password`. It commits the
+output atomically after the complete container has been encoded.
 
 ## Limitations
 
@@ -787,7 +796,7 @@ authorize that certificate:
 
 ```bash
 swift test
-swift build -c release
+swift build -c release --product rorksign
 ```
 
 The test suite uses synthetic Mach-O fixtures and temporary app/IPA bundles. It
