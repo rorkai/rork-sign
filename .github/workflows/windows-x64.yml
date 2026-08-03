@@ -281,3 +281,53 @@ jobs:
           path: ${{ env.WINDOWS_INSPECTION }}
           if-no-files-found: error
           retention-days: 14
+
+      - name: Package portable Windows executable
+        run: |
+          $ErrorActionPreference = "Stop"
+          $package = Join-Path $env:RUNNER_TEMP "rorksign-windows-x64"
+          New-Item -ItemType Directory -Path $package -Force | Out-Null
+          $packagedExecutable = Join-Path $package "rorksign.exe"
+          Copy-Item $env:RORKSIGN_RELEASE $packagedExecutable
+
+          $targetInfoText = (swiftc -print-target-info) -join "`n"
+          $targetInfo = $targetInfoText | ConvertFrom-Json
+          $runtimePath = $targetInfo.paths.runtimeLibraryPaths |
+            Where-Object {
+              Test-Path (Join-Path $_ "swiftCore.dll") -PathType Leaf
+            } |
+            Select-Object -First 1
+          if (-not $runtimePath) {
+            throw "The runtime library directory was not found."
+          }
+          Copy-Item (Join-Path $runtimePath "*.dll") $package
+
+          $previousPath = $env:Path
+          try {
+            $env:Path = "$package;$env:SystemRoot\System32"
+            & $packagedExecutable --version
+            if ($LASTEXITCODE -ne 0) {
+              throw "The packaged executable failed with exit code $LASTEXITCODE."
+            }
+          } finally {
+            $env:Path = $previousPath
+          }
+
+          Get-ChildItem $package -File |
+            Sort-Object Name |
+            ForEach-Object {
+              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+              "$hash  $($_.Name)"
+            } |
+            Out-File (Join-Path $package "SHA256SUMS.txt") -Encoding ascii
+          Add-Content `
+            -Path $env:GITHUB_ENV `
+            -Value "RORKSIGN_PACKAGE=$package"
+
+      - name: Upload portable Windows executable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rorksign-windows-x64
+          path: ${{ env.RORKSIGN_PACKAGE }}
+          if-no-files-found: error
+          retention-days: 14
