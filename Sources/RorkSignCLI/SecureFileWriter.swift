@@ -133,7 +133,7 @@ enum SecureFileWriter {
                 nil
             )
         }
-        guard handle != INVALID_HANDLE_VALUE else {
+        guard let handle, handle != INVALID_HANDLE_VALUE else {
             throw windowsError(path: temporaryURL.path)
         }
 
