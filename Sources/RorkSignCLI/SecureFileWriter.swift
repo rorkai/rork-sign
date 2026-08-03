@@ -128,7 +128,8 @@ enum SecureFileWriter {
                 0,
                 &attributes,
                 DWORD(CREATE_NEW),
-                DWORD(FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH),
+                DWORD(FILE_ATTRIBUTE_NORMAL)
+                    | DWORD(FILE_FLAG_WRITE_THROUGH),
                 nil
             )
         }
