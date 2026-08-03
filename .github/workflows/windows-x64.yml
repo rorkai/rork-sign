@@ -313,12 +313,13 @@ jobs:
             $env:Path = $previousPath
           }
 
-          Get-ChildItem $package -File |
+          $checksums = Get-ChildItem $package -File |
             Sort-Object Name |
             ForEach-Object {
               $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
               "$hash  $($_.Name)"
-            } |
+            }
+          $checksums |
             Out-File (Join-Path $package "SHA256SUMS.txt") -Encoding ascii
           Add-Content `
             -Path $env:GITHUB_ENV `
