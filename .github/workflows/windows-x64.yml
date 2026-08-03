@@ -289,6 +289,9 @@ jobs:
           New-Item -ItemType Directory -Path $package -Force | Out-Null
           $packagedExecutable = Join-Path $package "rorksign.exe"
           Copy-Item $env:RORKSIGN_RELEASE $packagedExecutable
+          Copy-Item "LICENSE" $package
+          Copy-Item "THIRD_PARTY_NOTICES.md" $package
+          Copy-Item "ThirdPartyLicenses" $package -Recurse
 
           $targetInfoText = (swiftc -print-target-info) -join "`n"
           $targetInfo = $targetInfoText | ConvertFrom-Json
@@ -313,11 +316,15 @@ jobs:
             $env:Path = $previousPath
           }
 
-          $checksums = Get-ChildItem $package -File |
-            Sort-Object Name |
+          $checksums = Get-ChildItem $package -File -Recurse |
+            Sort-Object FullName |
             ForEach-Object {
               $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
-              "$hash  $($_.Name)"
+              $relativePath = [IO.Path]::GetRelativePath(
+                $package,
+                $_.FullName
+              ).Replace("\", "/")
+              "$hash  $relativePath"
             }
           $checksums |
             Out-File (Join-Path $package "SHA256SUMS.txt") -Encoding ascii
