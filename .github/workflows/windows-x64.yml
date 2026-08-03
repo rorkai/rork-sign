@@ -292,6 +292,11 @@ jobs:
           Copy-Item "LICENSE" $package
           Copy-Item "THIRD_PARTY_NOTICES.md" $package
           Copy-Item "ThirdPartyLicenses" $package -Recurse
+          $strip = Get-Command llvm-strip.exe -ErrorAction Stop
+          & $strip.Source --strip-debug $packagedExecutable
+          if ($LASTEXITCODE -ne 0) {
+            throw "The packaged executable could not be stripped."
+          }
 
           $targetInfoText = (swiftc -print-target-info) -join "`n"
           $targetInfo = $targetInfoText | ConvertFrom-Json
