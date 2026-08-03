@@ -102,10 +102,35 @@ jobs:
           if ($null -eq $swiftRoot) {
             $swiftRoot = $swiftExecutable.Directory.Parent.FullName
           }
+          $sdkRoot = [Environment]::GetEnvironmentVariable(
+            "SDKROOT",
+            "User"
+          )
+          if (-not $sdkRoot) {
+            $sdkRoot = [Environment]::GetEnvironmentVariable(
+              "SDKROOT",
+              "Machine"
+            )
+          }
+          if (-not $sdkRoot -or -not (Test-Path $sdkRoot)) {
+            $windowsSDK = Get-ChildItem `
+              -Path $swiftRoot `
+              -Directory `
+              -Filter "Windows.sdk" `
+              -Recurse `
+              -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+            if ($null -eq $windowsSDK) {
+              throw "The Swift Windows SDK was not found after installation."
+            }
+            $sdkRoot = $windowsSDK.FullName
+          }
           $swiftBin = $swiftExecutable.Directory.FullName
           Add-Content -Path $env:GITHUB_PATH -Value $swiftBin
           $env:Path = "$swiftBin;$env:Path"
           Add-Content -Path $env:GITHUB_ENV -Value "SWIFT_INSTALL_ROOT=$swiftRoot"
+          Add-Content -Path $env:GITHUB_ENV -Value "SDKROOT=$sdkRoot"
+          $env:SDKROOT = $sdkRoot
 
           $versionOutput = (
             & $swiftExecutable.FullName --version
