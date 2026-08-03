@@ -149,17 +149,7 @@ enum CLISupport {
     }
 
     static func writeAtomically(_ data: Data, to outputURL: URL) throws {
-        try FileManager.default.createDirectory(
-            at: outputURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try data.write(to: outputURL, options: .atomic)
-        #if !os(Windows)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: outputURL.path
-        )
-        #endif
+        try SecureFileWriter.writeAtomically(data, to: outputURL)
     }
 
     /// Loads a PEM certificate/private-key pair into a signing identity.

@@ -86,7 +86,13 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Logging", package: "swift-log"),
             ],
-            path: "Sources/RorkSignCLI"
+            path: "Sources/RorkSignCLI",
+            linkerSettings: [
+                .linkedLibrary(
+                    "advapi32",
+                    .when(platforms: [.windows])
+                ),
+            ]
         ),
         .testTarget(
             name: "RorkSignTests",

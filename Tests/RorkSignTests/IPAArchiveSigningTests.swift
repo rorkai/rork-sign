@@ -911,6 +911,54 @@ final class IPAArchiveSigningTests: XCTestCase {
         )
     }
 
+    #if !os(Windows)
+    func testArchiveWritePreservesAnExplicitNonExecutableMachOMode() throws {
+        let workspaceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let rootURL = workspaceURL.appendingPathComponent(
+            "ArchiveRoot",
+            isDirectory: true
+        )
+        let appURL = rootURL.appendingPathComponent(
+            "Payload/Host.app",
+            isDirectory: true
+        )
+        let executableURL = appURL.appendingPathComponent("Host")
+        let archiveURL = workspaceURL.appendingPathComponent("Output.ipa")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: workspaceURL)
+        }
+        try FileManager.default.createDirectory(
+            at: appURL,
+            withIntermediateDirectories: true
+        )
+        try Fixtures.machO64WithCodeSignature().write(to: executableURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: executableURL.path
+        )
+
+        try IPAArchive.write(
+            contentsOf: rootURL,
+            to: archiveURL,
+            compressionMode: .stored
+        )
+
+        try ZipArchiveReader<ZipFileStorage>.withFile(archiveURL.path) {
+            reader in
+            let entry = try XCTUnwrap(
+                try reader.readDirectory().first {
+                    $0.filename.string == "Payload/Host.app/Host"
+                }
+            )
+            XCTAssertFalse(
+                entry.externalAttributes.unixAttributes.filePermissions
+                    .contains(.ownerExecute)
+            )
+        }
+    }
+    #endif
+
     #if !os(WASI)
     /// Verifies read-only directory metadata is restored after children are
     /// extracted, avoiding blocked writes and timestamp drift.

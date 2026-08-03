@@ -298,6 +298,14 @@ final class PortableCLITests: XCTestCase {
             (extractedInputURL, "Extracted.ipa", "Extracted.app"),
         ] {
             let outputURL = directory.appendingPathComponent(outputName)
+            let temporaryURL = directory.appendingPathComponent(
+                "tmp-\(outputName)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: temporaryURL,
+                withIntermediateDirectories: true
+            )
             let result = try runRorkSign([
                 "sign", "ipa",
                 "--input", inputURL.path,
@@ -306,12 +314,20 @@ final class PortableCLITests: XCTestCase {
                 "--profile-map", profileMapURL.path,
                 "--certificate", signing.certificateURL.path,
                 "--key", signing.privateKeyURL.path,
+            ], environment: [
+                "TMPDIR": temporaryURL.path,
+                "TMP": temporaryURL.path,
+                "TEMP": temporaryURL.path,
             ])
 
             XCTAssertEqual(result.status, 0, result.output)
             guard result.status == 0 else {
                 continue
             }
+            let remainingWorkspaces = try FileManager.default
+                .contentsOfDirectory(atPath: temporaryURL.path)
+                .filter { $0.hasPrefix("rorksign-input-") }
+            XCTAssertEqual(remainingWorkspaces, [])
             try ZipArchiveReader<ZipFileStorage>.withFile(outputURL.path) {
                 reader in
                 let entries = try reader.readDirectory()
@@ -366,6 +382,12 @@ final class PortableCLITests: XCTestCase {
         )
         XCTAssertEqual(permissions.intValue & 0o777, 0o600)
         #endif
+        let stagedFiles = try FileManager.default.contentsOfDirectory(
+            atPath: outputURL.deletingLastPathComponent().path
+        ).filter {
+            $0.hasPrefix(".\(outputURL.lastPathComponent).")
+        }
+        XCTAssertEqual(stagedFiles, [])
         let imported = try SigningIdentity(
             pkcs12Data: exportedData,
             password: "output-secret"
@@ -406,6 +428,26 @@ final class PortableCLITests: XCTestCase {
         XCTAssertNotEqual(result.status, 0)
         XCTAssertEqual(try Data(contentsOf: outputURL), previousOutput)
     }
+
+    func testExportPKCS12RejectsAnEmptyOutputPassword() throws {
+        let signing = try SyntheticSigningFixture()
+        defer {
+            signing.remove()
+        }
+        let outputURL = signing.directory.appendingPathComponent("Output.p12")
+
+        let result = try runRorkSign([
+            "export-pkcs12",
+            "--certificate", signing.certificateURL.path,
+            "--key", signing.privateKeyURL.path,
+            "--output", outputURL.path,
+            "--output-password", "",
+        ])
+
+        XCTAssertNotEqual(result.status, 0)
+        XCTAssertTrue(result.output.contains("Output password must not be empty."))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    }
 }
 
 private struct PortableNestedBundles {
@@ -439,8 +481,13 @@ private func makePortableApp(
         ],
         to: appURL.appendingPathComponent("Info.plist")
     )
+    let appExecutableURL = appURL.appendingPathComponent("Sample")
     try Fixtures.machO64WithCodeSignature().write(
-        to: appURL.appendingPathComponent("Sample")
+        to: appExecutableURL
+    )
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o755],
+        ofItemAtPath: appExecutableURL.path
     )
     try Data("asset".utf8).write(
         to: appURL.appendingPathComponent("asset.txt")
@@ -462,8 +509,14 @@ private func makePortableApp(
             ],
             to: extensionURL.appendingPathComponent("Info.plist")
         )
+        let extensionExecutableURL = extensionURL
+            .appendingPathComponent("Widget")
         try Fixtures.machO64WithCodeSignature().write(
-            to: extensionURL.appendingPathComponent("Widget")
+            to: extensionExecutableURL
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: extensionExecutableURL.path
         )
         try writePortablePlist(
             [
@@ -472,8 +525,14 @@ private func makePortableApp(
             ],
             to: frameworkURL.appendingPathComponent("Info.plist")
         )
+        let frameworkExecutableURL = frameworkURL
+            .appendingPathComponent("Library")
         try Fixtures.machO64DylibWithCodeSignature().write(
-            to: frameworkURL.appendingPathComponent("Library")
+            to: frameworkExecutableURL
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: frameworkExecutableURL.path
         )
     }
 
@@ -547,7 +606,15 @@ private func portablePlist(at url: URL) throws -> [String: Any] {
 private func portableEntitlements(in url: URL) throws -> [String: Any] {
     let signed = try Data(contentsOf: url)
     let entitlements = try XCTUnwrap(signatureBlobs(in: signed)[5])
+    guard entitlements.count >= 8 else {
+        XCTFail("The entitlements blob is missing its header.")
+        throw CocoaError(.fileReadCorruptFile)
+    }
     let length = Int(entitlements.readUInt32BE(at: 4))
+    guard length >= 8, length <= entitlements.count else {
+        XCTFail("The entitlements blob has an invalid length.")
+        throw CocoaError(.fileReadCorruptFile)
+    }
     let value = try PropertyListSerialization.propertyList(
         from: entitlements.subdata(in: 8..<length),
         options: [],

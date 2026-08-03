@@ -1280,13 +1280,11 @@ enum MachOFile {
 private enum BundlePath {
     /// Produces a bundle-relative path and rejects traversal outside `rootURL`.
     static func relativePath(for url: URL, under rootURL: URL) throws -> String {
-        let rootPath = rootURL.standardizedFileURL.path.replacingOccurrences(
-            of: "\\",
-            with: "/"
+        let rootPath = normalizedFileSystemPath(
+            rootURL.standardizedFileURL.path
         )
-        let path = url.standardizedFileURL.path.replacingOccurrences(
-            of: "\\",
-            with: "/"
+        let path = normalizedFileSystemPath(
+            url.standardizedFileURL.path
         )
         guard path.hasPrefix(rootPath + "/") else {
             throw RorkSignError.invalidBundle("Path escaped bundle root: \(path).")

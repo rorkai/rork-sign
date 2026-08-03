@@ -645,7 +645,13 @@ func rorkSignExecutableURL() throws -> URL {
     if let override = ProcessInfo.processInfo.environment[
         "RORKSIGN_TEST_EXECUTABLE"
     ] {
-        return URL(fileURLWithPath: override)
+        let overrideURL = URL(fileURLWithPath: override)
+        guard isRunnableRorkSignExecutable(overrideURL) else {
+            throw XCTSkip(
+                "RORKSIGN_TEST_EXECUTABLE is not runnable at \(override)."
+            )
+        }
+        return overrideURL
     }
 
     #if os(Windows)
@@ -683,16 +689,7 @@ func rorkSignExecutableURL() throws -> URL {
     }
 
     for candidate in candidates {
-        #if os(Windows)
-        let isRunnable = FileManager.default.fileExists(
-            atPath: candidate.path
-        )
-        #else
-        let isRunnable = FileManager.default.isExecutableFile(
-            atPath: candidate.path
-        )
-        #endif
-        if isRunnable {
+        if isRunnableRorkSignExecutable(candidate) {
             return candidate
         }
     }
@@ -700,6 +697,14 @@ func rorkSignExecutableURL() throws -> URL {
     throw XCTSkip(
         "rorksign executable was not found beside the tests or in .build."
     )
+}
+
+private func isRunnableRorkSignExecutable(_ url: URL) -> Bool {
+    #if os(Windows)
+    FileManager.default.fileExists(atPath: url.path)
+    #else
+    FileManager.default.isExecutableFile(atPath: url.path)
+    #endif
 }
 
 func runCommand(_ executableURL: URL, arguments: [String]) throws {

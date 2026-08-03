@@ -189,13 +189,11 @@ enum IPAArchiveSigner {
 
     /// Produces an archive-root-relative path and rejects traversal escapes.
     private static func relativePath(for url: URL, under rootURL: URL) throws -> String {
-        let rootPath = rootURL.standardizedFileURL.path.replacingOccurrences(
-            of: "\\",
-            with: "/"
+        let rootPath = normalizedFileSystemPath(
+            rootURL.standardizedFileURL.path
         )
-        let path = url.standardizedFileURL.path.replacingOccurrences(
-            of: "\\",
-            with: "/"
+        let path = normalizedFileSystemPath(
+            url.standardizedFileURL.path
         )
         guard path.hasPrefix(rootPath + "/") else {
             throw RorkSignError.invalidArchive("Path escaped archive root: \(path).")

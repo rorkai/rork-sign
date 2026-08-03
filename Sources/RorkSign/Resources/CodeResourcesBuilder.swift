@@ -212,16 +212,6 @@ private enum NestedResourceBundleScanner {
             || components.contains(where: { $0 == "_WatchKitStub" })
     }
 
-    private static func normalizedFileSystemPath(_ path: String) -> String {
-        let path = path.replacingOccurrences(of: "\\", with: "/")
-        if path == "/private/var" {
-            return "/var"
-        }
-        if path.hasPrefix("/private/var/") {
-            return String(path.dropFirst("/private".count))
-        }
-        return path
-    }
 }
 
 /// Parsed CodeResources entries, normalized across modern `files2` and legacy
@@ -497,20 +487,6 @@ private enum BundleResourceScanner {
             throw RorkSignError.resourceSealing("CodeResources path escaped bundle root: \(relativePath).")
         }
         return url
-    }
-
-    /// macOS exposes temporary directories through both `/var` and
-    /// `/private/var`. Normalizing that alias keeps bundle-relative path
-    /// extraction stable without resolving the final symlink resource itself.
-    private static func normalizedFileSystemPath(_ path: String) -> String {
-        let path = path.replacingOccurrences(of: "\\", with: "/")
-        if path == "/private/var" {
-            return "/var"
-        }
-        if path.hasPrefix("/private/var/") {
-            return String(path.dropFirst("/private".count))
-        }
-        return path
     }
 
     /// Skips generated signature metadata, FairPlay metadata, and the main

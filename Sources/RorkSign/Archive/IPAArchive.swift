@@ -706,8 +706,12 @@ package enum IPAArchive {
 
             // Mach-O code remains executable when the host cannot expose a
             // POSIX mode for the source file.
-            let isExecutable = permissions.map { $0 & 0o111 != 0 } == true
-                || (try? MachOFile.isMachO(at: url)) == true
+            #if os(Windows)
+            let isExecutable = (try? MachOFile.isMachO(at: url)) == true
+            #else
+            let isExecutable = permissions.map { $0 & 0o111 != 0 }
+                ?? ((try? MachOFile.isMachO(at: url)) == true)
+            #endif
             externalAttributes = .unix([
                 .isRegularFile,
                 .permissions(
@@ -1065,7 +1069,9 @@ package enum IPAArchive {
         let rootPath = normalizedFileSystemPath(
             rootURL.standardizedFileURL.path
         )
-        let destinationPath = normalizedFileSystemPath(destinationURL.path)
+        let destinationPath = normalizedFileSystemPath(
+            destinationURL.path
+        )
         guard destinationPath.hasPrefix(rootPath + "/") else {
             throw RorkSignError.invalidArchive(
                 "IPA archive entry escaped the extraction directory: \(relativePath)."
@@ -1122,7 +1128,9 @@ package enum IPAArchive {
         let rootPath = normalizedFileSystemPath(
             rootURL.standardizedFileURL.path
         )
-        let path = normalizedFileSystemPath(url.standardizedFileURL.path)
+        let path = normalizedFileSystemPath(
+            url.standardizedFileURL.path
+        )
         guard path.hasPrefix(rootPath + "/") else {
             throw RorkSignError.invalidArchive(
                 "Signed IPA path escaped its workspace: \(path)."
@@ -1131,10 +1139,6 @@ package enum IPAArchive {
         return String(path.dropFirst(rootPath.count + 1))
     }
 
-    /// Normalizes host separators before creating an archive-relative path.
-    private static func normalizedFileSystemPath(_ path: String) -> String {
-        path.replacingOccurrences(of: "\\", with: "/")
-    }
 }
 
 private extension ArchiveCompressionMode {

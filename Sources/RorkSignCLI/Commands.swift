@@ -805,6 +805,9 @@ struct ExportPKCS12: ParsableCommand {
     var outputPassword: String
 
     func run() throws {
+        guard !outputPassword.isEmpty else {
+            throw ValidationError("Output password must not be empty.")
+        }
         let identity = try CLISupport.readIdentity(
             certificatePath: certificatePath,
             credentialPath: keyPath,

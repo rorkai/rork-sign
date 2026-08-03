@@ -1,5 +1,21 @@
 import Foundation
 
+/**
+ * Uses archive separators on every host. macOS can expose the same temporary
+ * directory through two paths, so the alias is normalized without resolving
+ * the final resource itself.
+ */
+package func normalizedFileSystemPath(_ path: String) -> String {
+    let path = path.replacingOccurrences(of: "\\", with: "/")
+    if path == "/private/var" {
+        return "/var"
+    }
+    if path.hasPrefix("/private/var/") {
+        return String(path.dropFirst("/private".count))
+    }
+    return path
+}
+
 /// A filesystem entry classified consistently across native and WASI hosts.
 ///
 /// Keeping the classification beside the URL lets signing code distinguish
