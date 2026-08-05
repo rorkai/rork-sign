@@ -379,16 +379,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view $env:GITHUB_REF_NAME *> $null
+          gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload `
               $env:GITHUB_REF_NAME `
               $env:WINDOWS_RELEASE_ARCHIVE `
+              --repo $env:GITHUB_REPOSITORY `
               --clobber
           } else {
             gh release create `
               $env:GITHUB_REF_NAME `
               $env:WINDOWS_RELEASE_ARCHIVE `
+              --repo $env:GITHUB_REPOSITORY `
               --verify-tag `
               --title $env:GITHUB_REF_NAME
           }
