@@ -15,7 +15,7 @@ preserved under [ThirdPartyLicenses](ThirdPartyLicenses).
 - [Swift ASN.1 1.7.1](https://github.com/apple/swift-asn1), revision
   `a9a5efd40eaf558a2bcd48d64b1d1646be686008`
 - [Swift Crypto](https://github.com/rorkai/swift-crypto), revision
-  `b6c710cd588404890ab173d82b8a8fc9588ee382`, based on upstream 4.5.0
+  `f171fca4c1718d685c495350fe9136a3fda6f262`, based on upstream 4.5.0
   revision `1b6b2e274e85105bfa155183145a1dcfd63331f1`
 - [Swift Log 1.13.2](https://github.com/apple/swift-log), revision
   `92448c359f00ebe36ae97d3bd9086f13c7692b5a`
@@ -35,7 +35,7 @@ The corresponding upstream legal texts are reproduced in:
 ### Swift Zip Archive
 
 [Swift Zip Archive](https://github.com/rorkai/swift-zip-archive), revision
-`89b8b71477f6764783ef4b3e47c6cc996d3bb7f0`, is based on
+`8e1b462cee9875e8a4ef991df1a43ba884cc70bb`, is based on
 [the upstream project](https://github.com/adam-fowler/swift-zip-archive) and is
 distributed under the Apache License 2.0. It includes a namespaced copy of
 [zlib](https://www.zlib.net/) under the zlib License. The corresponding legal
