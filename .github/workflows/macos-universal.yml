@@ -122,7 +122,6 @@ jobs:
         with:
           name: rorksign-macos-universal
           path: ${{ env.RORKSIGN_ARTIFACT }}
-          archive: false
           if-no-files-found: error
           retention-days: 14
 
