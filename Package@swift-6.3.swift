@@ -80,7 +80,7 @@ let package = Package(
         ),
         .package(
             url: "https://github.com/rorkai/swift-zip-archive.git",
-            revision: "7026a93c8079037ad119f114fe1d1a785e5d76a1"
+            exact: "0.8.1-rork.4"
         ),
         .package(
             url: "https://github.com/apple/swift-argument-parser.git",
