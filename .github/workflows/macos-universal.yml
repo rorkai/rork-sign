@@ -113,11 +113,16 @@ jobs:
           ) > "$package/SHA256SUMS.txt"
           echo "RORKSIGN_PACKAGE=$package" >> "$GITHUB_ENV"
 
+          artifact="$RUNNER_TEMP/rorksign-macos-universal.tar"
+          tar -C "$package" -cf "$artifact" .
+          echo "RORKSIGN_ARTIFACT=$artifact" >> "$GITHUB_ENV"
+
       - name: Upload portable macOS executable
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rorksign-macos-universal
-          path: ${{ env.RORKSIGN_PACKAGE }}
+          path: ${{ env.RORKSIGN_ARTIFACT }}
+          archive: false
           if-no-files-found: error
           retention-days: 14
 
@@ -135,11 +140,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          artifact="$RUNNER_TEMP/rorksign-macos-universal-artifact"
           package="$RUNNER_TEMP/rorksign-macos-universal"
           gh run download "$GITHUB_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
             --name "rorksign-macos-universal" \
-            --dir "$package"
+            --dir "$artifact"
+          mkdir -p "$package"
+          tar -C "$package" -xf "$artifact/rorksign-macos-universal.tar"
+          test -x "$package/rorksign"
           archive="$RUNNER_TEMP/rorksign-macos-universal.zip"
           (cd "$package" && zip -qry "$archive" .)
           echo "MACOS_RELEASE_ARCHIVE=$archive" >> "$GITHUB_ENV"
