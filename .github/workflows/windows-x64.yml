@@ -168,7 +168,7 @@ jobs:
           $versionOutput = (
             & $env:RORKSIGN_RELEASE --version
           ) -join "`n"
-          if ($versionOutput.Trim() -ne "version: 0.6.1") {
+          if ($versionOutput.Trim() -notmatch '^version: \d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
             throw "Unexpected rorksign version output."
           }
           $versionOutput

@@ -8,8 +8,12 @@ import RorkSign
 import XCTest
 import ZipArchive
 
+#if os(Windows)
+import WinSDK
+#endif
+
 final class PortableCLITests: XCTestCase {
-    func testFocusedSignCommandSignsCompleteSyntheticArchive() throws {
+    func testFocusedSignCommandSignsCompleteSyntheticArchiveUsingPasswordFile() throws {
         let signing = try SyntheticSigningFixture()
         defer {
             signing.remove()
@@ -33,6 +37,8 @@ final class PortableCLITests: XCTestCase {
         )
         let inputURL = directory.appendingPathComponent("Input.ipa")
         let outputURL = directory.appendingPathComponent("Output.ipa")
+        let credentialURL = directory.appendingPathComponent("Signing.p12")
+        let passwordURL = directory.appendingPathComponent("signing-password")
         let rootProfileURL = directory.appendingPathComponent(
             "Root.mobileprovision"
         )
@@ -91,22 +97,42 @@ final class PortableCLITests: XCTestCase {
             contentsOf: archiveRootURL,
             at: inputURL
         )
+        try signing.identity.pkcs12Representation(password: "signing-secret")
+            .write(to: credentialURL)
+        try Data("signing-secret".utf8).write(to: passwordURL)
         try Data("previous output".utf8).write(to: outputURL)
 
-        let result = try runRorkSign([
+        let baseArguments = [
             "sign", "ipa",
             "--input", inputURL.path,
             "--output", outputURL.path,
             "--bundle-id", rootIdentifier,
             "--profile-map", profileMapURL.path,
             "--certificate", signing.certificateURL.path,
-            "--key", signing.privateKeyURL.path,
+            "--key", credentialURL.path,
             "--app-groups", appGroupIdentifier,
             "--bundle-name", "Portable Sample",
             "--entitlements-resource", entitlementsResourceName,
-        ])
+        ]
+        let result = try runRorkSign(
+            baseArguments + ["--password-file", passwordURL.path]
+        )
 
         XCTAssertEqual(result.status, 0, result.output)
+
+        let conflictingPasswordResult = try runRorkSign(
+            baseArguments + [
+                "--password", "signing-secret",
+                "--password-file", passwordURL.path,
+            ]
+        )
+        XCTAssertNotEqual(conflictingPasswordResult.status, 0)
+        XCTAssertTrue(
+            conflictingPasswordResult.output.contains(
+                "Signing identity accepts either a direct password or a password file, not both."
+            )
+        )
+
         guard result.status == 0 else {
             return
         }
@@ -234,7 +260,7 @@ final class PortableCLITests: XCTestCase {
             reader in
             let entries = try reader.readDirectory()
             XCTAssertFalse(
-                entries.contains { $0.filename.string.contains("\\") }
+                entries.contains { $0.pathInArchive.contains("\\") }
             )
             for path in [
                 "Payload/Sample.app/Sample",
@@ -242,7 +268,7 @@ final class PortableCLITests: XCTestCase {
                 "Payload/Sample.app/Frameworks/Library.framework/Library",
             ] {
                 let entry = try XCTUnwrap(
-                    entries.first { $0.filename.string == path }
+                    entries.first { $0.pathInArchive == path }
                 )
                 XCTAssertTrue(
                     entry.externalAttributes.unixAttributes.filePermissions
@@ -333,7 +359,7 @@ final class PortableCLITests: XCTestCase {
                 let entries = try reader.readDirectory()
                 let executablePath = "Payload/\(expectedAppName)/Sample"
                 let executable = try XCTUnwrap(
-                    entries.first { $0.filename.string == executablePath }
+                    entries.first { $0.pathInArchive == executablePath }
                 )
                 XCTAssertTrue(
                     executable.externalAttributes.unixAttributes
@@ -341,7 +367,7 @@ final class PortableCLITests: XCTestCase {
                 )
                 XCTAssertNotNil(
                     entries.first {
-                        $0.filename.string
+                        $0.pathInArchive
                             == "Payload/\(expectedAppName)/_CodeSignature/CodeResources"
                     }
                 )
@@ -374,7 +400,9 @@ final class PortableCLITests: XCTestCase {
             return
         }
         let exportedData = try Data(contentsOf: outputURL)
-        #if !os(Windows)
+        #if os(Windows)
+        XCTAssertTrue(windowsFileHasOwnerOnlyAccess(at: outputURL))
+        #else
         let permissions = try XCTUnwrap(
             FileManager.default.attributesOfItem(
                 atPath: outputURL.path
@@ -471,13 +499,15 @@ final class PortableCLITests: XCTestCase {
             signing.remove()
         }
         let outputURL = signing.directory.appendingPathComponent("Output.p12")
+        let passwordURL = signing.directory.appendingPathComponent("empty-password")
+        try Data().write(to: passwordURL)
 
         let result = try runRorkSign([
             "export-pkcs12",
             "--certificate", signing.certificateURL.path,
             "--key", signing.privateKeyURL.path,
             "--output", outputURL.path,
-            "--output-password", "",
+            "--output-password-file", passwordURL.path,
         ])
 
         XCTAssertNotEqual(result.status, 0)
@@ -485,6 +515,126 @@ final class PortableCLITests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
     }
 }
+
+#if os(Windows)
+/// Returns whether a file has one protected allow entry for its owner.
+private func windowsFileHasOwnerOnlyAccess(at url: URL) -> Bool {
+    let path = Array(url.path.utf16) + [0]
+    let securityInformation = DWORD(
+        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
+    )
+    var descriptorLength: DWORD = 0
+    path.withUnsafeBufferPointer {
+        _ = GetFileSecurityW(
+            $0.baseAddress,
+            securityInformation,
+            nil,
+            0,
+            &descriptorLength
+        )
+    }
+    guard descriptorLength > 0 else {
+        return false
+    }
+
+    var descriptor = [UInt8](
+        repeating: 0,
+        count: Int(descriptorLength)
+    )
+    return path.withUnsafeBufferPointer { path in
+        descriptor.withUnsafeMutableBytes { descriptor in
+            guard let descriptorAddress = descriptor.baseAddress,
+                GetFileSecurityW(
+                    path.baseAddress,
+                    securityInformation,
+                    descriptorAddress,
+                    descriptorLength,
+                    &descriptorLength
+                )
+            else {
+                return false
+            }
+
+            var control: SECURITY_DESCRIPTOR_CONTROL = 0
+            var revision: DWORD = 0
+            guard
+                GetSecurityDescriptorControl(
+                    descriptorAddress,
+                    &control,
+                    &revision
+                ),
+                control & SECURITY_DESCRIPTOR_CONTROL(SE_DACL_PROTECTED) != 0
+            else {
+                return false
+            }
+
+            var owner: PSID?
+            var ownerDefaulted: WindowsBool = false
+            guard
+                GetSecurityDescriptorOwner(
+                    descriptorAddress,
+                    &owner,
+                    &ownerDefaulted
+                ),
+                let owner
+            else {
+                return false
+            }
+
+            var daclPresent: WindowsBool = false
+            var dacl: PACL?
+            var daclDefaulted: WindowsBool = false
+            guard
+                GetSecurityDescriptorDacl(
+                    descriptorAddress,
+                    &daclPresent,
+                    &dacl,
+                    &daclDefaulted
+                ),
+                daclPresent == true,
+                let dacl
+            else {
+                return false
+            }
+
+            var information = ACL_SIZE_INFORMATION()
+            guard
+                GetAclInformation(
+                    dacl,
+                    &information,
+                    DWORD(MemoryLayout<ACL_SIZE_INFORMATION>.size),
+                    AclSizeInformation
+                ),
+                information.AceCount == 1
+            else {
+                return false
+            }
+
+            var rawACE: UnsafeMutableRawPointer?
+            guard GetAce(dacl, 0, &rawACE), let rawACE else {
+                return false
+            }
+            let ace = rawACE.assumingMemoryBound(
+                to: ACCESS_ALLOWED_ACE.self
+            )
+            guard ace.pointee.Header.AceType == ACCESS_ALLOWED_ACE_TYPE else {
+                return false
+            }
+
+            guard
+                let sidOffset = MemoryLayout<ACCESS_ALLOWED_ACE>.offset(
+                    of: \.SidStart
+                )
+            else {
+                return false
+            }
+            let allowedSID = rawACE.advanced(by: sidOffset)
+            return EqualSid(owner, allowedSID)
+                || IsWellKnownSid(allowedSID, WinCreatorOwnerRightsSid)
+        }
+    }
+}
+#endif
 
 private struct PortableNestedBundles {
     let extensionURL: URL

@@ -8,10 +8,14 @@ import Glibc
 import WinSDK
 #endif
 
-/**
- * Publishes sensitive output only after a protected sibling file is complete.
- */
+/// Publishes sensitive output only after a protected sibling file is complete.
 enum SecureFileWriter {
+    /// Writes data through a protected temporary file and atomically replaces
+    /// the destination after durable storage succeeds.
+    ///
+    /// - Parameters:
+    ///   - data: The sensitive bytes to write.
+    ///   - outputURL: The final destination.
     static func writeAtomically(_ data: Data, to outputURL: URL) throws {
         try FileManager.default.createDirectory(
             at: outputURL.deletingLastPathComponent(),
@@ -96,29 +100,31 @@ enum SecureFileWriter {
         temporaryURL: URL,
         outputURL: URL
     ) throws {
-        var descriptor: PSECURITY_DESCRIPTOR?
-        let descriptorText = Array("D:P(A;;FA;;;OW)".utf16) + [0]
-        let converted = descriptorText.withUnsafeBufferPointer {
+
+        // This protected DACL grants full access only to the file's owner.
+        var securityDescriptor: PSECURITY_DESCRIPTOR?
+        let securityDescriptorString = Array("D:P(A;;FA;;;OW)".utf16) + [0]
+        let didConvertSecurityDescriptor = securityDescriptorString.withUnsafeBufferPointer {
             ConvertStringSecurityDescriptorToSecurityDescriptorW(
                 $0.baseAddress,
                 DWORD(SDDL_REVISION_1),
-                &descriptor,
+                &securityDescriptor,
                 nil
             )
         }
-        guard converted, let descriptor else {
+        guard didConvertSecurityDescriptor, let securityDescriptor else {
             throw windowsError(path: temporaryURL.path)
         }
         defer {
-            LocalFree(descriptor)
+            LocalFree(securityDescriptor)
         }
 
-        var attributes = SECURITY_ATTRIBUTES()
-        attributes.nLength = DWORD(
+        var securityAttributes = SECURITY_ATTRIBUTES()
+        securityAttributes.nLength = DWORD(
             MemoryLayout<SECURITY_ATTRIBUTES>.size
         )
-        attributes.lpSecurityDescriptor = descriptor
-        attributes.bInheritHandle = false
+        securityAttributes.lpSecurityDescriptor = securityDescriptor
+        securityAttributes.bInheritHandle = false
 
         let temporaryPath = Array(temporaryURL.path.utf16) + [0]
         let handle = temporaryPath.withUnsafeBufferPointer {
@@ -126,7 +132,7 @@ enum SecureFileWriter {
                 $0.baseAddress,
                 DWORD(GENERIC_WRITE),
                 0,
-                &attributes,
+                &securityAttributes,
                 DWORD(CREATE_NEW),
                 DWORD(FILE_ATTRIBUTE_NORMAL)
                     | DWORD(FILE_FLAG_WRITE_THROUGH),

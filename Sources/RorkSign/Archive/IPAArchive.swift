@@ -413,7 +413,7 @@ package enum IPAArchive {
             ValidatedArchiveEntry(
                 header: header,
                 relativePath: try validatedArchivePath(
-                    header.filename.string
+                    header.pathInArchive
                 ),
                 kind: itemKind(for: header)
             )

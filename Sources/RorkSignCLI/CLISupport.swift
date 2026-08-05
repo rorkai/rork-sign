@@ -66,10 +66,18 @@ enum CLISupport {
         return profilesByBundleIdentifier
     }
 
+    /// An IPA archive and the temporary workspace that owns it, when present.
     struct PreparedIPAInput {
+        /// The archive passed to the signing pipeline.
         let archiveURL: URL
+
+        /// The temporary directory to remove after signing a directory input.
         let workspaceURL: URL?
 
+        /// Removes the temporary workspace without affecting file inputs.
+        ///
+        /// Cleanup is best-effort because it must not replace the signing
+        /// command's primary result.
         func removeWorkspace() {
             guard let workspaceURL else {
                 return
@@ -78,10 +86,10 @@ enum CLISupport {
         }
     }
 
-    /**
-     Directory inputs are serialized through the archive implementation so the
-     focused command uses one signing path for every supported input shape.
-     */
+    /// Prepares an IPA archive for the signing pipeline.
+    ///
+    /// Directory inputs are serialized through the archive implementation so
+    /// every supported input shape follows the same signing path.
     static func prepareIPAInput(at inputURL: URL) throws -> PreparedIPAInput {
         var isDirectory: ObjCBool = false
         guard
@@ -148,11 +156,24 @@ enum CLISupport {
         }
     }
 
+    /// Writes sensitive command output through the platform's protected atomic
+    /// file path.
     static func writeAtomically(_ data: Data, to outputURL: URL) throws {
         try SecureFileWriter.writeAtomically(data, to: outputURL)
     }
 
     /// Reads a password from one direct value or one protected file.
+    ///
+    /// File contents are returned verbatim, including any trailing newline. The
+    /// caller remains responsible for restricting access to the password file.
+    ///
+    /// - Parameters:
+    ///   - value: Password supplied directly by the caller.
+    ///   - filePath: Optional path containing the password bytes as UTF-8.
+    ///   - optionName: User-facing option group named in validation errors.
+    /// - Returns: The direct value or complete file contents.
+    /// - Throws: `ValidationError` when both sources are present, or a file-read
+    ///   error when `filePath` cannot be decoded as UTF-8.
     static func readPassword(
         value: String,
         filePath: String?,

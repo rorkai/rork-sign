@@ -1,10 +1,10 @@
 import Foundation
 
-/**
- * Uses archive separators on every host. macOS can expose the same temporary
- * directory through two paths, so the alias is normalized without resolving
- * the final resource itself.
- */
+/// Returns a filesystem path normalized for archive comparisons.
+///
+/// The result uses archive separators on every host. macOS can expose the same
+/// temporary directory through two paths, so the alias is normalized without
+/// resolving the final resource itself.
 package func normalizedFileSystemPath(_ path: String) -> String {
     let path = path.replacingOccurrences(of: "\\", with: "/")
     if path == "/private/var" {
@@ -24,18 +24,32 @@ package func normalizedFileSystemPath(_ path: String) -> String {
 struct FileSystemEntry {
     /// The entry types relevant to bundle traversal and resource sealing.
     enum Kind: Equatable {
+        /// A directory whose descendants may be visited.
         case directory
+
+        /// A regular file whose bytes belong to the traversal.
         case regularFile
+
+        /// A symbolic link that must never be followed by the traversal.
         case symbolicLink
     }
 
+    /// Location of the classified entry.
     let url: URL
+
+    /// Filesystem kind observed without following symbolic links.
     let kind: Kind
 }
 
 /// Controls filtering while enumerating a filesystem tree.
 struct FileTraversalOptions: OptionSet {
+    /// Raw option bits.
     let rawValue: Int
+
+    /// Creates traversal options from raw option bits.
+    init(rawValue: Int) {
+        self.rawValue = rawValue
+    }
 
     /// Omits dot-prefixed entries and native entries marked as hidden.
     static let skipsHiddenFiles = Self(rawValue: 1 << 0)
@@ -43,7 +57,10 @@ struct FileTraversalOptions: OptionSet {
 
 /// Determines whether descendant enumeration enters a visited directory.
 enum FileTraversalDecision {
+    /// Continues recursively through the directory's descendants.
     case visitDescendants
+
+    /// Returns the directory without visiting its descendants.
     case skipDescendants
 }
 
