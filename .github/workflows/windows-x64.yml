@@ -365,6 +365,7 @@ jobs:
           $package = Join-Path $env:RUNNER_TEMP "rorksign-windows-x64"
           gh run download `
             $env:GITHUB_RUN_ID `
+            --repo $env:GITHUB_REPOSITORY `
             --name "rorksign-windows-x64" `
             --dir $package
           if ($LASTEXITCODE -ne 0) {
