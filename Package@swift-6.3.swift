@@ -20,6 +20,35 @@ let platformCryptoDependencies: [Target.Dependency] = [
 ]
 #endif
 
+#if canImport(ObjectiveC)
+let objectiveCProducts: [Product] = [
+    .library(
+        name: "RorkSignObjC",
+        targets: ["RorkSignObjC"]
+    ),
+]
+let objectiveCTargets: [Target] = [
+    .target(
+        name: "RorkSignObjC",
+        dependencies: [
+            "RorkSign",
+        ],
+        path: "Sources/RorkSignObjC"
+    ),
+]
+let objectiveCTestDependencies: [Target.Dependency] = [
+    "RorkSignObjC",
+]
+let objectiveCTestExclusions: [String] = []
+#else
+let objectiveCProducts: [Product] = []
+let objectiveCTargets: [Target] = []
+let objectiveCTestDependencies: [Target.Dependency] = []
+let objectiveCTestExclusions = [
+    "ObjCFacadeTests.swift",
+]
+#endif
+
 let package = Package(
     name: "rork-sign",
     platforms: [
@@ -32,10 +61,6 @@ let package = Package(
             targets: ["RorkSign"]
         ),
         .library(
-            name: "RorkSignObjC",
-            targets: ["RorkSignObjC"]
-        ),
-        .library(
             name: "RorkSignWeb",
             targets: ["RorkSignWeb"]
         ),
@@ -43,7 +68,7 @@ let package = Package(
             name: "rorksign",
             targets: ["RorkSignCLI"]
         ),
-    ],
+    ] + objectiveCProducts,
     dependencies: [
         .package(
             url: "https://github.com/rorkai/swift-crypto.git",
@@ -55,7 +80,7 @@ let package = Package(
         ),
         .package(
             url: "https://github.com/rorkai/swift-zip-archive.git",
-            exact: "0.8.1-rork.3"
+            exact: "0.8.1-rork.4"
         ),
         .package(
             url: "https://github.com/apple/swift-argument-parser.git",
@@ -71,13 +96,7 @@ let package = Package(
             ],
             path: "Sources/RorkSign"
         ),
-        .target(
-            name: "RorkSignObjC",
-            dependencies: [
-                "RorkSign",
-            ],
-            path: "Sources/RorkSignObjC"
-        ),
+    ] + objectiveCTargets + [
         .target(
             name: "RorkSignWeb",
             dependencies: [
@@ -91,17 +110,23 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Logging", package: "swift-log"),
             ],
-            path: "Sources/RorkSignCLI"
+            path: "Sources/RorkSignCLI",
+            linkerSettings: [
+                .linkedLibrary(
+                    "advapi32",
+                    .when(platforms: [.windows])
+                ),
+            ]
         ),
         .testTarget(
             name: "RorkSignTests",
             dependencies: [
                 "RorkSign",
-                "RorkSignObjC",
                 "RorkSignWeb",
                 .product(name: "ZipArchive", package: "swift-zip-archive"),
-            ],
-            path: "Tests/RorkSignTests"
+            ] + objectiveCTestDependencies,
+            path: "Tests/RorkSignTests",
+            exclude: objectiveCTestExclusions
         ),
     ]
 )

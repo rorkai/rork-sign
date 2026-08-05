@@ -56,13 +56,141 @@ enum CLISupport {
                 throw ValidationError("Provisioning profile map contains an empty profile path for \(bundleIdentifier).")
             }
 
-            let profileURL = profilePath.hasPrefix("/")
-                ? URL(fileURLWithPath: profilePath)
-                : baseURL.appendingPathComponent(profilePath)
+            let profileURL = URL(
+                fileURLWithPath: profilePath,
+                relativeTo: baseURL
+            ).standardizedFileURL
             profilesByBundleIdentifier[bundleIdentifier] = try Data(contentsOf: profileURL)
         }
 
         return profilesByBundleIdentifier
+    }
+
+    /// An IPA archive and the temporary workspace that owns it, when present.
+    struct PreparedIPAInput {
+        /// The archive passed to the signing pipeline.
+        let archiveURL: URL
+
+        /// The temporary directory to remove after signing a directory input.
+        let workspaceURL: URL?
+
+        /// Removes the temporary workspace without affecting file inputs.
+        ///
+        /// Cleanup is best-effort because it must not replace the signing
+        /// command's primary result.
+        func removeWorkspace() {
+            guard let workspaceURL else {
+                return
+            }
+            try? FileManager.default.removeItem(at: workspaceURL)
+        }
+    }
+
+    /// Prepares an IPA archive for the signing pipeline.
+    ///
+    /// Directory inputs are serialized through the archive implementation so
+    /// every supported input shape follows the same signing path.
+    static func prepareIPAInput(at inputURL: URL) throws -> PreparedIPAInput {
+        var isDirectory: ObjCBool = false
+        guard
+            FileManager.default.fileExists(
+                atPath: inputURL.path,
+                isDirectory: &isDirectory
+            ),
+            isDirectory.boolValue
+        else {
+            return PreparedIPAInput(
+                archiveURL: inputURL,
+                workspaceURL: nil
+            )
+        }
+
+        let fileManager = FileManager.default
+        let workspaceURL = fileManager.temporaryDirectory
+            .appendingPathComponent(
+                "rorksign-input-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let archiveURL = workspaceURL.appendingPathComponent("Input.ipa")
+        do {
+            try fileManager.createDirectory(
+                at: workspaceURL,
+                withIntermediateDirectories: true
+            )
+            let archiveRootURL: URL
+            if inputURL.pathExtension.lowercased() == "app" {
+                archiveRootURL = workspaceURL.appendingPathComponent(
+                    "ArchiveRoot",
+                    isDirectory: true
+                )
+                let payloadURL = archiveRootURL.appendingPathComponent(
+                    "Payload",
+                    isDirectory: true
+                )
+                try fileManager.createDirectory(
+                    at: payloadURL,
+                    withIntermediateDirectories: true
+                )
+                try fileManager.copyItem(
+                    at: inputURL,
+                    to: payloadURL.appendingPathComponent(
+                        inputURL.lastPathComponent,
+                        isDirectory: true
+                    )
+                )
+            } else {
+                archiveRootURL = inputURL
+            }
+            try IPAArchive.write(
+                contentsOf: archiveRootURL,
+                to: archiveURL,
+                compressionMode: .stored
+            )
+            return PreparedIPAInput(
+                archiveURL: archiveURL,
+                workspaceURL: workspaceURL
+            )
+        } catch {
+            try? fileManager.removeItem(at: workspaceURL)
+            throw error
+        }
+    }
+
+    /// Writes sensitive command output through the platform's protected atomic
+    /// file path.
+    static func writeAtomically(_ data: Data, to outputURL: URL) throws {
+        try SecureFileWriter.writeAtomically(data, to: outputURL)
+    }
+
+    /// Reads a password from one direct value or one protected file.
+    ///
+    /// File contents are returned verbatim, including any trailing newline. The
+    /// caller remains responsible for restricting access to the password file.
+    ///
+    /// - Parameters:
+    ///   - value: Password supplied directly by the caller.
+    ///   - filePath: Optional path containing the password bytes as UTF-8.
+    ///   - optionName: User-facing option group named in validation errors.
+    /// - Returns: The direct value or complete file contents.
+    /// - Throws: `ValidationError` when both sources are present, or a file-read
+    ///   error when `filePath` cannot be decoded as UTF-8.
+    static func readPassword(
+        value: String,
+        filePath: String?,
+        optionName: String
+    ) throws -> String {
+        if !value.isEmpty, filePath != nil {
+            throw ValidationError(
+                "\(optionName) accepts either a direct password or a password file, not both."
+            )
+        }
+        guard let filePath else {
+            return value
+        }
+        return try String(
+            contentsOf: URL(fileURLWithPath: filePath),
+            encoding: .utf8
+        )
     }
 
     /// Loads a PEM certificate/private-key pair into a signing identity.

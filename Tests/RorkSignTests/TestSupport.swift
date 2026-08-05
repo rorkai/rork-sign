@@ -609,6 +609,104 @@ enum TraditionalPEMCipher {
     }
 }
 
+struct CLIResult {
+    let status: Int32
+    let output: String
+}
+
+func runRorkSign(
+    _ arguments: [String],
+    environment: [String: String] = [:],
+    currentDirectoryURL: URL? = nil
+) throws -> CLIResult {
+    let process = Process()
+    process.executableURL = try rorkSignExecutableURL()
+    process.arguments = arguments
+    process.currentDirectoryURL = currentDirectoryURL
+    if !environment.isEmpty {
+        process.environment = ProcessInfo.processInfo.environment.merging(
+            environment
+        ) { _, new in new }
+    }
+
+    let output = Pipe()
+    process.standardOutput = output
+    process.standardError = output
+    try process.run()
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return CLIResult(
+        status: process.terminationStatus,
+        output: String(decoding: data, as: UTF8.self)
+    )
+}
+
+func rorkSignExecutableURL() throws -> URL {
+    if let override = ProcessInfo.processInfo.environment[
+        "RORKSIGN_TEST_EXECUTABLE"
+    ] {
+        let overrideURL = URL(fileURLWithPath: override)
+        guard isRunnableRorkSignExecutable(overrideURL) else {
+            throw XCTSkip(
+                "RORKSIGN_TEST_EXECUTABLE is not runnable at \(override)."
+            )
+        }
+        return overrideURL
+    }
+
+    #if os(Windows)
+    let executableName = "rorksign.exe"
+    #else
+    let executableName = "rorksign"
+    #endif
+
+    let currentDirectoryURL = URL(
+        fileURLWithPath: FileManager.default.currentDirectoryPath,
+        isDirectory: true
+    )
+    let buildDirectoryURL = currentDirectoryURL.appendingPathComponent(
+        ".build",
+        isDirectory: true
+    )
+    var candidates = [
+        URL(fileURLWithPath: CommandLine.arguments[0])
+            .deletingLastPathComponent()
+            .appendingPathComponent(executableName),
+        buildDirectoryURL
+            .appendingPathComponent("debug", isDirectory: true)
+            .appendingPathComponent(executableName),
+    ]
+    if let buildDirectories = try? FileManager.default.contentsOfDirectory(
+        at: buildDirectoryURL,
+        includingPropertiesForKeys: nil
+    ) {
+        candidates.append(
+            contentsOf: buildDirectories.map {
+                $0.appendingPathComponent("debug", isDirectory: true)
+                    .appendingPathComponent(executableName)
+            }
+        )
+    }
+
+    for candidate in candidates {
+        if isRunnableRorkSignExecutable(candidate) {
+            return candidate
+        }
+    }
+
+    throw XCTSkip(
+        "rorksign executable was not found beside the tests or in .build."
+    )
+}
+
+private func isRunnableRorkSignExecutable(_ url: URL) -> Bool {
+    #if os(Windows)
+    FileManager.default.fileExists(atPath: url.path)
+    #else
+    FileManager.default.isExecutableFile(atPath: url.path)
+    #endif
+}
+
 func runCommand(_ executableURL: URL, arguments: [String]) throws {
     let process = Process()
     process.executableURL = executableURL

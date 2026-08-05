@@ -1,6 +1,8 @@
 import Foundation
 import RorkSign
+#if canImport(RorkSignObjC)
 import RorkSignObjC
+#endif
 import XCTest
 
 /// Coverage for overriding a framework executable's CodeDirectory identifier.
@@ -143,6 +145,7 @@ final class FrameworkIdentifierOverrideTests: XCTestCase {
     }
 
     /// Verifies the Objective-C option maps the override into the Swift signer.
+    #if canImport(RorkSignObjC)
     func testObjectiveCFrameworkIdentifierOverrideMapsToSwiftSigner() throws {
         let identityFixture = try OpenSSLFixture()
         defer {
@@ -177,6 +180,7 @@ final class FrameworkIdentifierOverrideTests: XCTestCase {
         )
         XCTAssertEqual(codeDirectories.map(\.identifier), [hostIdentifier, hostIdentifier])
     }
+    #endif
 
     /// Verifies option equality includes the CodeDirectory identifier override.
     func testFrameworkSigningOptionsEqualityIncludesIdentifierOverride() {

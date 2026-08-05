@@ -433,8 +433,12 @@ private enum AdditionalBundleFileWriter {
         let destinationURL = components.reduce(rootBundleURL) {
             $0.appendingPathComponent($1)
         }
-        let rootPath = rootBundleURL.standardizedFileURL.path
-        let destinationPath = destinationURL.standardizedFileURL.path
+        let rootPath = normalizedFileSystemPath(
+            rootBundleURL.standardizedFileURL.path
+        )
+        let destinationPath = normalizedFileSystemPath(
+            destinationURL.standardizedFileURL.path
+        )
         guard destinationPath.hasPrefix(rootPath + "/") else {
             throw invalidPath(relativePath)
         }
@@ -1393,8 +1397,12 @@ private func nonEmptyTrimmed(_ value: String?) -> String? {
 
 /// Produces a bundle-relative path and rejects traversal outside `rootURL`.
 private func relativePath(for url: URL, under rootURL: URL) throws -> String {
-    let rootPath = rootURL.standardizedFileURL.path
-    let path = url.standardizedFileURL.path
+    let rootPath = normalizedFileSystemPath(
+        rootURL.standardizedFileURL.path
+    )
+    let path = normalizedFileSystemPath(
+        url.standardizedFileURL.path
+    )
     guard path.hasPrefix(rootPath + "/") else {
         throw RorkSignError.invalidBundle("Path escaped bundle root: \(path).")
     }

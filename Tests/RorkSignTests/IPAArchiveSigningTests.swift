@@ -911,6 +911,54 @@ final class IPAArchiveSigningTests: XCTestCase {
         )
     }
 
+    #if !os(Windows)
+    func testArchiveWritePreservesAnExplicitNonExecutableMachOMode() throws {
+        let workspaceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let rootURL = workspaceURL.appendingPathComponent(
+            "ArchiveRoot",
+            isDirectory: true
+        )
+        let appURL = rootURL.appendingPathComponent(
+            "Payload/Host.app",
+            isDirectory: true
+        )
+        let executableURL = appURL.appendingPathComponent("Host")
+        let archiveURL = workspaceURL.appendingPathComponent("Output.ipa")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: workspaceURL)
+        }
+        try FileManager.default.createDirectory(
+            at: appURL,
+            withIntermediateDirectories: true
+        )
+        try Fixtures.machO64WithCodeSignature().write(to: executableURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: executableURL.path
+        )
+
+        try IPAArchive.write(
+            contentsOf: rootURL,
+            to: archiveURL,
+            compressionMode: .stored
+        )
+
+        try ZipArchiveReader<ZipFileStorage>.withFile(archiveURL.path) {
+            reader in
+            let entry = try XCTUnwrap(
+                try reader.readDirectory().first {
+                    $0.filename.string == "Payload/Host.app/Host"
+                }
+            )
+            XCTAssertFalse(
+                entry.externalAttributes.unixAttributes.filePermissions
+                    .contains(.ownerExecute)
+            )
+        }
+    }
+    #endif
+
     #if !os(WASI)
     /// Verifies read-only directory metadata is restored after children are
     /// extracted, avoiding blocked writes and timestamp drift.
@@ -1065,6 +1113,55 @@ final class IPAArchiveSigningTests: XCTestCase {
             }
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
+    func testArchiveRejectsBackslashEntryPaths() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let inputURL = rootURL.appendingPathComponent("Unsafe.ipa")
+        let extractedURL = rootURL.appendingPathComponent(
+            "Extracted",
+            isDirectory: true
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+
+        let writer = ZipArchiveWriter()
+        try writer.writeFile(
+            filename: "Payload/Sample.app/Sample",
+            contents: Array("unsafe".utf8)
+        )
+
+        // The writer rejects backslashes, so equal-length filename replacement
+        // creates hostile input without changing the ZIP record layout.
+        var archive = Data(try writer.finalizeBuffer())
+        let slashPath = Data("Payload/Sample.app/Sample".utf8)
+        let backslashPath = Data(#"Payload\Sample.app\Sample"#.utf8)
+        var replacementCount = 0
+        while let range = archive.range(of: slashPath) {
+            archive.replaceSubrange(range, with: backslashPath)
+            replacementCount += 1
+        }
+        XCTAssertEqual(replacementCount, 2)
+        try archive.write(to: inputURL)
+
+        XCTAssertThrowsError(
+            try IPAArchive.extract(at: inputURL, to: extractedURL)
+        ) { error in
+            guard case .invalidArchive = error as? RorkSignError else {
+                return XCTFail(
+                    "Expected an invalid archive error, got \(error)."
+                )
+            }
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: extractedURL.path)
+        )
     }
 
     /// Ensures a relative symlink is rejected when lexical resolution escapes

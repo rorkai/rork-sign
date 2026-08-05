@@ -35,6 +35,7 @@ struct RorkSignCommand: AsyncParsableCommand {
             SealResources.self,
             VerifyResources.self,
             TeamID.self,
+            ExportPKCS12.self,
         ],
         defaultSubcommand: ZSign.self
     )
@@ -303,7 +304,10 @@ struct SignIPA: ParsableCommand {
         abstract: "Sign and optionally rebase an IPA archive."
     )
 
-    @Option(name: .long, help: "Input IPA archive.")
+    @Option(
+        name: .long,
+        help: "Input IPA archive, app bundle, or extracted archive directory."
+    )
     var input: String
 
     @Option(name: .long, help: "Output IPA archive.")
@@ -323,6 +327,9 @@ struct SignIPA: ParsableCommand {
 
     @Option(name: [.customShort("p"), .customLong("password")], help: "Password for the private key or PKCS#12 credential.")
     var password = ""
+
+    @Option(name: [.customLong("password-file")], help: "Path to a file containing the private-key password.")
+    var passwordFile: String?
 
     @Option(name: [.customLong("app-groups")], help: "Comma-separated app-group identifiers.")
     var appGroups: String?
@@ -346,13 +353,24 @@ struct SignIPA: ParsableCommand {
             )
         }
 
+        let resolvedPassword = try CLISupport.readPassword(
+            value: password,
+            filePath: passwordFile,
+            optionName: "Signing identity"
+        )
         let identity = try CLISupport.readIdentity(
             certificatePath: certificatePath,
             credentialPath: credentialPath,
-            password: password
+            password: resolvedPassword
         )
+        let preparedInput = try CLISupport.prepareIPAInput(
+            at: fileURL(input)
+        )
+        defer {
+            preparedInput.removeWorkspace()
+        }
         let report = try RorkSigner.signIPA(
-            at: fileURL(input),
+            at: preparedInput.archiveURL,
             outputURL: fileURL(output),
             identity: identity,
             options: AppSigningOptions(
@@ -755,5 +773,81 @@ struct TeamID: ParsableCommand {
             password: password
         )
         print(teamIdentifier)
+    }
+}
+
+struct ExportPKCS12: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "export-pkcs12",
+        abstract: "Export a certificate and private-key credential as PKCS#12."
+    )
+
+    @Option(
+        name: [.customLong("certificate")],
+        help: "Path to a PEM or DER certificate."
+    )
+    var certificatePath: String
+
+    @Option(
+        name: [.customLong("key")],
+        help: "Path to a private key or PKCS#12 credential."
+    )
+    var keyPath: String
+
+    @Option(
+        name: [.customLong("input-password")],
+        help: "Password for the input credential."
+    )
+    var inputPassword = ""
+
+    @Option(
+        name: [.customLong("input-password-file")],
+        help: "Path to a file containing the input credential password."
+    )
+    var inputPasswordFile: String?
+
+    @Option(
+        name: [.customLong("output")],
+        help: "Path to the output PKCS#12 file."
+    )
+    var outputPath: String
+
+    @Option(
+        name: [.customLong("output-password")],
+        help: "Password for the output PKCS#12 file."
+    )
+    var outputPassword = ""
+
+    @Option(
+        name: [.customLong("output-password-file")],
+        help: "Path to a file containing the output password."
+    )
+    var outputPasswordFile: String?
+
+    func run() throws {
+        let resolvedInputPassword = try CLISupport.readPassword(
+            value: inputPassword,
+            filePath: inputPasswordFile,
+            optionName: "Input credential"
+        )
+        let resolvedOutputPassword = try CLISupport.readPassword(
+            value: outputPassword,
+            filePath: outputPasswordFile,
+            optionName: "Output identity"
+        )
+        guard !resolvedOutputPassword.isEmpty else {
+            throw ValidationError("Output password must not be empty.")
+        }
+        let identity = try CLISupport.readIdentity(
+            certificatePath: certificatePath,
+            credentialPath: keyPath,
+            password: resolvedInputPassword
+        )
+        let output = try identity.pkcs12Representation(
+            password: resolvedOutputPassword
+        )
+        let outputURL = fileURL(outputPath)
+        try CLISupport.writeAtomically(output, to: outputURL)
+        print("output=\(outputURL.path)")
     }
 }
