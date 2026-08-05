@@ -1,0 +1,161 @@
+name: macOS universal
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-universal-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-package:
+    runs-on: blacksmith-6vcpu-macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Record Swift toolchain
+        run: swift --version
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build universal release executable
+        run: |
+          set -euo pipefail
+          scratch="$RUNNER_TEMP/rorksign-build"
+
+          swift build --configuration release --product rorksign \
+            --triple arm64-apple-macosx13.0 \
+            --scratch-path "$scratch/arm64"
+          arm64="$(swift build --configuration release --product rorksign \
+            --triple arm64-apple-macosx13.0 \
+            --scratch-path "$scratch/arm64" \
+            --show-bin-path)/rorksign"
+
+          swift build --configuration release --product rorksign \
+            --triple x86_64-apple-macosx13.0 \
+            --scratch-path "$scratch/x86_64"
+          x86_64="$(swift build --configuration release --product rorksign \
+            --triple x86_64-apple-macosx13.0 \
+            --scratch-path "$scratch/x86_64" \
+            --show-bin-path)/rorksign"
+
+          output="$RUNNER_TEMP/rorksign"
+          lipo -create "$arm64" "$x86_64" -output "$output"
+          chmod 755 "$output"
+          echo "RORKSIGN_RELEASE=$output" >> "$GITHUB_ENV"
+
+      - name: Strip and ad-hoc sign
+        run: |
+          set -euo pipefail
+          strip "$RORKSIGN_RELEASE"
+          codesign --force --sign - "$RORKSIGN_RELEASE"
+          codesign --verify --strict --verbose=2 "$RORKSIGN_RELEASE"
+
+      - name: Verify executable
+        run: |
+          set -euo pipefail
+          architectures="$(lipo -archs "$RORKSIGN_RELEASE")"
+          echo "Architectures: $architectures"
+          grep -Fq "arm64" <<< "$architectures"
+          grep -Fq "x86_64" <<< "$architectures"
+
+          version="$("$RORKSIGN_RELEASE" --version | tr -d '\r\n')"
+          grep -Eq '^version: [0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$' <<< "$version"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            [[ "$version" == "version: $GITHUB_REF_NAME" ]]
+          fi
+
+          "$RORKSIGN_RELEASE" --help
+          sign_help="$("$RORKSIGN_RELEASE" sign ipa --help)"
+          export_help="$("$RORKSIGN_RELEASE" export-pkcs12 --help)"
+          grep -Fq "app bundle" <<< "$sign_help"
+          grep -Fq -- "--password-file" <<< "$sign_help"
+          grep -Fq "export-pkcs12" <<< "$export_help"
+          for option in \
+            --certificate \
+            --key \
+            --input-password \
+            --input-password-file \
+            --output \
+            --output-password \
+            --output-password-file
+          do
+            grep -Fq -- "$option" <<< "$export_help"
+          done
+
+      - name: Package portable macOS executable
+        run: |
+          set -euo pipefail
+          package="$RUNNER_TEMP/rorksign-macos-universal"
+          mkdir -p "$package"
+          cp "$RORKSIGN_RELEASE" "$package/rorksign"
+          cp LICENSE THIRD_PARTY_NOTICES.md "$package/"
+          cp -R ThirdPartyLicenses "$package/"
+          (
+            cd "$package"
+            find . -type f ! -name SHA256SUMS.txt | sort | while IFS= read -r file; do
+              path="${file#./}"
+              hash="$(shasum -a 256 "$file" | awk '{print $1}')"
+              printf '%s  %s\n' "$hash" "$path"
+            done
+          ) > "$package/SHA256SUMS.txt"
+          echo "RORKSIGN_PACKAGE=$package" >> "$GITHUB_ENV"
+
+      - name: Upload portable macOS executable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rorksign-macos-universal
+          path: ${{ env.RORKSIGN_PACKAGE }}
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-macos:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build-test-package
+    runs-on: blacksmith-6vcpu-macos-latest
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Download portable macOS executable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          package="$RUNNER_TEMP/rorksign-macos-universal"
+          gh run download "$GITHUB_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "rorksign-macos-universal" \
+            --dir "$package"
+          archive="$RUNNER_TEMP/rorksign-macos-universal.zip"
+          (cd "$package" && zip -qry "$archive" .)
+          echo "MACOS_RELEASE_ARCHIVE=$archive" >> "$GITHUB_ENV"
+
+      - name: Publish portable macOS executable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$MACOS_RELEASE_ARCHIVE" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$MACOS_RELEASE_ARCHIVE" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "$GITHUB_REF_NAME"
+          fi
