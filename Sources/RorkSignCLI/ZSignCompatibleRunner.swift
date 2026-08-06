@@ -611,20 +611,43 @@ struct ZSignCompatibleRunner {
         if let override = environment["RORKSIGN_IDEVICEINSTALLER"],
            !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let url = fileURL(override)
-            guard FileManager.default.isExecutableFile(atPath: url.path) else {
+            guard isRunnableExecutable(at: url) else {
                 throw RorkSignError.unsupported("Configured ideviceinstaller is not executable: \(url.path)")
             }
             return url
         }
 
         let pathValue = environment["PATH"] ?? ""
-        for directory in pathValue.split(separator: ":").map(String.init) {
-            let url = URL(fileURLWithPath: directory).appendingPathComponent("ideviceinstaller")
-            if FileManager.default.isExecutableFile(atPath: url.path) {
-                return url
+        #if os(Windows)
+        let pathSeparator: Character = ";"
+        let executableNames = ["ideviceinstaller.exe", "ideviceinstaller"]
+        #else
+        let pathSeparator: Character = ":"
+        let executableNames = ["ideviceinstaller"]
+        #endif
+        for directory in pathValue.split(separator: pathSeparator).map(String.init) {
+            for executableName in executableNames {
+                let url = URL(fileURLWithPath: directory)
+                    .appendingPathComponent(executableName)
+                if isRunnableExecutable(at: url) {
+                    return url
+                }
             }
         }
         throw RorkSignError.unsupported("ideviceinstaller was not found in PATH.")
+    }
+
+    /// Uses filename-based executable discovery on Windows and permission checks elsewhere.
+    private func isRunnableExecutable(at url: URL) -> Bool {
+        #if os(Windows)
+        var isDirectory = ObjCBool(false)
+        return FileManager.default.fileExists(
+            atPath: url.path,
+            isDirectory: &isDirectory
+        ) && !isDirectory.boolValue
+        #else
+        return FileManager.default.isExecutableFile(atPath: url.path)
+        #endif
     }
 
     /// Loads the signing identity requested by the compatibility options.

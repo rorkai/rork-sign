@@ -1,0 +1,170 @@
+name: Set up Swift for Windows
+description: Installs and validates a pinned Swift toolchain and its static SDK.
+
+inputs:
+  version:
+    description: The expected Swift version.
+    required: true
+  installer-url:
+    description: The URL for the complete Windows installer.
+    required: true
+  installer-sha256:
+    description: The expected SHA-256 digest for the installer.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      env:
+        SWIFT_VERSION: ${{ inputs.version }}
+        SWIFT_INSTALLER_URL: ${{ inputs.installer-url }}
+        SWIFT_INSTALLER_SHA256: ${{ inputs.installer-sha256 }}
+      run: |
+        $ErrorActionPreference = "Stop"
+        $ProgressPreference = "SilentlyContinue"
+        $installer = Join-Path $env:RUNNER_TEMP "swift-installer.exe"
+        Invoke-WebRequest -Uri $env:SWIFT_INSTALLER_URL -OutFile $installer
+
+        $actualHash = (Get-FileHash $installer -Algorithm SHA256).Hash
+        if ($actualHash -ne $env:SWIFT_INSTALLER_SHA256) {
+          throw "Swift installer checksum mismatch. Expected $env:SWIFT_INSTALLER_SHA256 but received $actualHash."
+        }
+
+        $process = Start-Process `
+          -FilePath $installer `
+          -ArgumentList @("/quiet", "/norestart") `
+          -Wait `
+          -PassThru
+        if (@(0, 3010) -notcontains $process.ExitCode) {
+          throw "Swift installer failed with exit code $($process.ExitCode)."
+        }
+        Remove-Item $installer -Force
+
+        $machinePath = [Environment]::GetEnvironmentVariable(
+          "Path",
+          "Machine"
+        )
+        $userPath = [Environment]::GetEnvironmentVariable(
+          "Path",
+          "User"
+        )
+        $pathEntries = "$machinePath;$userPath" -split ";" |
+          Where-Object { $_ -and (Test-Path $_) } |
+          Select-Object -Unique
+        foreach ($pathEntry in $pathEntries) {
+          Add-Content -Path $env:GITHUB_PATH -Value $pathEntry
+        }
+        $env:Path = ($pathEntries -join ";") + ";" + $env:Path
+
+        $swiftRoots = @(
+          (Join-Path $env:LOCALAPPDATA "Programs\Swift"),
+          (Join-Path $env:ProgramFiles "Swift"),
+          (Join-Path $env:SystemDrive "Library\Developer\Toolchains")
+        ) | Where-Object { Test-Path $_ }
+        $swiftExecutable = Get-Command swift.exe `
+          -ErrorAction SilentlyContinue
+        if ($null -ne $swiftExecutable) {
+          $swiftExecutable = Get-Item $swiftExecutable.Source
+        } else {
+          $swiftExecutable = $swiftRoots |
+            ForEach-Object {
+              Get-ChildItem `
+                -Path $_ `
+                -Filter "swift.exe" `
+                -File `
+                -Recurse `
+                -ErrorAction SilentlyContinue
+            } |
+            Select-Object -First 1
+        }
+        if ($null -eq $swiftExecutable) {
+          throw "Swift executable was not found after installation."
+        }
+        $swiftRoot = $swiftRoots |
+          Where-Object {
+            $swiftExecutable.FullName.StartsWith(
+              $_,
+              [StringComparison]::OrdinalIgnoreCase
+            )
+          } |
+          Select-Object -First 1
+        if ($null -eq $swiftRoot) {
+          $swiftRoot = $swiftExecutable.Directory.Parent.FullName
+        }
+
+        $sdkRoot = [Environment]::GetEnvironmentVariable(
+          "SDKROOT",
+          "User"
+        )
+        if (-not $sdkRoot) {
+          $sdkRoot = [Environment]::GetEnvironmentVariable(
+            "SDKROOT",
+            "Machine"
+          )
+        }
+        if (-not $sdkRoot -or -not (Test-Path $sdkRoot)) {
+          $windowsSDK = Get-ChildItem `
+            -Path $swiftRoot `
+            -Directory `
+            -Filter "Windows.sdk" `
+            -Recurse `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($null -eq $windowsSDK) {
+            throw "The Swift Windows SDK was not found after installation."
+          }
+          $sdkRoot = $windowsSDK.FullName
+        }
+
+        $staticSDKRoot = Join-Path `
+          (Split-Path $sdkRoot -Parent) `
+          "WindowsExperimental.sdk"
+        if (-not (Test-Path $staticSDKRoot -PathType Container)) {
+          throw "The pinned toolchain does not contain its static Windows SDK."
+        }
+        $staticResourceRoot = Join-Path `
+          $staticSDKRoot `
+          "usr\lib\swift_static\windows\x86_64"
+        foreach ($library in @(
+          "libswiftCore.lib",
+          "libcurl.lib",
+          "zlibstatic.lib",
+          "brotlidec.lib",
+          "brotlicommon.lib"
+        )) {
+          $libraryPath = Join-Path $staticResourceRoot $library
+          if (-not (Test-Path $libraryPath -PathType Leaf)) {
+            throw "The static SDK is missing $library."
+          }
+        }
+
+        $swiftBin = $swiftExecutable.Directory.FullName
+        Add-Content -Path $env:GITHUB_PATH -Value $swiftBin
+        $env:Path = "$swiftBin;$env:Path"
+        $env:SDKROOT = $sdkRoot
+        $targetInfo = (
+          (& (Join-Path $swiftBin "swiftc.exe") -print-target-info) -join "`n"
+        ) | ConvertFrom-Json
+        $runtimePath = $targetInfo.paths.runtimeLibraryPaths |
+          Where-Object {
+            Test-Path (Join-Path $_ "swiftCore.dll") -PathType Leaf
+          } |
+          Select-Object -First 1
+        if (-not $runtimePath) {
+          throw "The pinned toolchain runtime directory was not found."
+        }
+        Add-Content -Path $env:GITHUB_ENV -Value "SWIFT_BIN=$swiftBin"
+        Add-Content -Path $env:GITHUB_ENV -Value "SWIFT_INSTALL_ROOT=$swiftRoot"
+        Add-Content -Path $env:GITHUB_ENV -Value "SWIFT_RUNTIME_PATH=$runtimePath"
+        Add-Content -Path $env:GITHUB_ENV -Value "SDKROOT=$sdkRoot"
+        Add-Content -Path $env:GITHUB_ENV -Value "SWIFT_STATIC_SDK_ROOT=$staticSDKRoot"
+        Add-Content -Path $env:GITHUB_ENV -Value "SWIFT_STATIC_RESOURCE_ROOT=$staticResourceRoot"
+
+        $versionOutput = (
+          & $swiftExecutable.FullName --version
+        ) -join "`n"
+        if ($versionOutput -notmatch [Regex]::Escape($env:SWIFT_VERSION)) {
+          throw "Installed Swift version does not match $env:SWIFT_VERSION."
+        }
+        $versionOutput

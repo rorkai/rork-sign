@@ -61,7 +61,7 @@ final class IPAArchiveSigningTests: XCTestCase {
         try ZipArchiveReader<ZipFileStorage>.withFile(outputURL.path) { reader in
             let executableEntry = try XCTUnwrap(
                 try reader.readDirectory().first {
-                    $0.filename.string == "Payload/Host.app/Host"
+                    $0.pathInArchive == "Payload/Host.app/Host"
                 }
             )
             XCTAssertEqual(executableEntry.compressionMethod, .deflate)
@@ -290,14 +290,14 @@ final class IPAArchiveSigningTests: XCTestCase {
         let reader = try ZipArchiveReader(buffer: [UInt8](signedIPA.data))
         let entries = try reader.readDirectory()
         let executable = try XCTUnwrap(
-            entries.first { $0.filename.string == "Payload/Host.app/Host" }
+            entries.first { $0.pathInArchive == "Payload/Host.app/Host" }
         )
         XCTAssertTrue(
             executable.externalAttributes.unixAttributes.filePermissions
                 .contains(.ownerExecute)
         )
         let symbolicLink = try XCTUnwrap(
-            entries.first { $0.filename.string == "Payload/Host.app/asset-link" }
+            entries.first { $0.pathInArchive == "Payload/Host.app/asset-link" }
         )
         XCTAssertTrue(
             symbolicLink.externalAttributes.unixAttributes.contains(
@@ -309,7 +309,7 @@ final class IPAArchiveSigningTests: XCTestCase {
             "asset.txt"
         )
         let infoPlistEntry = try XCTUnwrap(
-            entries.first { $0.filename.string == "Payload/Host.app/Info.plist" }
+            entries.first { $0.pathInArchive == "Payload/Host.app/Info.plist" }
         )
         let infoPlist = try XCTUnwrap(
             PropertyListSerialization.propertyList(
@@ -368,7 +368,7 @@ final class IPAArchiveSigningTests: XCTestCase {
         let reader = try ZipArchiveReader(buffer: [UInt8](signedIPA.data))
         let entries = try reader.readDirectory()
         let executable = try XCTUnwrap(
-            entries.first { $0.filename.string == "Payload/Host.app/Host" }
+            entries.first { $0.pathInArchive == "Payload/Host.app/Host" }
         )
         XCTAssertTrue(
             executable.externalAttributes.unixAttributes.filePermissions
@@ -376,7 +376,7 @@ final class IPAArchiveSigningTests: XCTestCase {
         )
         let symbolicLink = try XCTUnwrap(
             entries.first {
-                $0.filename.string == "Payload/Host.app/asset-link"
+                $0.pathInArchive == "Payload/Host.app/asset-link"
             }
         )
         XCTAssertTrue(
@@ -467,15 +467,17 @@ final class IPAArchiveSigningTests: XCTestCase {
         let entries = try reader.readDirectory()
         let directory = try XCTUnwrap(
             entries.first {
-                $0.filename.string == "Payload/Host.app/Empty"
+                $0.pathInArchive.trimmingCharacters(
+                    in: CharacterSet(charactersIn: "/")
+                ) == "Payload/Host.app/Empty"
             }
         )
         XCTAssertTrue(directory.isDirectory)
     }
     #endif
 
-    #if !os(WASI)
-    /// Verifies native extraction restores the executable bit and timestamp
+    #if !os(WASI) && !os(Windows)
+    /// Verifies POSIX extraction restores the executable bit and timestamp
     /// required by downstream bundle signing.
     func testArchiveExtractionRestoresExecutableMetadataOnNativeFilesystems()
         throws
@@ -594,7 +596,7 @@ final class IPAArchiveSigningTests: XCTestCase {
         )
         let outputEntry = try XCTUnwrap(
             try outputReader.readDirectory().first {
-                $0.filename.string == "Payload/Host.app/Host"
+                $0.pathInArchive == "Payload/Host.app/Host"
             }
         )
         XCTAssertEqual(outputEntry.fileModification, modificationDate)
@@ -775,7 +777,7 @@ final class IPAArchiveSigningTests: XCTestCase {
         ) { reader in
             let entry = try XCTUnwrap(
                 try reader.readDirectory().first {
-                    $0.filename.string == "source.txt"
+                    $0.pathInArchive == "source.txt"
                 }
             )
             XCTAssertEqual(
@@ -900,7 +902,7 @@ final class IPAArchiveSigningTests: XCTestCase {
         )
         let entry = try XCTUnwrap(
             try reader.readDirectory().first {
-                $0.filename.string == "Current"
+                $0.pathInArchive == "Current"
             }
         )
         XCTAssertTrue(
@@ -948,7 +950,7 @@ final class IPAArchiveSigningTests: XCTestCase {
             reader in
             let entry = try XCTUnwrap(
                 try reader.readDirectory().first {
-                    $0.filename.string == "Payload/Host.app/Host"
+                    $0.pathInArchive == "Payload/Host.app/Host"
                 }
             )
             XCTAssertFalse(
@@ -959,7 +961,7 @@ final class IPAArchiveSigningTests: XCTestCase {
     }
     #endif
 
-    #if !os(WASI)
+    #if !os(WASI) && !os(Windows)
     /// Verifies read-only directory metadata is restored after children are
     /// extracted, avoiding blocked writes and timestamp drift.
     func testArchiveRestoresDirectoryMetadataAfterExtractingChildren() throws {

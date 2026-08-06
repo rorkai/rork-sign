@@ -1382,7 +1382,7 @@ final class CLITests: XCTestCase {
         try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
         try FileManager.default.createIPAArchive(contentsOf: archiveRootURL, at: inputURL)
         try writeFakeInstaller(
-            to: installerDirectory.appendingPathComponent("ideviceinstaller"),
+            in: installerDirectory,
             logURL: installerLogURL
         )
 
@@ -1394,7 +1394,7 @@ final class CLITests: XCTestCase {
                 inputURL.path,
             ],
             environment: [
-                "PATH": installerDirectory.path + ":" + (ProcessInfo.processInfo.environment["PATH"] ?? ""),
+                "PATH": testPath(prepending: installerDirectory),
                 "INSTALL_LOG": installerLogURL.path,
             ]
         )
@@ -1433,7 +1433,7 @@ final class CLITests: XCTestCase {
         )
         try Fixtures.machO64WithCodeSignature().write(to: appURL.appendingPathComponent("Host"))
         try writeFakeInstaller(
-            to: installerDirectory.appendingPathComponent("ideviceinstaller"),
+            in: installerDirectory,
             logURL: installerLogURL
         )
 
@@ -1445,7 +1445,7 @@ final class CLITests: XCTestCase {
                 appURL.path,
             ],
             environment: [
-                "PATH": installerDirectory.path + ":" + (ProcessInfo.processInfo.environment["PATH"] ?? ""),
+                "PATH": testPath(prepending: installerDirectory),
                 "INSTALL_LOG": installerLogURL.path,
             ]
         )
@@ -1896,9 +1896,19 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(shortResult.status, 0, shortResult.output)
         XCTAssertEqual(longRootResult.status, 0, longRootResult.output)
         XCTAssertEqual(longResult.status, 0, longResult.output)
-        XCTAssertEqual(shortResult.output, "version: \(RorkSigner.version)\n")
-        XCTAssertEqual(longRootResult.output, shortResult.output)
-        XCTAssertEqual(longResult.output, shortResult.output)
+        let expectedVersion = "version: \(RorkSigner.version)"
+        XCTAssertEqual(
+            shortResult.output.trimmingCharacters(in: .newlines),
+            expectedVersion
+        )
+        XCTAssertEqual(
+            longRootResult.output.trimmingCharacters(in: .newlines),
+            expectedVersion
+        )
+        XCTAssertEqual(
+            longResult.output.trimmingCharacters(in: .newlines),
+            expectedVersion
+        )
     }
 
     func testRootHelpIsGeneratedByArgumentParser() throws {
@@ -2001,7 +2011,49 @@ private func cliEntitlementDictionary(inSignedMachOAt url: URL) throws -> [Strin
     return try XCTUnwrap(plist as? [String: Any])
 }
 
-private func writeFakeInstaller(to url: URL, logURL: URL) throws {
+/// Writes a platform-native installer fixture that records each argument.
+private func writeFakeInstaller(in directoryURL: URL, logURL: URL) throws {
+    #if os(Windows)
+    let url = directoryURL.appendingPathComponent("ideviceinstaller.exe")
+    let sourceURL = directoryURL.appendingPathComponent(
+        "fake-ideviceinstaller.c"
+    )
+    let source = #"""
+    #include <stdio.h>
+    #include <stdlib.h>
+
+    int main(int argc, char **argv) {
+        const char *log_path = getenv("INSTALL_LOG");
+        if (log_path == NULL) {
+            return 2;
+        }
+        FILE *log = fopen(log_path, "wb");
+        if (log == NULL) {
+            return 3;
+        }
+        for (int index = 1; index < argc; index++) {
+            fprintf(log, "%s\n", argv[index]);
+        }
+        return fclose(log) == 0 ? 0 : 4;
+    }
+    """#
+    try Data(source.utf8).write(to: sourceURL)
+    let compilerURL = try XCTUnwrap(
+        testExecutableURL(named: "clang-cl.exe"),
+        "The Windows toolchain compiler was not found in PATH."
+    )
+    try runCommand(
+        compilerURL,
+        arguments: [
+            sourceURL.path,
+            "/nologo",
+            "/MT",
+            "/O2",
+            "/Fe\(url.path)",
+        ]
+    )
+    #else
+    let url = directoryURL.appendingPathComponent("ideviceinstaller")
     let script = """
     #!/bin/sh
     printf '%s\\n' "$@" > "\(logURL.path)"
@@ -2012,6 +2064,62 @@ private func writeFakeInstaller(to url: URL, logURL: URL) throws {
         [.posixPermissions: 0o755],
         ofItemAtPath: url.path
     )
+    #endif
+}
+
+/// Prepends one directory using the platform's executable search separator.
+private func testPath(prepending directoryURL: URL) -> String {
+    #if os(Windows)
+    let separator = ";"
+    #else
+    let separator = ":"
+    #endif
+    return [
+        directoryURL.path,
+        ProcessInfo.processInfo.environment["SWIFT_RUNTIME_PATH"] ?? "",
+        ProcessInfo.processInfo.environment["PATH"] ?? "",
+    ]
+    .filter { !$0.isEmpty }
+    .joined(separator: separator)
+}
+
+/// Resolves one test tool through the configured toolchain or search path.
+private func testExecutableURL(named name: String) -> URL? {
+    if let swiftBin = ProcessInfo.processInfo.environment["SWIFT_BIN"] {
+        let url = URL(fileURLWithPath: swiftBin)
+            .appendingPathComponent(name)
+        if isRunnableTestExecutable(url) {
+            return url
+        }
+    }
+
+    #if os(Windows)
+    let separator: Character = ";"
+    #else
+    let separator: Character = ":"
+    #endif
+    let pathValue = ProcessInfo.processInfo.environment["PATH"] ?? ""
+    for directory in pathValue.split(separator: separator) {
+        let url = URL(fileURLWithPath: String(directory))
+            .appendingPathComponent(name)
+        if isRunnableTestExecutable(url) {
+            return url
+        }
+    }
+    return nil
+}
+
+/// Applies the platform's executable discovery rule to one test tool.
+private func isRunnableTestExecutable(_ url: URL) -> Bool {
+    #if os(Windows)
+    var isDirectory = ObjCBool(false)
+    return FileManager.default.fileExists(
+        atPath: url.path,
+        isDirectory: &isDirectory
+    ) && !isDirectory.boolValue
+    #else
+    return FileManager.default.isExecutableFile(atPath: url.path)
+    #endif
 }
 
 private func cliProvisioningProfile(

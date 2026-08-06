@@ -100,6 +100,13 @@ On Windows, the executable is named `rorksign.exe`. Use
 `swift build -c release --show-bin-path` when a script needs the toolchain's
 exact release output directory.
 
+Published Windows archives contain one `rorksign.exe` and the accompanying
+legal notices. The executable statically incorporates its Swift libraries but
+continues to use the x64 Microsoft Visual C++ runtime. Install the current
+Microsoft Visual C++ Redistributable if `MSVCP140.dll` or `VCRUNTIME140.dll`
+is unavailable. The pinned Windows SDK does not provide `/MT` runtime
+variants, so these dependencies cannot be folded into the executable.
+
 During development, run the executable through SwiftPM:
 
 ```bash
