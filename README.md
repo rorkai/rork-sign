@@ -109,6 +109,10 @@ does not provide `/MT` runtime variants, so these dependencies cannot be
 folded into the executable. Each release publishes `SHA256SUMS.txt` beside its
 ZIP archives so downloads can be verified before extraction.
 
+```sh
+shasum -a 256 -c SHA256SUMS.txt
+```
+
 During development, run the executable through SwiftPM:
 
 ```bash

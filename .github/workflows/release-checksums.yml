@@ -1,15 +1,15 @@
 name: Release checksums
 
 on:
-  workflow_run:
-    workflows:
-      - Windows x64
-      - macOS universal
-    types:
-      - completed
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag whose archives need checksums.
+        required: true
+        type: string
 
 concurrency:
-  group: release-checksums-${{ github.event.workflow_run.head_branch }}
+  group: release-checksums-${{ inputs.tag }}
   cancel-in-progress: false
 
 permissions:
@@ -17,20 +17,41 @@ permissions:
 
 jobs:
   publish:
-    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-slim
+    timeout-minutes: 15
     steps:
       - name: Publish archive checksums
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            exit 0
+          directory="$(mktemp -d)"
+          expected_archives=(
+            "rorksign-macos-universal.zip"
+            "rorksign-windows-x64.zip"
+          )
+          ready=false
+          for attempt in {1..40}; do
+            rm -f "$directory"/*.zip
+            gh release download "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern "${expected_archives[0]}" \
+              --pattern "${expected_archives[1]}" \
+              --dir "$directory" || true
+            if test -f "$directory/${expected_archives[0]}" &&
+              test -f "$directory/${expected_archives[1]}"; then
+              ready=true
+              break
+            fi
+            sleep 15
+          done
+          if [ "$ready" != true ]; then
+            echo "Both platform archives were not available before the timeout." >&2
+            exit 1
           fi
 
-          directory="$(mktemp -d)"
+          rm -f "$directory"/*.zip
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern "*.zip" \
@@ -41,6 +62,34 @@ jobs:
               sha256sum "$archive"
             done
           ) > "$directory/SHA256SUMS.txt"
+
+          release_endpoint="repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
+          existing_id="$(
+            gh api "$release_endpoint" \
+              --jq '.assets[] | select(.name == "SHA256SUMS.txt") | .id'
+          )"
+          if [ -n "$existing_id" ]; then
+            existing_directory="$(mktemp -d)"
+            gh release download "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern "SHA256SUMS.txt" \
+              --dir "$existing_directory"
+            if ! cmp -s \
+              "$directory/SHA256SUMS.txt" \
+              "$existing_directory/SHA256SUMS.txt"; then
+              echo "The existing checksum manifest differs from the release archives." >&2
+              exit 1
+            fi
+            exit 0
+          fi
+
           gh release upload "$RELEASE_TAG" "$directory/SHA256SUMS.txt" \
+            --repo "$GITHUB_REPOSITORY"
+          verification_directory="$(mktemp -d)"
+          gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --clobber
+            --pattern "SHA256SUMS.txt" \
+            --dir "$verification_directory"
+          cmp -s \
+            "$directory/SHA256SUMS.txt" \
+            "$verification_directory/SHA256SUMS.txt"
