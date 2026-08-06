@@ -22,7 +22,7 @@ env:
 jobs:
   build-test-inspect:
     runs-on: blacksmith-4vcpu-windows-2025
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         shell: pwsh
@@ -32,134 +32,93 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install pinned Swift toolchain
+      - name: Install pinned Swift toolchain and SDK
+        uses: ./.github/actions/setup-swift-windows
+        with:
+          version: ${{ env.SWIFT_VERSION }}
+          installer-url: ${{ env.SWIFT_INSTALLER_URL }}
+          installer-sha256: ${{ env.SWIFT_INSTALLER_SHA256 }}
+          require-static-sdk: "true"
+
+      - name: Build and test static rorksign
         run: |
           $ErrorActionPreference = "Stop"
-          $ProgressPreference = "SilentlyContinue"
-          $installer = Join-Path $env:RUNNER_TEMP "swift-installer.exe"
-          Invoke-WebRequest -Uri $env:SWIFT_INSTALLER_URL -OutFile $installer
-
-          $actualHash = (Get-FileHash $installer -Algorithm SHA256).Hash
-          if ($actualHash -ne $env:SWIFT_INSTALLER_SHA256) {
-            throw "Swift installer checksum mismatch. Expected $env:SWIFT_INSTALLER_SHA256 but received $actualHash."
-          }
-
-          $process = Start-Process `
-            -FilePath $installer `
-            -ArgumentList @("/quiet", "/norestart") `
-            -Wait `
-            -PassThru
-          if (@(0, 3010) -notcontains $process.ExitCode) {
-            throw "Swift installer failed with exit code $($process.ExitCode)."
-          }
-          Remove-Item $installer -Force
-
-          $machinePath = [Environment]::GetEnvironmentVariable(
-            "Path",
-            "Machine"
+          $dynamicArguments = @(
+            "--disable-automatic-resolution",
+            "--configuration", "release"
           )
-          $userPath = [Environment]::GetEnvironmentVariable(
-            "Path",
-            "User"
+
+          # XCTest loads dynamic Swift support, so the complete suite must use
+          # the matching dynamic SDK. Portable tests exercise the static
+          # executable in a separate process after this suite passes.
+          & swift build @dynamicArguments --product rorksign
+          if ($LASTEXITCODE -ne 0) {
+            throw "The dynamic test executable did not build."
+          }
+          & swift test @dynamicArguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "The complete Windows test suite failed."
+          }
+
+          $compatibilityLibraries = Join-Path `
+            $env:RUNNER_TEMP `
+            "swift-static-link-compatibility"
+          New-Item `
+            -ItemType Directory `
+            -Path $compatibilityLibraries `
+            -Force |
+            Out-Null
+
+          # The pinned SDK records curl.lib in its autolink metadata but
+          # publishes the verified archive as libcurl.lib.
+          $curlSource = Join-Path `
+            $env:SWIFT_STATIC_RESOURCE_ROOT `
+            "libcurl.lib"
+          $curlCompatibility = Join-Path `
+            $compatibilityLibraries `
+            "curl.lib"
+          Copy-Item $curlSource $curlCompatibility
+          if (
+            (Get-FileHash $curlSource -Algorithm SHA256).Hash -ne
+            (Get-FileHash $curlCompatibility -Algorithm SHA256).Hash
+          ) {
+            throw "The static curl compatibility archive changed while copying."
+          }
+
+          # The pinned SDK does not encode the static network archive's
+          # compression dependencies in its autolink metadata.
+          $staticArguments = @(
+            "--disable-automatic-resolution",
+            "--triple", "x86_64-unknown-windows-msvc",
+            "--configuration", "release",
+            "-Xswiftc", "-sdk",
+            "-Xswiftc", $env:SWIFT_STATIC_SDK_ROOT,
+            "-Xswiftc", "-static-stdlib",
+            "-Xlinker", "/LIBPATH:$compatibilityLibraries",
+            "-Xlinker", "zlibstatic.lib",
+            "-Xlinker", "brotlidec.lib",
+            "-Xlinker", "brotlicommon.lib"
           )
-          $pathEntries = "$machinePath;$userPath" -split ";" |
-            Where-Object { $_ -and (Test-Path $_) } |
-            Select-Object -Unique
-          foreach ($pathEntry in $pathEntries) {
-            Add-Content -Path $env:GITHUB_PATH -Value $pathEntry
-          }
-          $env:Path = ($pathEntries -join ";") + ";" + $env:Path
 
-          $swiftRoots = @(
-            (Join-Path $env:LOCALAPPDATA "Programs\Swift"),
-            (Join-Path $env:ProgramFiles "Swift"),
-            (Join-Path $env:SystemDrive "Library\Developer\Toolchains")
-          ) | Where-Object { Test-Path $_ }
-          $swiftExecutable = Get-Command swift.exe `
-            -ErrorAction SilentlyContinue
-          if ($null -ne $swiftExecutable) {
-            $swiftExecutable = Get-Item $swiftExecutable.Source
-          } else {
-            $swiftExecutable = $swiftRoots |
-              ForEach-Object {
-                Get-ChildItem `
-                  -Path $_ `
-                  -Filter "swift.exe" `
-                  -File `
-                  -Recurse `
-                  -ErrorAction SilentlyContinue
-              } |
-              Select-Object -First 1
+          & swift build @staticArguments --product rorksign
+          if ($LASTEXITCODE -ne 0) {
+            throw "The static release executable did not build."
           }
-          if ($null -eq $swiftExecutable) {
-            throw "Swift executable was not found after installation."
-          }
-          $swiftRoot = $swiftRoots |
-            Where-Object {
-              $swiftExecutable.FullName.StartsWith(
-                $_,
-                [StringComparison]::OrdinalIgnoreCase
-              )
-            } |
-            Select-Object -First 1
-          if ($null -eq $swiftRoot) {
-            $swiftRoot = $swiftExecutable.Directory.Parent.FullName
-          }
-          $sdkRoot = [Environment]::GetEnvironmentVariable(
-            "SDKROOT",
-            "User"
-          )
-          if (-not $sdkRoot) {
-            $sdkRoot = [Environment]::GetEnvironmentVariable(
-              "SDKROOT",
-              "Machine"
-            )
-          }
-          if (-not $sdkRoot -or -not (Test-Path $sdkRoot)) {
-            $windowsSDK = Get-ChildItem `
-              -Path $swiftRoot `
-              -Directory `
-              -Filter "Windows.sdk" `
-              -Recurse `
-              -ErrorAction SilentlyContinue |
-              Select-Object -First 1
-            if ($null -eq $windowsSDK) {
-              throw "The Swift Windows SDK was not found after installation."
-            }
-            $sdkRoot = $windowsSDK.FullName
-          }
-          $swiftBin = $swiftExecutable.Directory.FullName
-          Add-Content -Path $env:GITHUB_PATH -Value $swiftBin
-          $env:Path = "$swiftBin;$env:Path"
-          Add-Content -Path $env:GITHUB_ENV -Value "SWIFT_INSTALL_ROOT=$swiftRoot"
-          Add-Content -Path $env:GITHUB_ENV -Value "SDKROOT=$sdkRoot"
-          $env:SDKROOT = $sdkRoot
 
-          $versionOutput = (
-            & $swiftExecutable.FullName --version
-          ) -join "`n"
-          if ($versionOutput -notmatch [Regex]::Escape($env:SWIFT_VERSION)) {
-            throw "Installed Swift version does not match $env:SWIFT_VERSION."
-          }
-          $versionOutput
-
-      - name: Build debug rorksign
-        run: swift build --product rorksign
-
-      - name: Run portable tests
-        run: |
-          swift test --filter PortableCLITests
-          swift test --filter IPAArchiveSigningTests/testArchiveRejectsBackslashEntryPaths
-
-      - name: Build release rorksign
-        run: |
-          swift build -c release --product rorksign
           $binaryDirectory = (
-            swift build -c release --show-bin-path
+            & swift build @staticArguments --show-bin-path
           ).Trim()
           $binary = Join-Path $binaryDirectory "rorksign.exe"
           if (-not (Test-Path $binary -PathType Leaf)) {
-            throw "Release executable was not found at $binary."
+            throw "The static release executable was not found at $binary."
+          }
+          $env:RORKSIGN_TEST_EXECUTABLE = $binary
+          & swift test `
+            @dynamicArguments `
+            --skip-build `
+            --filter PortableCLITests
+          if ($LASTEXITCODE -ne 0) {
+            throw "The static executable failed its portable end-to-end tests."
           }
           Add-Content -Path $env:GITHUB_ENV -Value "RORKSIGN_RELEASE=$binary"
 
@@ -184,7 +143,10 @@ jobs:
           swift --version |
             Out-File (Join-Path $inspection "swift-version.txt")
           $targetInfoText = (
-            swiftc -print-target-info
+            swiftc `
+              -sdk $env:SWIFT_STATIC_SDK_ROOT `
+              -static-stdlib `
+              -print-target-info
           ) -join "`n"
           $targetInfoText |
             Out-File (Join-Path $inspection "swift-target-info.json")
@@ -226,9 +188,6 @@ jobs:
             -Algorithm SHA256 |
             Format-List |
             Out-File (Join-Path $inspection "rorksign-sha256.txt")
-          Copy-Item `
-            -Path $env:RORKSIGN_RELEASE `
-            -Destination (Join-Path $inspection "rorksign.exe")
 
           $licenseInventory = Join-Path $inspection `
             "swift-license-notice-files.txt"
@@ -268,20 +227,47 @@ jobs:
           if ($null -eq $dumpbin) {
             throw "The x64 dependency inspector was not found."
           }
-          & $dumpbin.FullName /DEPENDENTS $env:RORKSIGN_RELEASE |
+          $dependencyOutput = (
+            & $dumpbin.FullName /DEPENDENTS $env:RORKSIGN_RELEASE
+          ) -join "`n"
+          if ($LASTEXITCODE -ne 0) {
+            throw "The release dependency inspection failed."
+          }
+          $dependencyOutput |
             Out-File (Join-Path $inspection "rorksign-dependencies.txt")
+
+          $dependencies = [Regex]::Matches(
+            $dependencyOutput,
+            '^\s+([A-Za-z0-9._-]+\.dll)\s*$',
+            [Text.RegularExpressions.RegexOptions]::Multiline
+          ) |
+            ForEach-Object { $_.Groups[1].Value } |
+            Sort-Object -Unique
+          $dependencies |
+            Out-File (Join-Path $inspection "rorksign-imports.txt")
+
+          $forbiddenDependencies = $dependencies |
+            Where-Object {
+              $_ -match '^(swift|Foundation|dispatch|BlocksRuntime|icu|curl|zlib|brotli)'
+            }
+          if ($forbiddenDependencies) {
+            throw "The static release imports bundled runtime libraries: $($forbiddenDependencies -join ', ')."
+          }
+          $requiredRuntimeDependencies = @(
+            "MSVCP140.dll",
+            "VCRUNTIME140.dll"
+          )
+          foreach ($runtimeDependency in $requiredRuntimeDependencies) {
+            if ($dependencies -notcontains $runtimeDependency) {
+              throw "The documented runtime dependency $runtimeDependency was not found."
+            }
+          }
+          $requiredRuntimeDependencies |
+            Out-File (Join-Path $inspection "required-vc-runtime.txt")
 
           Add-Content `
             -Path $env:GITHUB_ENV `
             -Value "WINDOWS_INSPECTION=$inspection"
-
-      - name: Upload Windows inspection
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: rorksign-windows-x64-inspection
-          path: ${{ env.WINDOWS_INSPECTION }}
-          if-no-files-found: error
-          retention-days: 14
 
       - name: Package portable Windows executable
         run: |
@@ -294,20 +280,174 @@ jobs:
           Copy-Item "THIRD_PARTY_NOTICES.md" $package
           Copy-Item "ThirdPartyLicenses" $package -Recurse
           $strip = Get-Command llvm-strip.exe -ErrorAction Stop
-          & $strip.Source --strip-debug $packagedExecutable
+          & $strip.Source --strip-all $packagedExecutable
           if ($LASTEXITCODE -ne 0) {
             throw "The packaged executable could not be stripped."
           }
 
-          $targetInfoText = (swiftc -print-target-info) -join "`n"
-          $targetInfo = $targetInfoText | ConvertFrom-Json
-          $runtimePath = $targetInfo.paths.runtimeLibraryPaths |
-            Where-Object {
-              Test-Path (Join-Path $_ "swiftCore.dll") -PathType Leaf
-            } |
-            Select-Object -First 1
-          if (-not $runtimePath) {
-            throw "The runtime library directory was not found."
+          $env:RORKSIGN_TEST_EXECUTABLE = $packagedExecutable
+          try {
+            & swift test `
+              --disable-automatic-resolution `
+              --configuration release `
+              --skip-build `
+              --filter PortableCLITests
+            if ($LASTEXITCODE -ne 0) {
+              throw "The packaged executable failed its end-to-end tests."
+            }
+          } finally {
+            Remove-Item Env:RORKSIGN_TEST_EXECUTABLE
+          }
+
+          $packagedLibraries = Get-ChildItem `
+            -Path $package `
+            -Filter "*.dll" `
+            -File `
+            -Recurse
+          if ($packagedLibraries) {
+            throw "The static package unexpectedly contains DLL files."
+          }
+
+          $previousPath = $env:Path
+          $smokeDirectory = Join-Path $env:RUNNER_TEMP "isolated-smoke"
+          New-Item `
+            -ItemType Directory `
+            -Path $smokeDirectory `
+            -Force |
+            Out-Null
+          try {
+            $env:Path = "$package;$env:SystemRoot\System32"
+            Push-Location $smokeDirectory
+            try {
+              & $packagedExecutable --version
+              if ($LASTEXITCODE -ne 0) {
+                throw "The packaged executable failed with exit code $LASTEXITCODE."
+              }
+              & $packagedExecutable sign ipa --help *> $null
+              if ($LASTEXITCODE -ne 0) {
+                throw "The packaged signing command could not start in isolation."
+              }
+            } finally {
+              Pop-Location
+            }
+          } finally {
+            $env:Path = $previousPath
+          }
+
+          Get-FileHash `
+            -Path $packagedExecutable `
+            -Algorithm SHA256 |
+            Format-List |
+            Out-File (
+              Join-Path $env:WINDOWS_INSPECTION "packaged-rorksign-sha256.txt"
+            )
+          Get-Item $packagedExecutable |
+            Select-Object Name, Length |
+            Format-List |
+            Out-File (
+              Join-Path $env:WINDOWS_INSPECTION "packaged-rorksign-size.txt"
+            )
+
+          $checksums = Get-ChildItem $package -File -Recurse |
+            Sort-Object FullName |
+            ForEach-Object {
+              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+              $relativePath = [IO.Path]::GetRelativePath(
+                $package,
+                $_.FullName
+              ).Replace("\", "/")
+              "$hash  $relativePath"
+            }
+          $checksums |
+            Out-File (Join-Path $package "SHA256SUMS.txt") -Encoding ascii
+          Add-Content `
+            -Path $env:GITHUB_ENV `
+            -Value "RORKSIGN_PACKAGE=$package"
+
+      - name: Upload Windows inspection
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rorksign-windows-x64-inspection
+          path: ${{ env.WINDOWS_INSPECTION }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload portable Windows executable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rorksign-windows-x64
+          path: ${{ env.RORKSIGN_PACKAGE }}
+          if-no-files-found: error
+          retention-days: 14
+
+  build-dll-fallback:
+    if: vars.RORKSIGN_WINDOWS_DLL_FALLBACK == 'true'
+    runs-on: blacksmith-4vcpu-windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Swift toolchain and SDK
+        uses: ./.github/actions/setup-swift-windows
+        with:
+          version: ${{ env.SWIFT_VERSION }}
+          installer-url: ${{ env.SWIFT_INSTALLER_URL }}
+          installer-sha256: ${{ env.SWIFT_INSTALLER_SHA256 }}
+
+      - name: Build DLL fallback executable
+        run: |
+          swift build `
+            --disable-automatic-resolution `
+            --configuration release `
+            --product rorksign
+          if ($LASTEXITCODE -ne 0) {
+            throw "The DLL fallback executable did not build."
+          }
+          $binaryDirectory = (
+            swift build `
+              --disable-automatic-resolution `
+              --configuration release `
+              --show-bin-path
+          ).Trim()
+          $binary = Join-Path $binaryDirectory "rorksign.exe"
+          if (-not (Test-Path $binary -PathType Leaf)) {
+            throw "The DLL fallback executable was not found at $binary."
+          }
+          Add-Content `
+            -Path $env:GITHUB_ENV `
+            -Value "RORKSIGN_DLL_RELEASE=$binary"
+
+      - name: Package DLL fallback executable
+        run: |
+          $ErrorActionPreference = "Stop"
+          $package = Join-Path `
+            $env:RUNNER_TEMP `
+            "rorksign-windows-x64-dll"
+          New-Item -ItemType Directory -Path $package -Force | Out-Null
+          $packagedExecutable = Join-Path $package "rorksign.exe"
+          Copy-Item $env:RORKSIGN_DLL_RELEASE $packagedExecutable
+          Copy-Item "LICENSE" $package
+          Copy-Item "THIRD_PARTY_NOTICES.md" $package
+          Copy-Item "ThirdPartyLicenses" $package -Recurse
+
+          $strip = Get-Command llvm-strip.exe -ErrorAction Stop
+          & $strip.Source --strip-all $packagedExecutable
+          if ($LASTEXITCODE -ne 0) {
+            throw "The fallback executable could not be stripped."
+          }
+
+          $runtimePath = $env:SWIFT_RUNTIME_PATH
+          if (
+            -not $runtimePath -or
+            -not (Test-Path $runtimePath -PathType Container)
+          ) {
+            throw "The DLL fallback runtime directory was not found."
           }
           Copy-Item (Join-Path $runtimePath "*.dll") $package
 
@@ -316,7 +456,7 @@ jobs:
             $env:Path = "$package;$env:SystemRoot\System32"
             & $packagedExecutable --version
             if ($LASTEXITCODE -ne 0) {
-              throw "The packaged executable failed with exit code $LASTEXITCODE."
+              throw "The DLL fallback package could not start in isolation."
             }
           } finally {
             $env:Path = $previousPath
@@ -336,13 +476,13 @@ jobs:
             Out-File (Join-Path $package "SHA256SUMS.txt") -Encoding ascii
           Add-Content `
             -Path $env:GITHUB_ENV `
-            -Value "RORKSIGN_PACKAGE=$package"
+            -Value "RORKSIGN_DLL_PACKAGE=$package"
 
-      - name: Upload portable Windows executable
+      - name: Upload DLL fallback executable
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rorksign-windows-x64
-          path: ${{ env.RORKSIGN_PACKAGE }}
+          name: rorksign-windows-x64-dll
+          path: ${{ env.RORKSIGN_DLL_PACKAGE }}
           if-no-files-found: error
           retention-days: 14
 
@@ -396,4 +536,56 @@ jobs:
           }
           if ($LASTEXITCODE -ne 0) {
             throw "The portable Windows release asset could not be published."
+          }
+
+  publish-dll-fallback:
+    if: startsWith(github.ref, 'refs/tags/') && vars.RORKSIGN_WINDOWS_DLL_FALLBACK == 'true'
+    needs:
+      - build-dll-fallback
+      - publish-windows
+    runs-on: blacksmith-4vcpu-windows-2025
+    permissions:
+      actions: read
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Download DLL fallback executable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $package = Join-Path `
+            $env:RUNNER_TEMP `
+            "rorksign-windows-x64-dll"
+          gh run download `
+            $env:GITHUB_RUN_ID `
+            --repo $env:GITHUB_REPOSITORY `
+            --name "rorksign-windows-x64-dll" `
+            --dir $package
+          if ($LASTEXITCODE -ne 0) {
+            throw "The DLL fallback artifact could not be downloaded."
+          }
+          $archive = Join-Path `
+            $env:RUNNER_TEMP `
+            "rorksign-windows-x64-dll.zip"
+          Compress-Archive `
+            -Path (Join-Path $package "*") `
+            -DestinationPath $archive
+          Add-Content `
+            -Path $env:GITHUB_ENV `
+            -Value "WINDOWS_DLL_RELEASE_ARCHIVE=$archive"
+
+      - name: Publish DLL fallback executable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload `
+            $env:GITHUB_REF_NAME `
+            $env:WINDOWS_DLL_RELEASE_ARCHIVE `
+            --repo $env:GITHUB_REPOSITORY `
+            --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw "The DLL fallback release asset could not be published."
           }

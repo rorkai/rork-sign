@@ -32,6 +32,22 @@ The corresponding upstream legal texts are reproduced in:
 
 ## Other Components
 
+### Windows Static Runtime
+
+The Windows x64 executable statically incorporates the Swift 6.3.3 standard
+library and runtime support, Foundation, Dispatch, and Blocks Runtime. These
+components use the Apache License 2.0 with the Swift Runtime Library Exception.
+The Apache License 2.0 text is included in the package-level `LICENSE`, and
+the exception is reproduced in
+[SwiftRuntime-EXCEPTION.txt](ThirdPartyLicenses/SwiftRuntime-EXCEPTION.txt).
+
+The executable also incorporates ICU 76.1, curl 8.9.1, zlib 1.3.1, and Brotli
+1.1.0 from the pinned SDK. Their legal texts are reproduced in
+[ICU-LICENSE.txt](ThirdPartyLicenses/ICU-LICENSE.txt),
+[Curl-LICENSE.txt](ThirdPartyLicenses/Curl-LICENSE.txt),
+[Zlib-LICENSE.txt](ThirdPartyLicenses/Zlib-LICENSE.txt), and
+[Brotli-LICENSE.txt](ThirdPartyLicenses/Brotli-LICENSE.txt).
+
 ### Swift Zip Archive
 
 [Swift Zip Archive](https://github.com/rorkai/swift-zip-archive), revision

@@ -43,7 +43,7 @@ func isArchiveEntryCompressed(
     try ZipArchiveReader<ZipFileStorage>.withFile(archiveURL.path) { reader in
         let entry = try XCTUnwrap(
             try reader.readDirectory().first {
-                $0.filename.string == path
+                $0.pathInArchive == path
             }
         )
         return entry.compressionMethod != .noCompression
