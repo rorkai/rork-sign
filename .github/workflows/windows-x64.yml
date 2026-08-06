@@ -348,18 +348,6 @@ jobs:
               Join-Path $env:WINDOWS_INSPECTION "packaged-rorksign-size.txt"
             )
 
-          $checksums = Get-ChildItem $package -File -Recurse |
-            Sort-Object FullName |
-            ForEach-Object {
-              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
-              $relativePath = [IO.Path]::GetRelativePath(
-                $package,
-                $_.FullName
-              ).Replace("\", "/")
-              "$hash  $relativePath"
-            }
-          $checksums |
-            Out-File (Join-Path $package "SHA256SUMS.txt") -Encoding ascii
           Add-Content `
             -Path $env:GITHUB_ENV `
             -Value "RORKSIGN_PACKAGE=$package"

@@ -103,14 +103,6 @@ jobs:
           cp "$RORKSIGN_RELEASE" "$package/rorksign"
           cp LICENSE THIRD_PARTY_NOTICES.md "$package/"
           cp -R ThirdPartyLicenses "$package/"
-          (
-            cd "$package"
-            find . -type f ! -name SHA256SUMS.txt | sort | while IFS= read -r file; do
-              path="${file#./}"
-              hash="$(shasum -a 256 "$file" | awk '{print $1}')"
-              printf '%s  %s\n' "$hash" "$path"
-            done
-          ) > "$package/SHA256SUMS.txt"
           echo "RORKSIGN_PACKAGE=$package" >> "$GITHUB_ENV"
 
           artifact="$RUNNER_TEMP/rorksign-macos-universal.tar"
