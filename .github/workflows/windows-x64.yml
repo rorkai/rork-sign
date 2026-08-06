@@ -38,6 +38,7 @@ jobs:
           version: ${{ env.SWIFT_VERSION }}
           installer-url: ${{ env.SWIFT_INSTALLER_URL }}
           installer-sha256: ${{ env.SWIFT_INSTALLER_SHA256 }}
+          require-static-sdk: "true"
 
       - name: Build and test static rorksign
         run: |
@@ -252,18 +253,16 @@ jobs:
           if ($forbiddenDependencies) {
             throw "The static release imports bundled runtime libraries: $($forbiddenDependencies -join ', ')."
           }
-          foreach ($runtimeDependency in @(
+          $requiredRuntimeDependencies = @(
             "MSVCP140.dll",
             "VCRUNTIME140.dll"
-          )) {
+          )
+          foreach ($runtimeDependency in $requiredRuntimeDependencies) {
             if ($dependencies -notcontains $runtimeDependency) {
               throw "The documented runtime dependency $runtimeDependency was not found."
             }
           }
-          @(
-            "MSVCP140.dll",
-            "VCRUNTIME140.dll"
-          ) |
+          $requiredRuntimeDependencies |
             Out-File (Join-Path $inspection "required-vc-runtime.txt")
 
           Add-Content `
@@ -443,15 +442,11 @@ jobs:
             throw "The fallback executable could not be stripped."
           }
 
-          $targetInfo = (
-            (swiftc -print-target-info) -join "`n"
-          ) | ConvertFrom-Json
-          $runtimePath = $targetInfo.paths.runtimeLibraryPaths |
-            Where-Object {
-              Test-Path (Join-Path $_ "swiftCore.dll") -PathType Leaf
-            } |
-            Select-Object -First 1
-          if (-not $runtimePath) {
+          $runtimePath = $env:SWIFT_RUNTIME_PATH
+          if (
+            -not $runtimePath -or
+            -not (Test-Path $runtimePath -PathType Container)
+          ) {
             throw "The DLL fallback runtime directory was not found."
           }
           Copy-Item (Join-Path $runtimePath "*.dll") $package
