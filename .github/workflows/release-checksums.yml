@@ -61,35 +61,35 @@ jobs:
             for archive in *.zip; do
               sha256sum "$archive"
             done
-          ) > "$directory/SHA256SUMS.txt"
+          ) > "$directory/checksums.txt"
 
           release_endpoint="repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
           existing_id="$(
             gh api "$release_endpoint" \
-              --jq '.assets[] | select(.name == "SHA256SUMS.txt") | .id'
+              --jq '.assets[] | select(.name == "checksums.txt") | .id'
           )"
           if [ -n "$existing_id" ]; then
             existing_directory="$(mktemp -d)"
             gh release download "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
-              --pattern "SHA256SUMS.txt" \
+              --pattern "checksums.txt" \
               --dir "$existing_directory"
             if ! cmp -s \
-              "$directory/SHA256SUMS.txt" \
-              "$existing_directory/SHA256SUMS.txt"; then
+              "$directory/checksums.txt" \
+              "$existing_directory/checksums.txt"; then
               echo "The existing checksum manifest differs from the release archives." >&2
               exit 1
             fi
             exit 0
           fi
 
-          gh release upload "$RELEASE_TAG" "$directory/SHA256SUMS.txt" \
+          gh release upload "$RELEASE_TAG" "$directory/checksums.txt" \
             --repo "$GITHUB_REPOSITORY"
           verification_directory="$(mktemp -d)"
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern "SHA256SUMS.txt" \
+            --pattern "checksums.txt" \
             --dir "$verification_directory"
           cmp -s \
-            "$directory/SHA256SUMS.txt" \
-            "$verification_directory/SHA256SUMS.txt"
+            "$directory/checksums.txt" \
+            "$verification_directory/checksums.txt"

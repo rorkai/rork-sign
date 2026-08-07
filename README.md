@@ -106,11 +106,11 @@ incorporates its Swift libraries but continues to use the x64 Microsoft Visual
 C++ runtime. Install the current Microsoft Visual C++ Redistributable if
 `MSVCP140.dll` or `VCRUNTIME140.dll` is unavailable. The pinned Windows SDK
 does not provide `/MT` runtime variants, so these dependencies cannot be
-folded into the executable. Each release publishes `SHA256SUMS.txt` beside its
+folded into the executable. Each release publishes `checksums.txt` beside its
 ZIP archives so downloads can be verified before extraction.
 
 ```sh
-shasum -a 256 -c SHA256SUMS.txt
+shasum -a 256 -c checksums.txt
 ```
 
 During development, run the executable through SwiftPM:
