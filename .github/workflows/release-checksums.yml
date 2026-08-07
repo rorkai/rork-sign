@@ -68,10 +68,6 @@ jobs:
             gh api "$release_endpoint" \
               --jq '.assets[] | select(.name == "checksums.txt") | .id'
           )"
-          legacy_id="$(
-            gh api "$release_endpoint" \
-              --jq '.assets[] | select(.name == "SHA256SUMS.txt") | .id'
-          )"
           if [ -n "$existing_id" ]; then
             existing_directory="$(mktemp -d)"
             gh release download "$RELEASE_TAG" \
@@ -84,43 +80,6 @@ jobs:
               echo "The existing checksum manifest differs from the release archives." >&2
               exit 1
             fi
-            if [ -n "$legacy_id" ]; then
-              legacy_directory="$(mktemp -d)"
-              gh release download "$RELEASE_TAG" \
-                --repo "$GITHUB_REPOSITORY" \
-                --pattern "SHA256SUMS.txt" \
-                --dir "$legacy_directory"
-              cmp -s \
-                "$directory/checksums.txt" \
-                "$legacy_directory/SHA256SUMS.txt"
-              gh api \
-                --method DELETE \
-                "repos/$GITHUB_REPOSITORY/releases/assets/$legacy_id"
-            fi
-            exit 0
-          fi
-
-          if [ -n "$legacy_id" ]; then
-            legacy_directory="$(mktemp -d)"
-            gh release download "$RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --pattern "SHA256SUMS.txt" \
-              --dir "$legacy_directory"
-            cmp -s \
-              "$directory/checksums.txt" \
-              "$legacy_directory/SHA256SUMS.txt"
-            gh api \
-              --method PATCH \
-              "repos/$GITHUB_REPOSITORY/releases/assets/$legacy_id" \
-              -f name="checksums.txt"
-            verification_directory="$(mktemp -d)"
-            gh release download "$RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --pattern "checksums.txt" \
-              --dir "$verification_directory"
-            cmp -s \
-              "$directory/checksums.txt" \
-              "$verification_directory/checksums.txt"
             exit 0
           fi
 
