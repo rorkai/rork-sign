@@ -63,7 +63,7 @@ jobs:
 
   build-test-inspect:
     runs-on: blacksmith-4vcpu-windows-2025
-    timeout-minutes: 60
+    timeout-minutes: 90
     defaults:
       run:
         shell: pwsh
