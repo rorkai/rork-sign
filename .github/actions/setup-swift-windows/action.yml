@@ -140,17 +140,27 @@ runs:
           $sdkRoot = $windowsSDK.FullName
         }
 
-        $staticSDKRoot = Join-Path `
+        $experimentalStaticSDKRoot = Join-Path `
           (Split-Path $sdkRoot -Parent) `
           "WindowsExperimental.sdk"
-        $staticSDKExists = Test-Path $staticSDKRoot -PathType Container
+        $staticSDKRoot = @(
+          $experimentalStaticSDKRoot,
+          $sdkRoot
+        ) | Where-Object {
+          Test-Path `
+            (Join-Path `
+              $_ `
+              "usr\lib\swift_static\windows\x86_64\libswiftCore.lib") `
+            -PathType Leaf
+        } | Select-Object -First 1
+        $staticSDKExists = $null -ne $staticSDKRoot
         if ($env:REQUIRE_STATIC_SDK -eq "true" -and -not $staticSDKExists) {
           throw "The pinned toolchain does not contain its static Windows SDK."
         }
-        $staticResourceRoot = Join-Path `
-          $staticSDKRoot `
-          "usr\lib\swift_static\windows\x86_64"
         if ($staticSDKExists) {
+          $staticResourceRoot = Join-Path `
+            $staticSDKRoot `
+            "usr\lib\swift_static\windows\x86_64"
           foreach ($library in @(
             "libswiftCore.lib",
             "libcurl.lib",
@@ -184,8 +194,10 @@ runs:
         Add-Content -Path $env:GITHUB_ENV -Value "SWIFT_INSTALL_ROOT=$swiftRoot"
         Add-Content -Path $env:GITHUB_ENV -Value "SWIFT_RUNTIME_PATH=$runtimePath"
         Add-Content -Path $env:GITHUB_ENV -Value "SDKROOT=$sdkRoot"
-        Add-Content -Path $env:GITHUB_ENV -Value "SWIFT_STATIC_SDK_ROOT=$staticSDKRoot"
-        Add-Content -Path $env:GITHUB_ENV -Value "SWIFT_STATIC_RESOURCE_ROOT=$staticResourceRoot"
+        if ($staticSDKExists) {
+          Add-Content -Path $env:GITHUB_ENV -Value "SWIFT_STATIC_SDK_ROOT=$staticSDKRoot"
+          Add-Content -Path $env:GITHUB_ENV -Value "SWIFT_STATIC_RESOURCE_ROOT=$staticResourceRoot"
+        }
 
         $versionOutput = (
           & $swiftExecutable.FullName --version
