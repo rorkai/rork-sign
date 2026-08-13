@@ -45,15 +45,37 @@ jobs:
           $runtimeProbe = Join-Path `
             $env:RUNNER_TEMP `
             "windows-static-runtime-probe.exe"
-          & swiftc `
+          $runtimeProbeLinkLog = Join-Path `
+            $env:RUNNER_TEMP `
+            "windows-static-runtime-probe-link.log"
+          $runtimeProbeBuildOutput = & swiftc `
             -sdk $env:SWIFT_STATIC_SDK_ROOT `
             -static-stdlib `
             -Xcc -Ddispatch_STATIC `
             -Xcc -static-libclosure `
             -parse-as-library `
             "Tests\WindowsStaticRuntimeProbe\main.swift" `
-            -o $runtimeProbe
-          if ($LASTEXITCODE -ne 0) {
+            -o $runtimeProbe `
+            2>&1
+          $runtimeProbeBuildExitCode = $LASTEXITCODE
+          $runtimeProbeBuildOutput |
+            Tee-Object -FilePath $runtimeProbeLinkLog
+
+          # These warnings were the link-time announcement of swiftlang/swift#91442, so this gate keeps the class a build failure instead of a field crash.
+          $runtimeProbeLinkText = Get-Content $runtimeProbeLinkLog -Raw
+          $runtimeProbeLinkWarningCount = [Regex]::Matches(
+            $runtimeProbeLinkText,
+            'LNK(?:4217|4049)'
+          ).Count
+          "Static runtime probe link warning count: $runtimeProbeLinkWarningCount"
+          if ($runtimeProbeLinkWarningCount -gt 0) {
+            Select-String `
+              -Path $runtimeProbeLinkLog `
+              -Pattern 'LNK(?:4217|4049)' |
+              ForEach-Object { $_.Line }
+            throw "The static runtime probe emitted locally defined symbol import warnings."
+          }
+          if ($runtimeProbeBuildExitCode -ne 0) {
             throw "The static delayed-task runtime probe did not build."
           }
           & $runtimeProbe
@@ -143,10 +165,37 @@ jobs:
             "-Xlinker", "brotlicommon.lib"
           )
 
-          & swift build @staticArguments --product rorksign
-          if ($LASTEXITCODE -ne 0) {
+          $staticLinkLog = Join-Path `
+            $env:RUNNER_TEMP `
+            "rorksign-static-link.log"
+          $staticBuildOutput = & swift build `
+            @staticArguments `
+            --product rorksign `
+            2>&1
+          $staticBuildExitCode = $LASTEXITCODE
+          $staticBuildOutput |
+            Tee-Object -FilePath $staticLinkLog
+
+          # These warnings were the link-time announcement of swiftlang/swift#91442, so this gate keeps the class a build failure instead of a field crash.
+          $staticLinkText = Get-Content $staticLinkLog -Raw
+          $staticLinkWarningCount = [Regex]::Matches(
+            $staticLinkText,
+            'LNK(?:4217|4049)'
+          ).Count
+          "Static release link warning count: $staticLinkWarningCount"
+          if ($staticLinkWarningCount -gt 0) {
+            Select-String `
+              -Path $staticLinkLog `
+              -Pattern 'LNK(?:4217|4049)' |
+              ForEach-Object { $_.Line }
+            throw "The static release emitted locally defined symbol import warnings."
+          }
+          if ($staticBuildExitCode -ne 0) {
             throw "The static release executable did not build."
           }
+          Add-Content `
+            -Path $env:GITHUB_ENV `
+            -Value "RORKSIGN_STATIC_LINK_LOG=$staticLinkLog"
 
           $binaryDirectory = (
             & swift build @staticArguments --show-bin-path
@@ -193,6 +242,9 @@ jobs:
           ) -join "`n"
           $targetInfoText |
             Out-File (Join-Path $inspection "swift-target-info.json")
+          Copy-Item `
+            $env:RORKSIGN_STATIC_LINK_LOG `
+            (Join-Path $inspection "rorksign-static-link.log")
 
           Get-ChildItem `
             -Path $env:SWIFT_INSTALL_ROOT `
