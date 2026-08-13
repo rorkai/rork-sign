@@ -15,11 +15,52 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SWIFT_VERSION: 6.3.3
-  SWIFT_INSTALLER_URL: https://download.swift.org/swift-6.3.3-release/windows10/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE-windows10.exe
-  SWIFT_INSTALLER_SHA256: 235626548F249CD516D3D4D90EEE980DCCAD46F3822DAC1F8E3119B0FEDE94B7
+  SWIFT_VERSION: 6.4-dev
+  SWIFT_INSTALLER_URL: https://download.swift.org/swift-6.4.x-branch/windows10/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-08-01-a/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-08-01-a-windows10.exe
+  SWIFT_INSTALLER_SHA256: C287DD533A65A73D657B1B9F2305BE50552F89B46199A0F6162A287DEE547149
 
 jobs:
+  test-static-runtime-probe:
+    runs-on: blacksmith-4vcpu-windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Swift toolchain and SDK
+        uses: ./.github/actions/setup-swift-windows
+        with:
+          version: ${{ env.SWIFT_VERSION }}
+          installer-url: ${{ env.SWIFT_INSTALLER_URL }}
+          installer-sha256: ${{ env.SWIFT_INSTALLER_SHA256 }}
+          require-static-sdk: "true"
+
+      - name: Run static delayed-task runtime probe
+        run: |
+          $runtimeProbe = Join-Path `
+            $env:RUNNER_TEMP `
+            "windows-static-runtime-probe.exe"
+          & swiftc `
+            -sdk $env:SWIFT_STATIC_SDK_ROOT `
+            -static-stdlib `
+            -Xcc -Ddispatch_STATIC `
+            -Xcc -static-libclosure `
+            -parse-as-library `
+            "Tests\WindowsStaticRuntimeProbe\main.swift" `
+            -o $runtimeProbe
+          if ($LASTEXITCODE -ne 0) {
+            throw "The static delayed-task runtime probe did not build."
+          }
+          & $runtimeProbe
+          if ($LASTEXITCODE -ne 0) {
+            throw "The static delayed-task runtime probe failed."
+          }
+
   build-test-inspect:
     runs-on: blacksmith-4vcpu-windows-2025
     timeout-minutes: 60
@@ -94,6 +135,8 @@ jobs:
             "-Xswiftc", "-sdk",
             "-Xswiftc", $env:SWIFT_STATIC_SDK_ROOT,
             "-Xswiftc", "-static-stdlib",
+            "-Xcc", "-Ddispatch_STATIC",
+            "-Xcc", "-static-libclosure",
             "-Xlinker", "/LIBPATH:$compatibilityLibraries",
             "-Xlinker", "zlibstatic.lib",
             "-Xlinker", "brotlidec.lib",
@@ -370,7 +413,9 @@ jobs:
 
   publish-windows:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build-test-inspect
+    needs:
+      - test-static-runtime-probe
+      - build-test-inspect
     runs-on: blacksmith-4vcpu-windows-2025
     permissions:
       actions: write
