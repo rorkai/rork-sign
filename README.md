@@ -361,7 +361,7 @@ Add the package to your SwiftPM project:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/rorkai/rork-sign.git", from: "0.6.3"),
+    .package(url: "https://github.com/rorkai/rork-sign.git", from: "0.6.4"),
 ]
 ```
 
@@ -511,7 +511,7 @@ Swift 6.3 clients can add the package normally:
 ```swift
 .package(
     url: "https://github.com/rorkai/rork-sign.git",
-    from: "0.6.3"
+    from: "0.6.4"
 )
 ```
 
