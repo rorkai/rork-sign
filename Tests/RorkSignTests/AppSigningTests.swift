@@ -158,6 +158,20 @@ final class AppSigningTests: XCTestCase {
         let rootInfo = try infoPlist(at: fixture.bundleURL)
         let extensionInfo = try infoPlist(at: fixture.extensionURL)
         XCTAssertEqual(rootInfo["CFBundleIdentifier"] as? String, "app.rork.signed")
+        let urlTypes = try XCTUnwrap(rootInfo["CFBundleURLTypes"] as? [[String: Any]])
+        let urlSchemes = urlTypes.flatMap {
+            $0["CFBundleURLSchemes"] as? [String] ?? []
+        }
+        XCTAssertEqual(
+            urlSchemes,
+            [
+                "shared-callback",
+                "app.rork.signed",
+                "callback-app.rork.signed",
+                "prefixcom.original.host",
+                "callback-com.original.host.extra",
+            ]
+        )
         XCTAssertEqual(extensionInfo["CFBundleIdentifier"] as? String, "app.rork.signed.ShareExtension")
         XCTAssertEqual(extensionInfo["WKCompanionAppBundleIdentifier"] as? String, "app.rork.signed")
         let extensionDictionary = try XCTUnwrap(extensionInfo["NSExtension"] as? [String: Any])
@@ -1158,6 +1172,18 @@ private func makeAppSigningFixture(includeWatchApp: Bool = false) throws -> AppS
             "CFBundleDisplayName": "Original Host",
             "CFBundleVersion": "1",
             "CFBundleShortVersionString": "1.0",
+            "CFBundleURLTypes": [
+                [
+                    "CFBundleURLName": "callbacks",
+                    "CFBundleURLSchemes": [
+                        "shared-callback",
+                        "com.original.host",
+                        "callback-com.original.host",
+                        "prefixcom.original.host",
+                        "callback-com.original.host.extra",
+                    ],
+                ],
+            ],
             "MinimumOSVersion": "14.0",
             "UISupportedDevices": ["iPhone15,2"],
         ],

@@ -738,6 +738,10 @@ private enum AppBundleIdentityRewriter {
         }
 
         info.setString(rewrittenIdentifier, forKey: "CFBundleIdentifier")
+        info.rewriteBundleIdentifierURLSchemes(
+            replacing: originalIdentifier,
+            with: rewrittenIdentifier
+        )
         info.rewriteStringValue(
             forKeyPath: ["WKCompanionAppBundleIdentifier"],
             replacing: originalRootIdentifier,
@@ -1274,6 +1278,35 @@ private struct MutableInfoPlist {
         )
     }
 
+    /// Rebases URL schemes whose final component is the bundle identifier.
+    mutating func rewriteBundleIdentifierURLSchemes(
+        replacing originalIdentifier: String,
+        with replacementIdentifier: String
+    ) {
+        guard var urlTypes = dictionary["CFBundleURLTypes"]
+            as? [[String: Any]]
+        else {
+            return
+        }
+
+        for index in urlTypes.indices {
+            guard var schemes = urlTypes[index]["CFBundleURLSchemes"]
+                as? [String]
+            else {
+                continue
+            }
+            for schemeIndex in schemes.indices {
+                schemes[schemeIndex] = BundleIdentifier.rebasedURLScheme(
+                    schemes[schemeIndex],
+                    originalBundleIdentifier: originalIdentifier,
+                    replacementBundleIdentifier: replacementIdentifier
+                )
+            }
+            urlTypes[index]["CFBundleURLSchemes"] = schemes
+        }
+        dictionary["CFBundleURLTypes"] = urlTypes
+    }
+
     /// Persists the modified metadata through the shared plist boundary.
     ///
     /// The metadata remains open-ended while it is edited, so the writer
@@ -1383,6 +1416,31 @@ private enum BundleIdentifier {
             return originalIdentifier
         }
         return replacementRootIdentifier + "." + originalIdentifier.dropFirst(originalPrefix.count)
+    }
+
+    /// Rebases a URL scheme explicitly tied to one bundle identifier.
+    static func rebasedURLScheme(
+        _ scheme: String,
+        originalBundleIdentifier: String,
+        replacementBundleIdentifier: String
+    ) -> String {
+        let lowercaseScheme = scheme.lowercased()
+        let lowercaseIdentifier = originalBundleIdentifier.lowercased()
+        guard lowercaseScheme.hasSuffix(lowercaseIdentifier) else {
+            return scheme
+        }
+
+        let identifierStart = scheme.index(
+            scheme.endIndex,
+            offsetBy: -originalBundleIdentifier.count
+        )
+        let prefix = String(scheme[..<identifierStart])
+        switch prefix.last {
+        case nil, ".", "-", "+":
+            return prefix + replacementBundleIdentifier
+        default:
+            return scheme
+        }
     }
 }
 
