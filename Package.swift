@@ -67,6 +67,7 @@ let package = Package(
             url: "https://github.com/rorkai/swift-zip-archive.git",
             exact: "0.8.1-rork.4"
         ),
+        .package(url: "https://github.com/apple/swift-system.git", from: "1.4.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
     ],
     targets: [
@@ -74,6 +75,7 @@ let package = Package(
             name: "RorkSign",
             dependencies: platformCryptoDependencies + [
                 .product(name: "Logging", package: "swift-log"),
+                .product(name: "SystemPackage", package: "swift-system"),
                 .product(name: "ZipArchive", package: "swift-zip-archive"),
             ],
             path: "Sources/RorkSign"
