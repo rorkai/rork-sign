@@ -63,7 +63,7 @@ public enum RorkSignError: Error, Equatable, LocalizedError {
 
 /// Coarse Mach-O container kind.
 public enum MachOKind: Equatable {
-    /// A 32-bit thin Mach-O. It can be inspected, but signing is not supported.
+    /// A 32-bit thin Mach-O, including the arm64_32 watchOS ABI.
     case machO32
 
     /// A 64-bit thin Mach-O.
