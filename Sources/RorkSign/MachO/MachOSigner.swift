@@ -161,7 +161,7 @@ enum MachOSigner {
 
     /// Rewrites a Mach-O with an ad-hoc embedded signature.
     ///
-    /// Thin 64-bit binaries are signed directly. Universal binaries are rebuilt
+    /// Thin 32-bit and 64-bit binaries are signed directly. Universal binaries are rebuilt
     /// by signing each contained thin slice and then updating the fat-archive
     /// offsets and sizes.
     static func signAdHoc(
@@ -398,12 +398,7 @@ private func thinSigningCacheInput(_ data: Data) throws -> Data {
     try output.writeUInt32LE(UInt32(codeLimit), at: signatureCommandOffset + 8)
     try output.writeUInt32LE(0, at: signatureCommandOffset + 12)
 
-    if let linkeditCommandOffset = layout.linkeditCommandOffset,
-       layout.linkeditFileOffset < newLength {
-        let linkeditFileSize = newLength - layout.linkeditFileOffset
-        try output.writeUInt64LE(alignUp(linkeditFileSize, alignment: 4096), at: linkeditCommandOffset + 32)
-        try output.writeUInt64LE(linkeditFileSize, at: linkeditCommandOffset + 48)
-    }
+    try updateLinkeditSize(&output, layout: layout, newLength: newLength)
 
     return output.subdata(in: 0..<Int(codeLimit))
 }
@@ -456,6 +451,7 @@ private enum Constants {
     static let mhMagic64: UInt32 = 0xfeedfacf
     static let fatMagic: UInt32 = 0xcafebabe
     static let fatMagic64: UInt32 = 0xcafebabf
+    static let lcSegment: UInt32 = 0x1
     static let lcSegment64: UInt32 = 0x19
     static let lcCodeSignature: UInt32 = 0x1d
     static let lcLoadDylib: UInt32 = 0xc
@@ -467,6 +463,8 @@ private enum Constants {
     static let loadCommandSize = 8
     static let dylibCommandSize = 24
     static let linkeditDataCommandSize = 16
+    static let segmentCommand32Size = 56
+    static let section32Size = 68
     static let segmentCommand64Size = 72
     static let section64Size = 80
     static let fatHeaderSize = 8
@@ -664,7 +662,7 @@ private func readThinDylibLoadCommands(_ data: Data) throws -> [MachODylibLoadCo
     return commands
 }
 
-/// Adds one dynamic-library load command to a thin 64-bit Mach-O.
+/// Adds one dynamic-library load command to a thin Mach-O.
 private func injectThinDylibLoadCommand(_ data: Data, path: String, weak: Bool) throws -> Data {
     let installName = try normalizedDylibInstallName(path)
     let existingCommands = try readThinDylibLoadCommands(data)
@@ -874,17 +872,14 @@ private func readThinEntitlementsXML(_ data: Data) throws -> String {
     return ""
 }
 
-/// Computes the places a thin 64-bit Mach-O needs mutated during signing.
+/// Computes header, segment and signature locations using the slice's Mach-O word size.
 private func readThinSigningLayout(_ data: Data) throws -> ThinSigningLayout {
     let header = try readThinHeader(data)
-    guard header.is64Bit else {
-        throw RorkSignError.invalidMachO("Code signing currently supports thin 64-bit Mach-O files.")
-    }
-
+    let headerSize = header.is64Bit ? Constants.machHeader64Size : Constants.machHeader32Size
     var layout = ThinSigningLayout(
         header: header,
-        headerSize: Constants.machHeader64Size,
-        commandRegionEnd: Constants.machHeader64Size + Int(header.commandSize)
+        headerSize: headerSize,
+        commandRegionEnd: headerSize + Int(header.commandSize)
     )
 
     try forEachLoadCommand(in: data, header: header) { offset, command, commandSize in
@@ -899,7 +894,10 @@ private func readThinSigningLayout(_ data: Data) throws -> ThinSigningLayout {
             layout.codeSignatureCommandOffset = offset
             layout.codeSignatureDataOffset = dataOffset
             layout.codeSignatureDataSize = dataSize
-        } else if command == Constants.lcSegment64 && commandSize >= Constants.segmentCommand64Size {
+        } else if command == Constants.lcSegment || command == Constants.lcSegment64 {
+            guard (command == Constants.lcSegment64) == header.is64Bit else {
+                throw RorkSignError.invalidMachO("Segment command does not match the Mach-O header width.")
+            }
             try readSegmentLayout(data, commandOffset: offset, commandSize: commandSize, layout: &layout)
         }
     }
@@ -943,29 +941,37 @@ private func forEachLoadCommand(
     }
 }
 
-/// Extracts `LC_SEGMENT_64` metadata used by code signing.
-///
-/// The signer needs three independent pieces of segment state: the first file
-/// content offset so it can add `LC_CODE_SIGNATURE` into available load-command
-/// padding, the `__LINKEDIT` command so appended signatures update its file/vm
-/// sizes, and the `__TEXT,__info_plist` section so standalone Mach-O signing can
-/// still bind an embedded Info.plist through CSSLOT_INFOSLOT.
+/// Segment fields locate signing padding, executable code and an embedded Info.plist.
+/// The arm64_32 ABI uses the 32-bit structures even though its instructions are ARM64.
 private func readSegmentLayout(
     _ data: Data,
     commandOffset: Int,
     commandSize: Int,
     layout: inout ThinSigningLayout
 ) throws {
-    guard let vmSize = data.readUInt64LE(at: commandOffset + 32),
-          let fileOffset = data.readUInt64LE(at: commandOffset + 40),
-          let fileSize = data.readUInt64LE(at: commandOffset + 48),
-          let sectionCount = data.readUInt32LE(at: commandOffset + 64) else {
-        throw RorkSignError.invalidMachO("LC_SEGMENT_64 command is malformed.")
+    let is64Bit = layout.header.is64Bit
+    let segmentSize = is64Bit ? Constants.segmentCommand64Size : Constants.segmentCommand32Size
+    let sectionStride = is64Bit ? Constants.section64Size : Constants.section32Size
+    let commandName = is64Bit ? "LC_SEGMENT_64" : "LC_SEGMENT"
+    guard commandSize >= segmentSize else {
+        throw RorkSignError.invalidMachO("\(commandName) command is truncated.")
+    }
+    func readWord(at offset: Int) -> UInt64? {
+        is64Bit ? data.readUInt64LE(at: offset) : data.readUInt32LE(at: offset).map(UInt64.init)
+    }
+    guard let vmSize = readWord(at: commandOffset + (is64Bit ? 32 : 28)),
+          let fileOffset = readWord(at: commandOffset + (is64Bit ? 40 : 32)),
+          let fileSize = readWord(at: commandOffset + (is64Bit ? 48 : 36)),
+          let sectionCount = data.readUInt32LE(at: commandOffset + (is64Bit ? 64 : 48)) else {
+        throw RorkSignError.invalidMachO("\(commandName) command is malformed.")
     }
 
     let isTextSegment = fixedNameEquals(data, offset: commandOffset + 8, name: "__TEXT")
     if fileOffset > UInt64(layout.commandRegionEnd), fileSize > 0 {
-        layout.firstContentOffset = minimum(layout.firstContentOffset, Int(fileOffset))
+        guard let offset = Int(exactly: fileOffset) else {
+            throw RorkSignError.invalidMachO("Segment file offset is too large.")
+        }
+        layout.firstContentOffset = minimum(layout.firstContentOffset, offset)
     }
     if isTextSegment {
         layout.executableSegmentLimit = vmSize
@@ -975,29 +981,48 @@ private func readSegmentLayout(
         layout.linkeditFileOffset = fileOffset
     }
 
-    let sectionCapacity = (commandSize - Constants.segmentCommand64Size) / Constants.section64Size
+    let sectionCapacity = (commandSize - segmentSize) / sectionStride
     guard sectionCount <= UInt32(sectionCapacity) else {
-        throw RorkSignError.invalidMachO("LC_SEGMENT_64 section table is truncated.")
+        throw RorkSignError.invalidMachO("\(commandName) section table is truncated.")
     }
 
-    let sectionTableOffset = commandOffset + Constants.segmentCommand64Size
+    let sectionTableOffset = commandOffset + segmentSize
     for sectionIndex in 0..<Int(sectionCount) {
-        let sectionOffset = sectionTableOffset + sectionIndex * Constants.section64Size
-        guard let sectionFileOffset = data.readUInt32LE(at: sectionOffset + 48),
-              let sectionSize = data.readUInt64LE(at: sectionOffset + 40) else {
-            throw RorkSignError.invalidMachO("LC_SEGMENT_64 section is malformed.")
+        let sectionOffset = sectionTableOffset + sectionIndex * sectionStride
+        guard let sectionFileOffset = data.readUInt32LE(at: sectionOffset + (is64Bit ? 48 : 40)),
+              let sectionSize = readWord(at: sectionOffset + (is64Bit ? 40 : 36)) else {
+            throw RorkSignError.invalidMachO("\(commandName) section is malformed.")
         }
         if sectionFileOffset > UInt32(layout.commandRegionEnd), sectionSize > 0 {
-            layout.firstContentOffset = minimum(layout.firstContentOffset, Int(sectionFileOffset))
+            guard let offset = Int(exactly: sectionFileOffset) else {
+                throw RorkSignError.invalidMachO("Section file offset is too large.")
+            }
+            layout.firstContentOffset = minimum(layout.firstContentOffset, offset)
         }
         if isTextSegment,
            fixedNameEquals(data, offset: sectionOffset, name: "__info_plist"),
-           sectionSize <= UInt64(Int.max),
-           data.containsRange(offset: Int(sectionFileOffset), length: Int(sectionSize)) {
-            let infoOffset = Int(sectionFileOffset)
-            let infoLength = Int(sectionSize)
+           let infoOffset = Int(exactly: sectionFileOffset),
+           let infoLength = Int(exactly: sectionSize),
+           data.containsRange(offset: infoOffset, length: infoLength) {
             layout.embeddedInfoPlist = data.subdata(in: infoOffset..<(infoOffset + infoLength))
         }
+    }
+}
+
+/// Signing and cache normalization must update the same fields without overwriting adjacent 32-bit metadata.
+private func updateLinkeditSize(_ output: inout Data, layout: ThinSigningLayout, newLength: UInt64) throws {
+    guard let offset = layout.linkeditCommandOffset, layout.linkeditFileOffset < newLength else { return }
+    let fileSize = newLength - layout.linkeditFileOffset
+    let vmSize = alignUp(fileSize, alignment: 4096)
+    if layout.header.is64Bit {
+        try output.writeUInt64LE(vmSize, at: offset + 32)
+        try output.writeUInt64LE(fileSize, at: offset + 48)
+    } else {
+        guard let narrowVMSize = UInt32(exactly: vmSize), let narrowFileSize = UInt32(exactly: fileSize) else {
+            throw RorkSignError.invalidMachO("32-bit Mach-O segment size is too large.")
+        }
+        try output.writeUInt32LE(narrowVMSize, at: offset + 28)
+        try output.writeUInt32LE(narrowFileSize, at: offset + 36)
     }
 }
 
@@ -1029,7 +1054,7 @@ private func readUniversalInfo(_ data: Data) throws -> MachOInfo {
     )
 }
 
-/// Rewrites one 64-bit Mach-O slice and appends a fresh SuperBlob.
+/// Rewrites one Mach-O slice and appends a fresh SuperBlob.
 private func signThinMachO(_ data: Data, options: MachOSigningOptions) throws -> Data {
     guard !data.isEmpty else {
         throw RorkSignError.invalidMachO("Code signing received empty Mach-O data.")
@@ -1112,12 +1137,7 @@ private func signThinMachO(_ data: Data, options: MachOSigningOptions) throws ->
         try output.writeUInt32LE(UInt32(codeLimit), at: signatureCommandOffset + 8)
         try output.writeUInt32LE(UInt32(signatureSize), at: signatureCommandOffset + 12)
 
-        if let linkeditCommandOffset = layout.linkeditCommandOffset,
-           layout.linkeditFileOffset < newLength {
-            let linkeditFileSize = newLength - layout.linkeditFileOffset
-            try output.writeUInt64LE(alignUp(linkeditFileSize, alignment: 4096), at: linkeditCommandOffset + 32)
-            try output.writeUInt64LE(linkeditFileSize, at: linkeditCommandOffset + 48)
-        }
+        try updateLinkeditSize(&output, layout: layout, newLength: newLength)
     }
 
     try writeSignatureLayout(signatureSize: 0)
@@ -1220,12 +1240,7 @@ private func prepareThinMachOCMSCodeDirectories(
         try output.writeUInt32LE(UInt32(codeLimit), at: signatureCommandOffset + 8)
         try output.writeUInt32LE(UInt32(signatureSize), at: signatureCommandOffset + 12)
 
-        if let linkeditCommandOffset = layout.linkeditCommandOffset,
-           layout.linkeditFileOffset < newLength {
-            let linkeditFileSize = newLength - layout.linkeditFileOffset
-            try output.writeUInt64LE(alignUp(linkeditFileSize, alignment: 4096), at: linkeditCommandOffset + 32)
-            try output.writeUInt64LE(linkeditFileSize, at: linkeditCommandOffset + 48)
-        }
+        try updateLinkeditSize(&output, layout: layout, newLength: newLength)
     }
 
     try writeSignatureLayout(signatureSize: 0)

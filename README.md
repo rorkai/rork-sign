@@ -46,7 +46,7 @@ oracle for certificate and CMS interoperability.
 - **Objective-C facade** - the `RorkSignObjC` module exposes the public signer
   surface to Objective-C and Objective-C++ with Foundation types.
 - **Mach-O signing** - ad-hoc and identity-backed signatures for thin and
-  universal 64-bit Mach-O files.
+  universal Mach-O files with 32-bit or 64-bit slices, including watchOS arm64_32.
 - **CMS signatures** - pure Swift detached CMS SignedData generation and
   verification for RSA and NIST EC signing identities.
 - **Provisioning profiles** - decode `.mobileprovision` files, derive
@@ -797,8 +797,8 @@ complete container has been encoded.
 
 ## Limitations
 
-- Signing currently supports 64-bit Mach-O slices. 32-bit Mach-O files can be
-  inspected, but not signed.
+- Signing supports little-endian 32-bit and 64-bit Mach-O slices. Byte-swapped
+  Mach-O slices are not supported.
 - The PKCS#12 importer focuses on common signing identities: one RSA, P-256,
   P-384, or P-521 private key plus a matching X.509 leaf certificate.
 - Additional certificates are preserved in generated CMS output, but the signer
